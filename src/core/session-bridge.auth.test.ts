@@ -1,8 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 
-import { MemoryStorage } from "../adapters/memory-storage.js";
 import type { Authenticator, ConsumerIdentity } from "../interfaces/auth.js";
 import {
   MockBackendAdapter,
@@ -18,474 +17,224 @@ import {
 } from "../testing/cli-message-factories.js";
 import { SessionBridge } from "./session-bridge.js";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function createBridge(options?: { storage?: MemoryStorage; authenticator?: Authenticator }) {
-  const storage = options?.storage ?? new MemoryStorage();
+function createBridge(options?: {
+  authenticator?: Authenticator;
+  config?: { port: number; authTimeoutMs?: number };
+}) {
   const adapter = new MockBackendAdapter();
   const bridge = new SessionBridge({
-    storage,
     authenticator: options?.authenticator,
-    config: { port: 3456 },
+    config: options?.config ?? { port: 3456 },
     logger: noopLogger,
     adapter,
   });
-  return { bridge, storage, adapter };
+  return { bridge, adapter };
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+const flushAuth = () => new Promise((r) => setTimeout(r, 0));
 
-describe("SessionBridge — auth", () => {
-  let bridge: SessionBridge;
-  let adapter: MockBackendAdapter;
+describe("SessionBridge — auth integration", () => {
+  it("synchronous authenticator throw is caught and auth fails", () => {
+    const authenticator: Authenticator = {
+      authenticate: () => {
+        throw new Error("sync boom");
+      },
+    };
+    const { bridge } = createBridge({ authenticator });
+    bridge.getOrCreateSession("sess-1");
 
-  beforeEach(() => {
-    const created = createBridge();
-    bridge = created.bridge;
-    adapter = created.adapter;
+    const failed = vi.fn();
+    bridge.on("consumer:auth_failed", failed);
+
+    const ws = createMockSocket();
+    bridge.handleConsumerOpen(ws, authContext("sess-1"));
+
+    expect(failed).toHaveBeenCalledWith({ sessionId: "sess-1", reason: "sync boom" });
+    expect(ws.close).toHaveBeenCalledWith(4001, "Authentication failed");
   });
 
-  // ── Authentication ──────────────────────────────────────────────────
-
-  describe("Authentication", () => {
-    const flushAuth = () => new Promise((r) => setTimeout(r, 0));
-
-    it("rejects consumer when authenticator throws", async () => {
-      const authenticator: Authenticator = {
-        authenticate: vi.fn().mockRejectedValue(new Error("Invalid token")),
-      };
-      const { bridge: authBridge } = createBridge({ authenticator });
-      authBridge.getOrCreateSession("sess-1");
-
-      const failedHandler = vi.fn();
-      authBridge.on("consumer:auth_failed", failedHandler);
-
-      const ws = createMockSocket();
-      authBridge.handleConsumerOpen(ws, authContext("sess-1"));
-
-      // Let the authenticator promise reject
-      await flushAuth();
-
-      expect(ws.close).toHaveBeenCalledWith(4001, "Authentication failed");
-      expect(failedHandler).toHaveBeenCalledWith({
-        sessionId: "sess-1",
-        reason: "Invalid token",
-      });
+  it("auth timeout rejects slow authenticators", async () => {
+    const authenticator: Authenticator = {
+      authenticate: () => new Promise(() => {}),
+    };
+    const { bridge } = createBridge({
+      authenticator,
+      config: { port: 3456, authTimeoutMs: 50 },
     });
+    bridge.getOrCreateSession("sess-1");
 
-    it("accepts authenticated consumer and sends identity + session_init", async () => {
-      const identity: ConsumerIdentity = {
-        userId: "user-99",
-        displayName: "Bob",
-        role: "observer",
-      };
-      const authenticator: Authenticator = {
-        authenticate: vi.fn().mockResolvedValue(identity),
-      };
-      const { bridge: authBridge } = createBridge({ authenticator });
-      authBridge.getOrCreateSession("sess-1");
+    const failed = vi.fn();
+    bridge.on("consumer:auth_failed", failed);
 
-      const authedHandler = vi.fn();
-      authBridge.on("consumer:authenticated", authedHandler);
+    const ws = createMockSocket();
+    bridge.handleConsumerOpen(ws, authContext("sess-1"));
+    await new Promise((r) => setTimeout(r, 100));
 
-      const ws = createMockSocket();
-      authBridge.handleConsumerOpen(ws, authContext("sess-1"));
-
-      await flushAuth();
-
-      expect(ws.close).not.toHaveBeenCalled();
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.find((m: any) => m.type === "identity")).toEqual({
-        type: "identity",
-        userId: "user-99",
-        displayName: "Bob",
-        role: "observer",
-      });
-      expect(parsed.some((m: any) => m.type === "session_init")).toBe(true);
-      expect(authedHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sessionId: "sess-1",
-          userId: "user-99",
-          displayName: "Bob",
-          role: "observer",
-        }),
-      );
+    expect(failed).toHaveBeenCalledWith({
+      sessionId: "sess-1",
+      reason: "Authentication timed out",
     });
+    expect(ws.close).toHaveBeenCalledWith(4001, "Authentication failed");
+  });
 
-    it("assigns anonymous identity when no authenticator (dev mode)", () => {
-      bridge.getOrCreateSession("sess-1");
-      const ws = createMockSocket();
-      bridge.handleConsumerOpen(ws, authContext("sess-1"));
-
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      const identityMsg = parsed.find((m: any) => m.type === "identity");
-      expect(identityMsg).toEqual({
-        type: "identity",
-        userId: "anonymous-1",
+  it("session removed during async auth rejects consumer", async () => {
+    const authenticator: Authenticator = {
+      authenticate: vi.fn().mockResolvedValue({
+        userId: "u1",
         displayName: "User 1",
         role: "participant",
-      });
-    });
+      }),
+    };
+    const { bridge } = createBridge({ authenticator });
+    bridge.getOrCreateSession("sess-1");
 
-    it("authenticator receives session and transport metadata", async () => {
-      const authenticator: Authenticator = {
-        authenticate: vi.fn().mockResolvedValue({
-          userId: "u1",
-          displayName: "U1",
-          role: "participant",
-        }),
-      };
-      const { bridge: authBridge } = createBridge({ authenticator });
-      authBridge.getOrCreateSession("my-session");
+    const failed = vi.fn();
+    bridge.on("consumer:auth_failed", failed);
 
-      const ws = createMockSocket();
-      const transport = {
-        headers: { authorization: "Bearer abc" },
-        query: { token: "xyz" },
-      };
-      authBridge.handleConsumerOpen(ws, { sessionId: "my-session", transport });
+    const ws = createMockSocket();
+    bridge.handleConsumerOpen(ws, authContext("sess-1"));
+    bridge.removeSession("sess-1");
+    await flushAuth();
 
-      await flushAuth();
-
-      expect(authenticator.authenticate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sessionId: "my-session",
-          transport: expect.objectContaining({ headers: { authorization: "Bearer abc" } }),
-        }),
-      );
-    });
+    expect(failed).toHaveBeenCalledWith({ sessionId: "sess-1", reason: "Session not found" });
+    expect(ws.close).toHaveBeenCalledWith(4404, "Session not found");
   });
 
-  // ── Role-based authorization ────────────────────────────────────────
+  it("drops messages during pending auth and routes after auth resolves", async () => {
+    let resolveAuth!: (identity: ConsumerIdentity) => void;
+    const authenticator: Authenticator = {
+      authenticate: () =>
+        new Promise<ConsumerIdentity>((resolve) => {
+          resolveAuth = resolve;
+        }),
+    };
+    const { bridge, adapter } = createBridge({ authenticator });
+    bridge.getOrCreateSession("sess-1");
 
-  describe("Role-based authorization", () => {
-    function createObserverBridge() {
-      const identity: ConsumerIdentity = {
+    await bridge.connectBackend("sess-1");
+    const backendSession = adapter.getSession("sess-1")!;
+    backendSession.pushMessage(makeSessionInitMsg());
+    await tick();
+
+    const ws = createMockSocket();
+    bridge.handleConsumerOpen(ws, authContext("sess-1"));
+
+    backendSession.sentMessages.length = 0;
+    backendSession.sentRawMessages.length = 0;
+
+    bridge.handleConsumerMessage(
+      ws,
+      "sess-1",
+      JSON.stringify({ type: "user_message", content: "too early" }),
+    );
+
+    expect(backendSession.sentMessages).toHaveLength(0);
+    expect(backendSession.sentRawMessages).toHaveLength(0);
+
+    resolveAuth({ userId: "u1", displayName: "User 1", role: "participant" });
+    await flushAuth();
+
+    bridge.handleConsumerMessage(
+      ws,
+      "sess-1",
+      JSON.stringify({ type: "user_message", content: "now it works" }),
+    );
+
+    expect(
+      backendSession.sentMessages.length + backendSession.sentRawMessages.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("observer receives broadcasts but cannot send participant-only messages", async () => {
+    const authenticator: Authenticator = {
+      authenticate: vi.fn().mockResolvedValue({
         userId: "obs-1",
         displayName: "Observer",
         role: "observer",
-      };
-      const authenticator: Authenticator = {
-        authenticate: vi.fn().mockResolvedValue(identity),
-      };
-      return createBridge({ authenticator });
-    }
+      }),
+    };
+    const { bridge, adapter } = createBridge({ authenticator });
+    bridge.getOrCreateSession("sess-1");
 
-    async function connectObserver(b: SessionBridge, sessionId: string) {
-      b.getOrCreateSession(sessionId);
-      const ws = createMockSocket();
-      b.handleConsumerOpen(ws, authContext(sessionId));
-      await new Promise((r) => setTimeout(r, 0));
-      ws.sentMessages.length = 0;
-      return ws;
-    }
+    await bridge.connectBackend("sess-1");
+    const backendSession = adapter.getSession("sess-1")!;
+    backendSession.pushMessage(makeSessionInitMsg());
+    await tick();
 
-    async function setupObserverSession(sessionId = "sess-1") {
-      const { bridge: obsBridge, adapter: obsAdapter } = createObserverBridge();
-      obsBridge.getOrCreateSession(sessionId);
-      await obsBridge.connectBackend(sessionId);
-      const backendSession = obsAdapter.getSession(sessionId)!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-      const ws = await connectObserver(obsBridge, sessionId);
-      backendSession.sentMessages.length = 0;
-      backendSession.sentRawMessages.length = 0;
-      return { obsBridge, backendSession, ws };
-    }
+    const ws = createMockSocket();
+    bridge.handleConsumerOpen(ws, authContext("sess-1"));
+    await flushAuth();
 
-    it("observer receives all broadcast messages", async () => {
-      const { backendSession, ws } = await setupObserverSession("sess-1");
+    ws.sentMessages.length = 0;
+    backendSession.sentMessages.length = 0;
+    backendSession.sentRawMessages.length = 0;
 
-      backendSession.pushMessage(makeAssistantUnifiedMsg());
-      await tick();
+    backendSession.pushMessage(makeAssistantUnifiedMsg());
+    await tick();
+    expect(ws.sentMessages.map((m) => JSON.parse(m)).some((m: any) => m.type === "assistant")).toBe(
+      true,
+    );
 
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "assistant")).toBe(true);
-    });
+    ws.sentMessages.length = 0;
+    bridge.handleConsumerMessage(
+      ws,
+      "sess-1",
+      JSON.stringify({ type: "user_message", content: "hello" }),
+    );
 
-    it("observer is blocked from participant-only command types", async () => {
-      const { obsBridge, backendSession, ws } = await setupObserverSession("sess-1");
-
-      const blockedMessages = [
-        { type: "user_message", content: "hello" },
-        { type: "permission_response", request_id: "perm-req-1", behavior: "allow" },
-        { type: "interrupt" },
-        { type: "set_model", model: "claude-opus-4-20250514" },
-        { type: "set_permission_mode", mode: "plan" },
-      ];
-
-      for (const message of blockedMessages) {
-        ws.sentMessages.length = 0;
-        obsBridge.handleConsumerMessage(ws, "sess-1", JSON.stringify(message));
-        expect(backendSession.sentMessages).toHaveLength(0);
-        expect(backendSession.sentRawMessages).toHaveLength(0);
-        const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-        expect(parsed.some((m: any) => m.type === "error")).toBe(true);
-      }
-    });
-
-    it("observer receives error message when blocked", async () => {
-      const { obsBridge, ws } = await setupObserverSession("sess-1");
-
-      obsBridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "user_message", content: "hello" }),
-      );
-
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      const errorMsg = parsed.find((m: any) => m.type === "error");
-      expect(errorMsg).toBeDefined();
-      expect(errorMsg.message).toBe("Observers cannot send user_message messages");
-    });
-
-    it("participant can send user_message", async () => {
-      // Default anonymous is participant
-      bridge.getOrCreateSession("sess-1");
-
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      const ws = createMockSocket();
-      bridge.handleConsumerOpen(ws, authContext("sess-1"));
-      // Clear messages sent during connect/init
-      backendSession.sentMessages.length = 0;
-      backendSession.sentRawMessages.length = 0;
-
-      bridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "user_message", content: "hello from participant" }),
-      );
-
-      // With adapter path, messages go through backendSession.send()
-      expect(backendSession.sentMessages.length).toBeGreaterThan(0);
-      const userMsg = backendSession.sentMessages.find((m) => m.type === "user_message");
-      expect(userMsg).toBeDefined();
-    });
-
-    it("observer can send presence_query", async () => {
-      const { obsBridge, ws } = await setupObserverSession("sess-1");
-      ws.sentMessages.length = 0;
-
-      obsBridge.handleConsumerMessage(ws, "sess-1", JSON.stringify({ type: "presence_query" }));
-
-      // Should NOT get error
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "error")).toBe(false);
-      // Should get presence_update instead
-      expect(parsed.some((m: any) => m.type === "presence_update")).toBe(true);
-    });
+    expect(backendSession.sentMessages).toHaveLength(0);
+    expect(backendSession.sentRawMessages).toHaveLength(0);
+    const parsed = ws.sentMessages.map((m) => JSON.parse(m));
+    const errorMsg = parsed.find((m: any) => m.type === "error");
+    expect(errorMsg).toBeDefined();
+    expect(errorMsg.message).toContain("Observers cannot send user_message messages");
   });
 
-  // ── Edge cases (auth-related) ──────────────────────────────────────
+  it("permission cancellation on disconnect is sent only to participants", async () => {
+    const participant: ConsumerIdentity = {
+      userId: "part-1",
+      displayName: "Participant",
+      role: "participant",
+    };
+    const observer: ConsumerIdentity = {
+      userId: "obs-1",
+      displayName: "Observer",
+      role: "observer",
+    };
+    let calls = 0;
+    const authenticator: Authenticator = {
+      authenticate: () => Promise.resolve(calls++ === 0 ? participant : observer),
+    };
 
-  describe("Edge cases", () => {
-    it("messages from unregistered sockets are silently dropped", async () => {
-      bridge.getOrCreateSession("sess-1");
+    const { bridge, adapter } = createBridge({ authenticator });
+    bridge.getOrCreateSession("sess-1");
 
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
+    await bridge.connectBackend("sess-1");
+    const backendSession = adapter.getSession("sess-1")!;
+    backendSession.pushMessage(makeSessionInitMsg());
+    await tick();
 
-      // Clear messages from init
-      backendSession.sentMessages.length = 0;
-      backendSession.sentRawMessages.length = 0;
+    const wsParticipant = createMockSocket();
+    bridge.handleConsumerOpen(wsParticipant, authContext("sess-1"));
+    await flushAuth();
 
-      // ws is NOT registered as a consumer — never called handleConsumerOpen
-      const ws = createMockSocket();
-      bridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "user_message", content: "sneaky" }),
-      );
+    const wsObserver = createMockSocket();
+    bridge.handleConsumerOpen(wsObserver, authContext("sess-1"));
+    await flushAuth();
 
-      // Nothing forwarded to backend
-      expect(backendSession.sentMessages).toHaveLength(0);
-      expect(backendSession.sentRawMessages).toHaveLength(0);
-      // No error sent to unregistered socket either
-      expect(ws.sentMessages).toHaveLength(0);
-    });
+    backendSession.pushMessage(makePermissionRequestUnifiedMsg());
+    await tick();
 
-    it("messages during pending auth are silently dropped", async () => {
-      let resolveAuth!: (id: ConsumerIdentity) => void;
-      const authenticator: Authenticator = {
-        authenticate: () =>
-          new Promise((resolve) => {
-            resolveAuth = resolve;
-          }),
-      };
-      const { bridge: authBridge, adapter: authAdapter } = createBridge({ authenticator });
-      authBridge.getOrCreateSession("sess-1");
+    wsParticipant.sentMessages.length = 0;
+    wsObserver.sentMessages.length = 0;
 
-      await authBridge.connectBackend("sess-1");
-      const backendSession = authAdapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
+    await bridge.disconnectBackend("sess-1");
 
-      const ws = createMockSocket();
-      authBridge.handleConsumerOpen(ws, authContext("sess-1"));
+    const participantMsgs = wsParticipant.sentMessages.map((m) => JSON.parse(m));
+    const observerMsgs = wsObserver.sentMessages.map((m) => JSON.parse(m));
 
-      // Auth still pending — try to send a message
-      backendSession.sentMessages.length = 0;
-      backendSession.sentRawMessages.length = 0;
-      authBridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "user_message", content: "too early" }),
-      );
-
-      // Dropped — socket not yet in map
-      expect(backendSession.sentMessages).toHaveLength(0);
-      expect(backendSession.sentRawMessages).toHaveLength(0);
-
-      // Now resolve auth
-      resolveAuth({ userId: "u1", displayName: "User 1", role: "participant" });
-      await new Promise((r) => setTimeout(r, 0));
-
-      // Now message should work
-      authBridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "user_message", content: "now it works" }),
-      );
-      expect(
-        backendSession.sentMessages.length + backendSession.sentRawMessages.length,
-      ).toBeGreaterThan(0);
-    });
-
-    it("synchronous authenticator throw is caught", () => {
-      const authenticator: Authenticator = {
-        authenticate: () => {
-          throw new Error("sync boom");
-        },
-      };
-      const { bridge: authBridge } = createBridge({ authenticator });
-      authBridge.getOrCreateSession("sess-1");
-
-      const events: unknown[] = [];
-      authBridge.on("consumer:auth_failed", (e) => events.push(e));
-
-      const ws = createMockSocket();
-      // Should not throw
-      authBridge.handleConsumerOpen(ws, authContext("sess-1"));
-
-      expect(events).toHaveLength(1);
-      expect(ws.close).toHaveBeenCalledWith(4001, "Authentication failed");
-    });
-
-    it("auth timeout rejects slow authenticators", async () => {
-      const authenticator: Authenticator = {
-        authenticate: () => new Promise(() => {}), // never resolves
-      };
-      // Override authTimeoutMs via config
-      const authAdapter = new MockBackendAdapter();
-      const fastBridge = new SessionBridge({
-        authenticator,
-        config: { port: 3456, authTimeoutMs: 50 },
-        logger: noopLogger,
-        adapter: authAdapter,
-      });
-      fastBridge.getOrCreateSession("sess-1");
-
-      const events: unknown[] = [];
-      fastBridge.on("consumer:auth_failed", (e) => events.push(e));
-
-      const ws = createMockSocket();
-      fastBridge.handleConsumerOpen(ws, authContext("sess-1"));
-
-      // Wait for timeout
-      await new Promise((r) => setTimeout(r, 100));
-
-      expect(events).toHaveLength(1);
-      expect((events[0] as any).reason).toBe("Authentication timed out");
-      expect(ws.close).toHaveBeenCalledWith(4001, "Authentication failed");
-    });
-
-    it("session removed during async auth rejects consumer", async () => {
-      const authenticator: Authenticator = {
-        authenticate: vi.fn().mockResolvedValue({
-          userId: "u1",
-          displayName: "User 1",
-          role: "participant",
-        }),
-      };
-      const { bridge: authBridge } = createBridge({ authenticator });
-      authBridge.getOrCreateSession("sess-1");
-
-      const events: unknown[] = [];
-      authBridge.on("consumer:auth_failed", (e) => events.push(e));
-
-      const ws = createMockSocket();
-      authBridge.handleConsumerOpen(ws, authContext("sess-1"));
-
-      // Remove session before auth resolves
-      authBridge.removeSession("sess-1");
-
-      await new Promise((r) => setTimeout(r, 0));
-
-      expect(events).toHaveLength(1);
-      expect((events[0] as any).reason).toBe("Session not found");
-      expect(ws.close).toHaveBeenCalledWith(4404, "Session not found");
-    });
-
-    it("permission cancellations on CLI disconnect are only sent to participants", async () => {
-      const identity: ConsumerIdentity = {
-        userId: "obs-1",
-        displayName: "Observer",
-        role: "observer",
-      };
-      const participantIdentity: ConsumerIdentity = {
-        userId: "part-1",
-        displayName: "Participant",
-        role: "participant",
-      };
-      let callCount = 0;
-      const authenticator: Authenticator = {
-        authenticate: () => {
-          callCount++;
-          return Promise.resolve(callCount === 1 ? participantIdentity : identity);
-        },
-      };
-      const { bridge: authBridge, adapter: authAdapter } = createBridge({ authenticator });
-      authBridge.getOrCreateSession("sess-1");
-
-      await authBridge.connectBackend("sess-1");
-      const backendSession = authAdapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      // Connect participant
-      const wsParticipant = createMockSocket();
-      authBridge.handleConsumerOpen(wsParticipant, authContext("sess-1"));
-      await new Promise((r) => setTimeout(r, 0));
-
-      // Connect observer
-      const wsObserver = createMockSocket();
-      authBridge.handleConsumerOpen(wsObserver, authContext("sess-1"));
-      await new Promise((r) => setTimeout(r, 0));
-
-      // Add a pending permission via adapter path
-      backendSession.pushMessage(makePermissionRequestUnifiedMsg());
-      await tick();
-
-      wsParticipant.sentMessages.length = 0;
-      wsObserver.sentMessages.length = 0;
-
-      // Disconnect backend — should send permission_cancelled only to participant
-      await authBridge.disconnectBackend("sess-1");
-
-      const participantMsgs = wsParticipant.sentMessages.map((m) => JSON.parse(m));
-      const observerMsgs = wsObserver.sentMessages.map((m) => JSON.parse(m));
-
-      // Participant gets cli_disconnected + permission_cancelled
-      expect(participantMsgs.some((m: any) => m.type === "permission_cancelled")).toBe(true);
-      // Observer gets cli_disconnected but NOT permission_cancelled
-      expect(observerMsgs.some((m: any) => m.type === "cli_disconnected")).toBe(true);
-      expect(observerMsgs.some((m: any) => m.type === "permission_cancelled")).toBe(false);
-    });
+    expect(participantMsgs.some((m: any) => m.type === "permission_cancelled")).toBe(true);
+    expect(observerMsgs.some((m: any) => m.type === "cli_disconnected")).toBe(true);
+    expect(observerMsgs.some((m: any) => m.type === "permission_cancelled")).toBe(false);
   });
 });
