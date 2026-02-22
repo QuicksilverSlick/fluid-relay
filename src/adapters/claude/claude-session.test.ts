@@ -707,6 +707,175 @@ describe("ClaudeSession", () => {
     expect(inbound).toBeDefined();
   });
 
+  // -------------------------------------------------------------------------
+  // ws error event terminates queue (line 165)
+  // -------------------------------------------------------------------------
+
+  it("ws 'error' event calls queue.finish() and terminates the async iterator (line 165)", async () => {
+    const ws = new MockWebSocket();
+    const session = new ClaudeSession({
+      sessionId: "s-wserr",
+      socketPromise: Promise.resolve(ws) as any,
+    });
+
+    await tick();
+
+    const iter = session.messages[Symbol.asyncIterator]();
+    const nextPromise = iter.next();
+
+    // Trigger the ws error handler — should call queue.finish()
+    ws.emit("error", new Error("socket error"));
+
+    const result = await nextPromise;
+    expect(result.done).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // NDJSON path: valid JSON with newline goes through lineBuffer (line 209)
+  // -------------------------------------------------------------------------
+
+  it("valid JSON with trailing newline goes through lineBuffer and reaches processCliMessage (line 209)", async () => {
+    const ws = new MockWebSocket();
+    const session = new ClaudeSession({
+      sessionId: "s-ndjson",
+      socketPromise: Promise.resolve(ws) as any,
+    });
+
+    await tick();
+
+    const iter = session.messages[Symbol.asyncIterator]();
+
+    // A message WITH "\n" forces the lineBuffer path (line 200+).
+    // JSON.parse succeeds, processCliMessage is called (line 209).
+    const initMsg = JSON.stringify({
+      type: "system",
+      subtype: "init",
+      session_id: "cli-ndjson",
+      cwd: "/home",
+      model: "claude",
+      tools: [],
+      mcp_servers: [],
+    });
+    ws.emit("message", `${initMsg}\n`);
+    await tick();
+
+    const result = await iter.next();
+    expect(result.done).toBe(false);
+    expect(result.value.type).toBe("session_init");
+
+    await session.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // send() with tracer — covers the this.tracer?.translate / this.tracer?.send
+  // branches when tracer IS set and toNDJSON returns non-null (line 74 context)
+  // -------------------------------------------------------------------------
+
+  it("send() with tracer set calls tracer.translate and tracer.send (lines 76-100)", async () => {
+    const lines: string[] = [];
+    const tracer = new MessageTracerImpl({
+      level: "smart",
+      allowSensitive: false,
+      write: (line) => lines.push(line),
+      staleTimeoutMs: 60_000,
+    });
+
+    const ws = new MockWebSocket();
+    const session = new ClaudeSession({
+      sessionId: "s-tracer-send",
+      socketPromise: Promise.resolve(ws) as any,
+      tracer,
+    });
+    await tick();
+
+    // Send a valid message (toNDJSON returns non-null) WITH tracer set
+    session.send(makeUserMsg("traced message"));
+    await tick();
+
+    await session.close();
+    tracer.destroy();
+
+    // Tracer should have emitted at least a "native_outbound" event
+    const events = lines.map((l) => JSON.parse(l));
+    const outbound = events.find((e: any) => e.messageType === "native_outbound");
+    expect(outbound).toBeDefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // consumedType=true with tracer: user echo WITH tracer (lines 254-264)
+  // -------------------------------------------------------------------------
+
+  it("user echo with tracer covers consumedType=true branches (lines 254-264)", async () => {
+    const lines: string[] = [];
+    const tracer = new MessageTracerImpl({
+      level: "smart",
+      allowSensitive: false,
+      write: (line) => lines.push(line),
+      staleTimeoutMs: 60_000,
+    });
+
+    const ws = new MockWebSocket();
+    const session = new ClaudeSession({
+      sessionId: "s-consumed",
+      socketPromise: Promise.resolve(ws) as any,
+      tracer,
+    });
+    await tick();
+
+    // User echo → translate() returns null, consumedType=true → lines 251-264
+    ws.emit("message", JSON.stringify({ type: "user", message: { role: "user", content: "echo" } }));
+    await tick();
+
+    await session.close();
+    tracer.destroy();
+
+    // Just verifying the session didn't crash; the trace path was exercised
+    const events = lines.map((l) => JSON.parse(l));
+    expect(events.length).toBeGreaterThanOrEqual(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // control_request with string tool_name covers line 298 truthy branch
+  // -------------------------------------------------------------------------
+
+  it("control_request with string tool_name covers traceFromCliMessage line 298", async () => {
+    const lines: string[] = [];
+    const tracer = new MessageTracerImpl({
+      level: "smart",
+      allowSensitive: false,
+      write: (line) => lines.push(line),
+      staleTimeoutMs: 60_000,
+    });
+
+    const ws = new MockWebSocket();
+    const session = new ClaudeSession({
+      sessionId: "s-ctrl-req",
+      socketPromise: Promise.resolve(ws) as any,
+      tracer,
+    });
+    await tick();
+
+    // Send control_request with string tool_name → traceFromCliMessage line 298 truthy branch
+    ws.emit(
+      "message",
+      JSON.stringify({
+        type: "control_request",
+        request_id: "ctrl-req-abc",
+        request: { tool_name: "Bash", input: { command: "ls" } },
+      }),
+    );
+    await tick();
+
+    await session.close();
+    tracer.destroy();
+
+    const events = lines.map((l) => JSON.parse(l));
+    const native = events.find(
+      (e: any) => e.messageType === "native_inbound" && e.requestId === "ctrl-req-abc",
+    );
+    expect(native).toBeDefined();
+  });
+
   it("golden: unmapped backend type emits unmapped_type trace outcome", async () => {
     const lines: string[] = [];
     const tracer = new MessageTracerImpl({

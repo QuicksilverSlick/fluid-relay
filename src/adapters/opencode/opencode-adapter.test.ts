@@ -301,6 +301,27 @@ describe("OpencodeAdapter", () => {
     await expect(adapter.stop()).resolves.not.toThrow();
   });
 
+  it("launcher 'error' event is logged via logger.warn when a logger is set (line 87)", () => {
+    const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const adapterWithLogger = new OpencodeAdapter({
+      processManager: createMockProcessManager(),
+      port: 5555,
+      hostname: "127.0.0.1",
+      directory: "/test/dir",
+      logger: mockLogger,
+    });
+
+    // Directly emit 'error' on the internal launcher to cover the handler at line 86-88
+    (adapterWithLogger as any).launcher.emit("error", {
+      source: "test-source",
+      error: new Error("test launcher error"),
+    });
+
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Launcher error [test-source]: test launcher error"),
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Subscriber cleanup
   // -------------------------------------------------------------------------

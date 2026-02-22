@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import type { AuthContext } from "../interfaces/auth.js";
 import { OriginValidator } from "../server/origin-validator.js";
@@ -296,5 +296,43 @@ describe("NodeWebSocketServer", () => {
     const uninitServer = new NodeWebSocketServer({ port: 0 });
     // close() without ever calling listen() — wss is null
     await expect(uninitServer.close()).resolves.toBeUndefined();
+  });
+
+  // ── External HTTP server + originValidator (line 103 — verifyClient spread) ──
+
+  it("external server with originValidator rejects untrusted origins (line 103)", async () => {
+    const httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const addr = httpServer.address() as { port: number };
+    const port = addr.port;
+
+    const originValidator = new OriginValidator();
+    server = new NodeWebSocketServer({ port: 0, server: httpServer, originValidator });
+    await server.listen(() => {});
+
+    const ws = new WebSocket(`ws://localhost:${port}/ws/cli/${TEST_UUID_1}`, {
+      headers: { origin: "https://evil.com" },
+    });
+
+    const result = await new Promise<"error" | "open">((resolve) => {
+      ws.on("open", () => resolve("open"));
+      ws.on("error", () => resolve("error"));
+      ws.on("unexpected-response", () => resolve("error"));
+    });
+
+    expect(result).toBe("error");
+    ws.close();
+    await server.close();
+    server = null;
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  });
+
+  // ── wireConnectionHandler null guard (line 128 — early return when wss is null) ──
+
+  it("wireConnectionHandler returns immediately when wss is null (line 128)", () => {
+    const uninitServer = new NodeWebSocketServer({ port: 0 });
+    // wss is still null — call the private method directly to cover the early-return branch
+    (uninitServer as any).wireConnectionHandler(vi.fn());
+    // No error = null guard executed and returned
   });
 });
