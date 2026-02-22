@@ -2,14 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 
-import { MemoryStorage } from "../adapters/memory-storage.js";
+import type { MemoryStorage } from "../adapters/memory-storage.js";
 import {
   createBridgeWithAdapter,
   type MockBackendAdapter,
-  type MockBackendSession,
   makeAssistantUnifiedMsg,
-  makePermissionRequestUnifiedMsg,
-  makeResultUnifiedMsg,
   makeSessionInitMsg,
   setupInitializedSession,
   tick,
@@ -115,132 +112,6 @@ describe("SessionBridge", () => {
       expect(count).toBe(0);
       // Live session should still have the current cwd
       expect(bridge.getSession("sess-1")!.state.cwd).toBe("/test");
-    });
-
-    it("persistSession is triggered by system init", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      const persisted = storage.load("sess-1");
-      expect(persisted).not.toBeNull();
-      expect(persisted!.state.model).toBe("claude-sonnet-4-5-20250929");
-    });
-
-    it("persistSession is triggered by assistant message", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      backendSession.pushMessage(makeAssistantUnifiedMsg());
-      await tick();
-
-      const persisted = storage.load("sess-1");
-      expect(persisted).not.toBeNull();
-      expect(persisted!.messageHistory.length).toBeGreaterThan(0);
-    });
-
-    it("persistSession is triggered by result message", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      backendSession.pushMessage(makeResultUnifiedMsg());
-      await tick();
-
-      const persisted = storage.load("sess-1");
-      expect(persisted).not.toBeNull();
-      expect(persisted!.state.total_cost_usd).toBe(0.01);
-    });
-
-    it("persistSession is triggered by permission_request", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      backendSession.pushMessage(makePermissionRequestUnifiedMsg());
-      await tick();
-
-      const persisted = storage.load("sess-1");
-      expect(persisted).not.toBeNull();
-      expect(persisted!.pendingPermissions.length).toBe(1);
-    });
-
-    it("persistSession is triggered by sendUserMessage", async () => {
-      await bridge.connectBackend("sess-1");
-
-      bridge.sendUserMessage("sess-1", "Hello");
-
-      const persisted = storage.load("sess-1");
-      expect(persisted).not.toBeNull();
-      expect(persisted!.messageHistory.some((m) => m.type === "user_message")).toBe(true);
-    });
-
-    it("removeSession also removes from storage", async () => {
-      const backendSession = await setupInitializedSession(bridge, adapter, "sess-1");
-
-      expect(storage.load("sess-1")).not.toBeNull();
-
-      bridge.removeSession("sess-1");
-      expect(storage.load("sess-1")).toBeNull();
-    });
-  });
-
-  // ── 8. Message history trimming ────────────────────────────────────────
-
-  describe("Message history trimming (maxMessageHistoryLength)", () => {
-    it("trims message history when exceeding maxMessageHistoryLength", async () => {
-      const { bridge: trimBridge, adapter: trimAdapter } = createBridgeWithAdapter({
-        config: { port: 3456, maxMessageHistoryLength: 3 },
-      });
-      await trimBridge.connectBackend("sess-1");
-
-      // Send 5 user messages
-      for (let i = 0; i < 5; i++) {
-        trimBridge.sendUserMessage("sess-1", `Message ${i}`);
-      }
-
-      const snapshot = trimBridge.getSession("sess-1")!;
-      expect(snapshot.messageHistoryLength).toBe(3);
-    });
-
-    it("keeps the most recent messages after trimming", async () => {
-      const trimStorage = new MemoryStorage();
-      const { bridge: trimBridge } = createBridgeWithAdapter({
-        storage: trimStorage,
-        config: { port: 3456, maxMessageHistoryLength: 2 },
-      });
-      await trimBridge.connectBackend("sess-1");
-
-      trimBridge.sendUserMessage("sess-1", "First");
-      trimBridge.sendUserMessage("sess-1", "Second");
-      trimBridge.sendUserMessage("sess-1", "Third");
-
-      // The persisted history should contain only the last 2 messages
-      const persisted = trimStorage.load("sess-1")!;
-      expect(persisted.messageHistory).toHaveLength(2);
-      expect(persisted.messageHistory[0]).toEqual(
-        expect.objectContaining({ type: "user_message", content: "Second" }),
-      );
-      expect(persisted.messageHistory[1]).toEqual(
-        expect.objectContaining({ type: "user_message", content: "Third" }),
-      );
-    });
-
-    it("assistant and result messages also count toward the limit", async () => {
-      const { bridge: trimBridge, adapter: trimAdapter } = createBridgeWithAdapter({
-        config: { port: 3456, maxMessageHistoryLength: 2 },
-      });
-      await trimBridge.connectBackend("sess-1");
-      const trimBackendSession = trimAdapter.getSession("sess-1")!;
-
-      // user message -> assistant -> result = 3 history entries, limit is 2
-      trimBridge.sendUserMessage("sess-1", "hello");
-      trimBackendSession.pushMessage(makeAssistantUnifiedMsg());
-      await tick();
-      trimBackendSession.pushMessage(makeResultUnifiedMsg());
-      await tick();
-
-      expect(trimBridge.getSession("sess-1")!.messageHistoryLength).toBe(2);
     });
   });
 

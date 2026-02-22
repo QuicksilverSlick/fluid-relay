@@ -585,6 +585,78 @@ describe("UnifiedMessageRouter", () => {
         }),
       );
     });
+
+    it("persists session after result updates", () => {
+      const m = msg("result", {
+        subtype: "success",
+        is_error: false,
+        num_turns: 2,
+        total_cost_usd: 0.01,
+      });
+      router.route(session, m);
+
+      expect(deps.persistSession).toHaveBeenCalledWith(session);
+    });
+
+    it("result messages participate in max message-history trimming", () => {
+      deps = createDeps({ maxMessageHistoryLength: 2 });
+      router = new UnifiedMessageRouter(deps);
+
+      router.route(
+        session,
+        createUnifiedMessage({
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: "a1" }],
+          metadata: {
+            message_id: "a1",
+            model: "claude",
+            stop_reason: "end_turn",
+            parent_tool_use_id: null,
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+          },
+        }),
+      );
+      router.route(
+        session,
+        createUnifiedMessage({
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: "a2" }],
+          metadata: {
+            message_id: "a2",
+            model: "claude",
+            stop_reason: "end_turn",
+            parent_tool_use_id: null,
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+          },
+        }),
+      );
+
+      router.route(
+        session,
+        msg("result", {
+          subtype: "success",
+          is_error: false,
+          num_turns: 2,
+          total_cost_usd: 0.01,
+        }),
+      );
+
+      expect(session.messageHistory).toHaveLength(2);
+      expect(session.messageHistory[0].type).toBe("assistant");
+      expect(session.messageHistory[1].type).toBe("result");
+    });
   });
 
   // ── stream_event ──────────────────────────────────────────────────────

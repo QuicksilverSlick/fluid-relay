@@ -101,6 +101,7 @@ describe("SessionRuntime", () => {
     );
     expect(send).toHaveBeenCalledTimes(1);
     expect(runtime.getLifecycleState()).toBe("active");
+    expect(deps.persistSession).toHaveBeenCalledWith(session);
   });
 
   it("trims message history using runtime-owned max length", () => {
@@ -117,6 +118,27 @@ describe("SessionRuntime", () => {
     expect(session.messageHistory).toHaveLength(1);
     expect(session.messageHistory[0]).toEqual(
       expect.objectContaining({ type: "user_message", content: "new" }),
+    );
+  });
+
+  it("keeps the most recent user messages when trimming", () => {
+    const send = vi.fn();
+    const session = createMockSession({
+      id: "s1",
+      backendSession: { send } as any,
+    });
+    const runtime = new SessionRuntime(session, makeDeps({ maxMessageHistoryLength: 2 }));
+
+    runtime.sendUserMessage("first");
+    runtime.sendUserMessage("second");
+    runtime.sendUserMessage("third");
+
+    expect(session.messageHistory).toHaveLength(2);
+    expect(session.messageHistory[0]).toEqual(
+      expect.objectContaining({ type: "user_message", content: "second" }),
+    );
+    expect(session.messageHistory[1]).toEqual(
+      expect.objectContaining({ type: "user_message", content: "third" }),
     );
   });
 
