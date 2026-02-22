@@ -11,6 +11,7 @@
 - [Module Overview](#module-overview)
 - [Core Modules](#core-modules)
   - [SessionCoordinator](#sessioncoordinator)
+  - [SessionBridge](#sessionbridge)
   - [SessionRuntime](#sessionruntime)
   - [DomainEventBus](#domaineventbus)
 - [Consumer Plane](#consumer-plane)
@@ -193,10 +194,11 @@ The core is built around a **per-session runtime actor** (`SessionRuntime`) that
     │                  │
     ▼                  ▼
 ┌────────┐  ┌──────────────────────────────────────────────────────────┐
-│Domain  │  │               SessionBridge (~497L)                      │
+│Domain  │  │               SessionBridge (~386L)                      │
 │EventBus│  │                                                          │
 └────────┘  │  Wires four bounded contexts, delegates to extracted     │
-            │  services in src/core/bridge/ (12 focused modules)       │
+            │  services in src/core/bridge/ and composition builders    │
+            │  in src/core/session-bridge/                              │
             └───┬──────────┬──────────┬──────────┬─────────────────────┘
                 │          │          │          │
                 ▼          ▼          ▼          ▼
@@ -267,6 +269,56 @@ class SessionCoordinator {
   private startupRestoreService: StartupRestoreService
   private recoveryService: BackendRecoveryService
   private processLogService: ProcessLogService
+}
+```
+
+---
+
+### SessionBridge
+
+**File:** `src/core/session-bridge.ts` (~386 lines)  
+**Context:** SessionControl  
+**Writes state:** No (delegates all mutation to `SessionRuntime`)
+
+The SessionBridge is the **session-scoped orchestration facade** between transport/adapters and runtime state. It wires four bounded contexts (ConsumerPlane, BackendPlane, MessagePlane, SessionControl services) and exposes the APIs used by `SessionCoordinator`, transport modules, and adapter paths.
+
+**Composition model:**
+- **Runtime plane:** Composed by `src/core/session-bridge/compose-runtime-plane.ts`
+- **Consumer plane:** Composed by `src/core/session-bridge/compose-consumer-plane.ts`
+- **Message plane:** Composed by `src/core/session-bridge/compose-message-plane.ts`
+- **Backend plane:** Composed by `src/core/session-bridge/compose-backend-plane.ts`
+- Shared composition contracts live in `src/core/session-bridge/types.ts`
+
+**Responsibilities:**
+- **Route consumer commands:** `ConsumerGateway` validates/authz/rate-limits and forwards commands to runtime command handlers
+- **Route backend messages:** `BackendConnector` receives adapter output and forwards unified messages through runtime + router pipeline
+- **Expose session APIs:** programmatic send/interrupt/model/permission/slash operations, session info, backend connect/disconnect, consumer broadcasts
+- **Orchestrate lifecycle close:** close all sessions, then flush storage if supported (`SessionStorage.flush?()`), then tear down tracer/listeners
+- **Emit bridge events:** forwards runtime/lifecycle events for coordinator-level services
+
+**Does NOT do:**
+- Own mutable session state (runtime does)
+- Implement message reduction/mapping logic (delegates to reducer/router/normalizer)
+- Implement adapter-specific transport logic (delegates to connector/gateway)
+
+```typescript
+class SessionBridge {
+  constructor(options?: SessionBridgeInitOptions) // composes runtime/consumer/message/backend planes
+
+  // Consumer transport entry points
+  handleConsumerOpen(ws, context): void
+  handleConsumerMessage(ws, sessionId, data): void
+  handleConsumerClose(ws, sessionId): void
+
+  // Programmatic and backend APIs
+  sendUserMessage(sessionId, content, options?): void
+  connectBackend(sessionId, options?): Promise<void>
+  disconnectBackend(sessionId): Promise<void>
+  executeSlashCommand(sessionId, command): Promise<...>
+
+  // Lifecycle
+  closeSession(sessionId): Promise<void>
+  close(): Promise<void> // includes storage flush when available
 }
 ```
 
@@ -453,6 +505,12 @@ The BackendConnector manages adapter lifecycle, the backend message consumption 
 - **Stop adapters:** Call `AdapterResolver.stopAll?.()` for graceful shutdown (prevents orphan adapter-managed processes)
 - **Stream end handling:** When the async iterable ends, call `runtime.handleBackendStreamEnd()` to trigger disconnection domain events
 
+**Inverted connection path (CLI calls back via WebSocket):**
+- `SessionTransportHub` routes `/ws/cli/:sessionId` callbacks to `CliGateway`
+- `CliGateway` validates launch state, resolves an inverted adapter, and creates a proxy via `BufferedWebSocket`
+- `BufferedWebSocket` buffers early inbound CLI messages until the adapter registers its first `message` handler, then replays exactly once in order
+- After `bridge.connectBackend(sessionId)` succeeds, `adapter.deliverSocket(...)` receives the proxied socket
+
 **Does NOT do:**
 - Own adapter implementation details (that's each `BackendAdapter`)
 - Decide what to do with messages (that's the runtime)
@@ -557,25 +615,25 @@ Policy services follow the **observe and advise** pattern: they subscribe to dom
 
 **File:** `src/core/session/session-repository.ts` (~253 lines)
 **Context:** SessionControl
-**Writes state:** No (reads snapshots)
+**Writes state:** Yes (owns in-memory `Session` map and persistence I/O delegation)
 
-The SessionRepository persists and restores **snapshots** — immutable point-in-time copies of session state. It never holds references to live mutable state.
+The SessionRepository owns the in-memory session map (`Map<string, Session>`), creates live `Session` objects, provides session/query helpers, and delegates persistence operations to `SessionStorage`.
 
 **Responsibilities:**
-- **Persist snapshots:** Accept a `SessionSnapshot` (copied from the runtime) and write it to storage. Backed by `FileStorage` with debounced writes and schema versioning
-- **Remove sessions:** Delete persisted state for a given session ID
-- **Restore all:** On startup, read all persisted snapshots and return them as `RestoredSession[]` for the coordinator to rebuild runtimes
+- **Own live sessions:** `getOrCreate()`, `get()`, `has()`, `keys()`, and `remove()` over live `Session` objects
+- **Expose query snapshots:** `getSnapshot()` and `getAllStates()` for read models
+- **Persist session state:** `persist(session)` delegates to storage save
+- **Restore sessions:** `restoreAll()` reconstructs live `Session` objects from persisted data
 
-**Snapshot structure:**
+**Persisted structure:**
 ```typescript
-interface SessionSnapshot {
+interface PersistedSession {
   id: string
   state: SessionState
-  history: readonly ConsumerMessage[]
-  pendingMessages: readonly UnifiedMessage[]
-  pendingPermissions: readonly [string, PermissionRequest][]
+  messageHistory: ConsumerMessage[]
+  pendingMessages: UnifiedMessage[]
+  pendingPermissions: [string, PermissionRequest][]
   adapterName?: string
-  backendSessionId?: string
 }
 ```
 
@@ -1249,7 +1307,7 @@ CoreSessionState → DevToolSessionState → SessionState
 | Module | Responsibility |
 |--------|----------------|
 | **BeamCodeError** | Structured error hierarchy (StorageError, ProcessError, etc.) |
-| **FileStorage** | Debounced file writes with schema versioning |
+| **FileStorage** | Debounced file writes with schema versioning and `flush()` for shutdown durability |
 | **StateMigrator** | Schema version migration chain (v0 → v1+) |
 | **StructuredLogger** | JSON-line logging with component context and level filtering |
 | **SlidingWindowBreaker** | Circuit breaker with snapshot API for UI visibility |
@@ -1271,7 +1329,7 @@ CoreSessionState → DevToolSessionState → SessionState
                 ▼       ▼        ▼            ▼
   ┌──────────────┐ ┌─────┐ ┌──────────────┐ ┌───────────────┐
   │ coordinator/ │ │event│ │ SessionBridge│ │   Process     │
-  │ •EventRelay  │ │s/   │ │  (~497L)     │ │   Supervisor  │
+  │ •EventRelay  │ │s/   │ │  (~386L)     │ │   Supervisor  │
   │ •Recovery    │ │dom- │ │              │ │  (coordinator/│
   │ •LogService  │ │ain- │ └──────┬───────┘ │   ~278L)      │
   │ •Restore     │ │event│        │         └───────────────┘
@@ -1338,7 +1396,7 @@ CoreSessionState → DevToolSessionState → SessionState
 ```
 src/core/
 ├── session-coordinator.ts           — top-level facade + lifecycle (~403L)
-├── session-bridge.ts                — wires four bounded contexts (~497L)
+├── session-bridge.ts                — wires four bounded contexts (~386L)
 ├── index.ts                         — barrel exports (~80L)
 │
 ├── backend/                         — BackendPlane
@@ -1357,6 +1415,13 @@ src/core/
 │   ├── slash-service-factory.ts     — constructs SlashCommandService + handler chain (~67L)
 │   ├── session-bridge-deps-factory.ts — factory fns for component dep injection (~200L)
 │   └── message-tracing-utils.ts     — traced normalize + ID generators (~52L)
+│
+├── session-bridge/                  — SessionBridge composition modules
+│   ├── compose-runtime-plane.ts     — runtime/core infrastructure composition
+│   ├── compose-consumer-plane.ts    — ConsumerPlane composition
+│   ├── compose-message-plane.ts     — MessagePlane + lifecycle composition
+│   ├── compose-backend-plane.ts     — BackendPlane composition
+│   └── types.ts                     — shared composition types
 │
 ├── capabilities/                    — Capabilities handshake policy
 │   └── capabilities-policy.ts       — observe + advise (~191L)
@@ -1406,6 +1471,7 @@ src/core/
 │   ├── session-lifecycle.ts         — lifecycle state transitions
 │   ├── session-transport-hub.ts     — transport wiring per session
 │   ├── cli-gateway.ts              — CLI WebSocket connection handler
+│   ├── buffered-websocket.ts        — early message buffering + single replay proxy
 │   ├── git-info-tracker.ts          — git branch/repo resolution (~110L)
 │   ├── message-queue-handler.ts     — queued message drain logic
 │   ├── async-message-queue.ts       — async message queue implementation
@@ -1437,7 +1503,7 @@ src/adapters/
 ├── opencode/                     — OpenCode (REST+SSE, demuxed sessions)
 ├── adapter-resolver.ts           — Resolves adapter by name
 ├── create-adapter.ts             — Factory for all adapters
-├── file-storage.ts               — SessionStorage impl (debounced + migrator)
+├── file-storage.ts               — SessionStorage impl (debounced + flush + migrator)
 ├── state-migrator.ts             — Schema versioning, migration chain
 ├── structured-logger.ts          — JSON-line logging
 ├── sliding-window-breaker.ts     — Circuit breaker
@@ -1465,7 +1531,7 @@ shared/                           — Flattened types for frontend (NO core/ imp
 │                                                                      │
 │  BackendAdapter         → connect(options): Promise<BackendSession>  │
 │  BackendSession         → send(), messages (AsyncIterable), close()  │
-│  SessionStorage         → save(), load(), loadAll(), remove()        │
+│  SessionStorage         → save(), saveSync(), flush?(), load(), loadAll(), remove(), setArchived() │
 │  Authenticator          → authenticate(context)                      │
 │  OperationalHandler     → handle(command): Promise<OperationalResp>  │
 │  Logger                 → debug(), info(), warn(), error()           │

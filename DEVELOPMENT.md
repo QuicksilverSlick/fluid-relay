@@ -14,9 +14,9 @@ Architecture reference, testing, and message tracing.
 
 ## Architecture
 
-See [docs/architecture-diagram.md](docs/architecture-diagram.md) for the full architecture diagram, data flows, module decomposition, and package structure.
+See [docs/architecture.md](docs/architecture.md) for architecture diagrams, data flows, module decomposition, and package structure.
 
-**Summary:** An HTTP+WS server routes `ConsumerMessage` / `InboundMessage` through `SessionBridge` (~500L, decomposed into 12 focused modules in `bridge/`) and `SessionCoordinator` (~400L, with 5 extracted services in `coordinator/`) to a `BackendAdapter` — Claude, ACP, Codex, Gemini, or OpenCode. Core logic is organized into 13 subdirectories under `src/core/`: `backend/`, `bridge/`, `capabilities/`, `consumer/`, `coordinator/`, `events/`, `interfaces/`, `messaging/`, `policies/`, `session/`, `slash/`, `team/`, `types/`. A daemon layer manages process lifecycle; a relay layer adds Cloudflare Tunnel + E2E encryption for remote access.
+**Summary:** An HTTP+WS server routes `ConsumerMessage` / `InboundMessage` through `SessionBridge` (~386L, composition split across `bridge/` and `session-bridge/`) and `SessionCoordinator` (~400L, with extracted services in `coordinator/`) to a `BackendAdapter` — Claude, ACP, Codex, Gemini, or OpenCode. Core logic is organized into 14 subdirectories under `src/core/`: `backend/`, `bridge/`, `capabilities/`, `consumer/`, `coordinator/`, `events/`, `interfaces/`, `messaging/`, `policies/`, `session/`, `session-bridge/`, `slash/`, `team/`, `types/`. A daemon layer manages process lifecycle; a relay layer adds Cloudflare Tunnel + E2E encryption for remote access.
 
 ---
 
