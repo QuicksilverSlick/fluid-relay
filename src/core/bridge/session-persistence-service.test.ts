@@ -7,6 +7,7 @@ function createService() {
   const store = {
     restoreAll: vi.fn().mockReturnValue(0),
     persist: vi.fn(),
+    persistSync: vi.fn(),
     getStorage: vi.fn().mockReturnValue(null),
   } as unknown as SessionRepository;
 
@@ -45,6 +46,13 @@ describe("SessionPersistenceService", () => {
     const session = { id: "s1" } as any;
     service.persist(session);
     expect(store.persist).toHaveBeenCalledWith(session);
+  });
+
+  it("persistSync delegates to store.persistSync", () => {
+    const { service, store } = createService();
+    const session = { id: "s1" } as any;
+    service.persistSync(session);
+    expect(store.persistSync).toHaveBeenCalledWith(session);
   });
 
   it("getStorage delegates to store.getStorage", () => {

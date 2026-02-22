@@ -71,6 +71,16 @@ export class MessageQueueHandler {
     },
     ws: WebSocketLike,
   ): void {
+    // Enforce single-slot semantics before any fast-path dispatch. This keeps
+    // restored queue state authoritative after restart.
+    if (this.getQueuedMessage(session)) {
+      this.broadcaster.sendTo(ws, {
+        type: "error",
+        message: "A message is already queued for this session",
+      });
+      return;
+    }
+
     // If session is idle or its status is unknown, send immediately as user_message.
     // Otherwise (e.g. "running", "compacting"), proceed to queue it.
     const status = this.getLastStatus(session);
@@ -81,15 +91,6 @@ export class MessageQueueHandler {
       // null/idle and bypasses the queue.
       this.setLastStatus(session, "running");
       this.sendUserMessage(session.id, msg.content, { images: msg.images });
-      return;
-    }
-
-    // Reject if a message is already queued
-    if (this.getQueuedMessage(session)) {
-      this.broadcaster.sendTo(ws, {
-        type: "error",
-        message: "A message is already queued for this session",
-      });
       return;
     }
 

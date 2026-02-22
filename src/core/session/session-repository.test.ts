@@ -242,6 +242,57 @@ describe("SessionRepository", () => {
       // Should not throw
       nullStore.persist(session);
     });
+
+    it("includes queuedMessage when serializing session state", () => {
+      const session = store.getOrCreate("s1");
+      session.queuedMessage = {
+        consumerId: "u1",
+        displayName: "User One",
+        content: "queued text",
+        queuedAt: 123,
+      };
+
+      store.persist(session);
+
+      expect(storage.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "s1",
+          queuedMessage: expect.objectContaining({
+            consumerId: "u1",
+            content: "queued text",
+          }),
+        }),
+      );
+    });
+  });
+
+  describe("persistSync", () => {
+    it("calls storage.saveSync() with queuedMessage included", () => {
+      const session = store.getOrCreate("s1");
+      session.queuedMessage = {
+        consumerId: "u1",
+        displayName: "User One",
+        content: "queued sync",
+        queuedAt: 456,
+      };
+
+      store.persistSync(session);
+
+      expect(storage.saveSync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "s1",
+          queuedMessage: expect.objectContaining({
+            content: "queued sync",
+          }),
+        }),
+      );
+    });
+
+    it("is a no-op when storage is null", () => {
+      const nullStore = new SessionRepository(null, createFactories());
+      const session = nullStore.getOrCreate("s1");
+      nullStore.persistSync(session);
+    });
   });
 
   describe("restoreAll", () => {
@@ -262,6 +313,12 @@ describe("SessionRepository", () => {
             } as any,
           ],
         ],
+        queuedMessage: {
+          consumerId: "u1",
+          displayName: "User One",
+          content: "restored queued",
+          queuedAt: 999,
+        },
       };
       (storage.loadAll as ReturnType<typeof vi.fn>).mockReturnValue([persisted]);
       const count = store.restoreAll();
@@ -271,6 +328,9 @@ describe("SessionRepository", () => {
       expect(session.messageHistory).toHaveLength(1);
       expect(session.pendingMessages).toEqual(["queued"]);
       expect(session.pendingPermissions.get("p1")).toBeDefined();
+      expect(session.queuedMessage).toEqual(
+        expect.objectContaining({ content: "restored queued", consumerId: "u1" }),
+      );
     });
 
     it("skips sessions that already exist (no overwrite)", () => {
