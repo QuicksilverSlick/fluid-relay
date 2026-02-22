@@ -8,10 +8,10 @@
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { ProcessSupervisorOptions } from "../../core/coordinator/process-supervisor.js";
+import { ProcessSupervisor } from "../../core/coordinator/process-supervisor.js";
 import type { SessionLauncher } from "../../core/interfaces/session-launcher.js";
 import type { RegisterSessionInput } from "../../core/interfaces/session-registry.js";
-import type { ProcessSupervisorOptions } from "../../core/process-supervisor.js";
-import { ProcessSupervisor } from "../../core/process-supervisor.js";
 import type { Logger } from "../../interfaces/logger.js";
 import type { ProcessManager, SpawnOptions } from "../../interfaces/process-manager.js";
 import type { LauncherStateStorage } from "../../interfaces/storage.js";

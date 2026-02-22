@@ -26,6 +26,11 @@ export { CURRENT_SCHEMA_VERSION, migrateSession } from "./adapters/state-migrato
 export type { StructuredLoggerOptions } from "./adapters/structured-logger.js";
 export { LogLevel, StructuredLogger } from "./adapters/structured-logger.js";
 export { CapabilitiesPolicy } from "./core/capabilities-policy.js";
+export type {
+  ProcessSupervisorOptions,
+  SupervisorEventMap,
+} from "./core/coordinator/process-supervisor.js";
+export { ProcessSupervisor } from "./core/coordinator/process-supervisor.js";
 export { DomainEventBus } from "./core/events/domain-event-bus.js";
 export { TypedEventEmitter } from "./core/events/typed-emitter.js";
 export type {
@@ -50,8 +55,6 @@ export type {
   TeamObserver,
 } from "./core/interfaces/extensions.js";
 export type { RegisterSessionInput, SessionRegistry } from "./core/interfaces/session-registry.js";
-export type { ProcessSupervisorOptions, SupervisorEventMap } from "./core/process-supervisor.js";
-export { ProcessSupervisor } from "./core/process-supervisor.js";
 export type { LifecycleState } from "./core/session/session-lifecycle.js";
 export {
   isLifecycleTransitionAllowed,

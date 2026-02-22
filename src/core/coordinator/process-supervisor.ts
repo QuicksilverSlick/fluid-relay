@@ -9,12 +9,12 @@
  * @module BackendPlane
  */
 
-import { toBeamCodeError } from "../errors.js";
-import type { CircuitBreaker } from "../interfaces/circuit-breaker.js";
-import type { Logger } from "../interfaces/logger.js";
-import type { ProcessHandle, ProcessManager } from "../interfaces/process-manager.js";
-import { noopLogger } from "../utils/noop-logger.js";
-import { TypedEventEmitter } from "./events/typed-emitter.js";
+import { toBeamCodeError } from "../../errors.js";
+import type { CircuitBreaker } from "../../interfaces/circuit-breaker.js";
+import type { Logger } from "../../interfaces/logger.js";
+import type { ProcessHandle, ProcessManager } from "../../interfaces/process-manager.js";
+import { noopLogger } from "../../utils/noop-logger.js";
+import { TypedEventEmitter } from "../events/typed-emitter.js";
 
 /** Circuit breaker snapshot included in process:exited when breaker is not CLOSED. */
 export interface BreakerSnapshot {

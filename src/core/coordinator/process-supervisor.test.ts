@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { SlidingWindowBreaker } from "../adapters/sliding-window-breaker.js";
-import type { ProcessHandle, SpawnOptions } from "../interfaces/process-manager.js";
-import { flushPromises, noopLogger } from "../testing/cli-message-factories.js";
-import { MockProcessManager } from "../testing/mock-process-manager.js";
+import { SlidingWindowBreaker } from "../../adapters/sliding-window-breaker.js";
+import type { ProcessHandle, SpawnOptions } from "../../interfaces/process-manager.js";
+import { flushPromises, noopLogger } from "../../testing/cli-message-factories.js";
+import { MockProcessManager } from "../../testing/mock-process-manager.js";
 import type { SupervisorEventMap } from "./process-supervisor.js";
 import { ProcessSupervisor } from "./process-supervisor.js";
 

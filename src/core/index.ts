@@ -4,6 +4,11 @@ export { BackendConnector } from "./backend/backend-connector.js";
 export { CapabilitiesPolicy } from "./capabilities-policy.js";
 export { CliGateway } from "./cli-gateway.js";
 export { ConsumerGateway } from "./consumer/consumer-gateway.js";
+export type {
+  ProcessSupervisorOptions,
+  SupervisorEventMap,
+} from "./coordinator/process-supervisor.js";
+export { ProcessSupervisor } from "./coordinator/process-supervisor.js";
 export { DomainEventBus } from "./events/domain-event-bus.js";
 export { TypedEventEmitter } from "./events/typed-emitter.js";
 // ─── Interface / type re-exports ─────────────────────────────────────────────
@@ -30,8 +35,6 @@ export type {
 } from "./interfaces/extensions.js";
 export { IdlePolicy } from "./policies/idle-policy.js";
 export { ReconnectPolicy } from "./policies/reconnect-policy.js";
-export type { ProcessSupervisorOptions, SupervisorEventMap } from "./process-supervisor.js";
-export { ProcessSupervisor } from "./process-supervisor.js";
 export {
   isLifecycleTransitionAllowed,
   LIFECYCLE_STATES,
