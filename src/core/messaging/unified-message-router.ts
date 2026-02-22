@@ -23,7 +23,7 @@ import type { SessionState } from "../../types/session-state.js";
 import type { CapabilitiesPolicy } from "../capabilities-policy.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import { applyGitInfo, type GitInfoTracker } from "../git-info-tracker.js";
-import type { MessageQueueHandler } from "../message-queue-handler.js";
+import type { MessageQueueHandler } from "../session/message-queue-handler.js";
 import type { Session } from "../session/session-repository.js";
 import { reduce as reduceState } from "../session/session-state-reducer.js";
 import { diffTeamState } from "../team/team-event-differ.js";

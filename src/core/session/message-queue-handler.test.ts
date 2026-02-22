@@ -4,8 +4,8 @@ import {
   createTestSocket,
   findMessage,
   noopLogger,
-} from "../testing/cli-message-factories.js";
-import { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
+} from "../../testing/cli-message-factories.js";
+import { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import { MessageQueueHandler } from "./message-queue-handler.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
