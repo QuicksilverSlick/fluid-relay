@@ -13,7 +13,7 @@ import type {
   BackendSession,
   ConnectOptions,
 } from "../../core/interfaces/backend-adapter.js";
-import type { MessageTracer } from "../../core/message-tracer.js";
+import type { MessageTracer } from "../../core/messaging/message-tracer.js";
 import type { Logger } from "../../interfaces/logger.js";
 import type { ProcessManager } from "../../interfaces/process-manager.js";
 import { resolvePackageVersion } from "../../utils/resolve-package-version.js";

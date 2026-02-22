@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reduce } from "../../core/session-state-reducer.js";
+import { reduce } from "../../core/session/session-state-reducer.js";
 import { createUnifiedMessage } from "../../core/types/unified-message.js";
 import { makeDefaultSessionState, makeToolUseMessage } from "../../testing/fixtures.js";
 import type { SessionState } from "../../types/session-state.js";

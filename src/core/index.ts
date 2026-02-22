@@ -1,12 +1,15 @@
 // ─── Class exports ───────────────────────────────────────────────────────────
 
-export { BackendConnector } from "./backend-connector.js";
-export { CapabilitiesPolicy } from "./capabilities-policy.js";
-export { CliGateway } from "./cli-gateway.js";
-export { ConsumerGateway } from "./consumer-gateway.js";
-export { DomainEventBus } from "./domain-event-bus.js";
-export { IdlePolicy } from "./idle-policy.js";
-
+export { BackendConnector } from "./backend/backend-connector.js";
+export { CapabilitiesPolicy } from "./capabilities/capabilities-policy.js";
+export { ConsumerGateway } from "./consumer/consumer-gateway.js";
+export type {
+  ProcessSupervisorOptions,
+  SupervisorEventMap,
+} from "./coordinator/process-supervisor.js";
+export { ProcessSupervisor } from "./coordinator/process-supervisor.js";
+export { DomainEventBus } from "./events/domain-event-bus.js";
+export { TypedEventEmitter } from "./events/typed-emitter.js";
 // ─── Interface / type re-exports ─────────────────────────────────────────────
 export type {
   BackendAdapter,
@@ -29,19 +32,18 @@ export type {
   Reconnectable,
   TeamObserver,
 } from "./interfaces/extensions.js";
-export type { ProcessSupervisorOptions, SupervisorEventMap } from "./process-supervisor.js";
-export { ProcessSupervisor } from "./process-supervisor.js";
-export { ReconnectPolicy } from "./reconnect-policy.js";
-export { SessionBridge } from "./session-bridge.js";
-export { SessionCoordinator, type SessionCoordinatorOptions } from "./session-coordinator.js";
+export { IdlePolicy } from "./policies/idle-policy.js";
+export { ReconnectPolicy } from "./policies/reconnect-policy.js";
+export { CliGateway } from "./session/cli-gateway.js";
 export {
   isLifecycleTransitionAllowed,
   LIFECYCLE_STATES,
   type LifecycleState,
-} from "./session-lifecycle.js";
-export { SessionRepository } from "./session-repository.js";
-export { SessionRuntime } from "./session-runtime.js";
-export { TypedEventEmitter } from "./typed-emitter.js";
+} from "./session/session-lifecycle.js";
+export { SessionRepository } from "./session/session-repository.js";
+export { SessionRuntime } from "./session/session-runtime.js";
+export { SessionBridge } from "./session-bridge.js";
+export { SessionCoordinator, type SessionCoordinatorOptions } from "./session-coordinator.js";
 export type {
   CoreSessionState,
   DevToolSessionState,

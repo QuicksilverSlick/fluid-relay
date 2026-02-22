@@ -16,7 +16,7 @@ import {
   MessageTracerImpl,
   noopTracer,
   type TraceLevel,
-} from "../../core/message-tracer.js";
+} from "../../core/messaging/message-tracer.js";
 import { SessionCoordinator } from "../../core/session-coordinator.js";
 import type { Authenticator } from "../../interfaces/auth.js";
 import type { LauncherStateStorage, SessionStorage } from "../../interfaces/storage.js";

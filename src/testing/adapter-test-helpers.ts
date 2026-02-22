@@ -12,14 +12,14 @@
 
 import { translate } from "../adapters/claude/message-translator.js";
 import { MemoryStorage } from "../adapters/memory-storage.js";
-import type { RateLimiterFactory } from "../core/consumer-gatekeeper.js";
+import type { RateLimiterFactory } from "../core/consumer/consumer-gatekeeper.js";
 import type {
   BackendAdapter,
   BackendCapabilities,
   BackendSession,
   ConnectOptions,
 } from "../core/interfaces/backend-adapter.js";
-import type { MessageTracer } from "../core/message-tracer.js";
+import type { MessageTracer } from "../core/messaging/message-tracer.js";
 import { SessionBridge } from "../core/session-bridge.js";
 import type { UnifiedMessage } from "../core/types/unified-message.js";
 import { createUnifiedMessage } from "../core/types/unified-message.js";

@@ -62,9 +62,9 @@ SessionCoordinator → SessionRuntime → BackendAdapter → BackendSession
 
 | | Boundary | File |
 |-|----------|------|
-| T1 | `ConsumerMessage → UnifiedMessage` | `src/core/inbound-normalizer.ts` |
+| T1 | `ConsumerMessage → UnifiedMessage` | `src/core/messaging/inbound-normalizer.ts` |
 | T2 | `UnifiedMessage → NativeCLI` | adapter `send()` |
 | T3 | `NativeCLI → UnifiedMessage` | adapter message loop |
-| T4 | `UnifiedMessage → ConsumerMessage` | `src/core/unified-message-router.ts` |
+| T4 | `UnifiedMessage → ConsumerMessage` | `src/core/messaging/unified-message-router.ts` |
 
 **Debugging:** `dumpTraceOnFailure()` fires automatically on test failure. For deeper inspection add `BEAMCODE_TRACE=1`, redirect stderr to `trace.ndjson`, then run `pnpm trace:inspect`. A `-field` entry in the diff means it was silently dropped at that boundary. See [DEVELOPMENT.md](DEVELOPMENT.md) for the full guide.

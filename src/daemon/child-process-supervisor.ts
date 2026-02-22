@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { ProcessSupervisorOptions } from "../core/process-supervisor.js";
-import { ProcessSupervisor } from "../core/process-supervisor.js";
+import type { ProcessSupervisorOptions } from "../core/coordinator/process-supervisor.js";
+import { ProcessSupervisor } from "../core/coordinator/process-supervisor.js";
 import type { Logger } from "../interfaces/logger.js";
 import type { ProcessManager } from "../interfaces/process-manager.js";
 

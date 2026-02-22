@@ -25,8 +25,14 @@ export { NodeWebSocketServer } from "./adapters/node-ws-server.js";
 export { CURRENT_SCHEMA_VERSION, migrateSession } from "./adapters/state-migrator.js";
 export type { StructuredLoggerOptions } from "./adapters/structured-logger.js";
 export { LogLevel, StructuredLogger } from "./adapters/structured-logger.js";
-export { CapabilitiesPolicy } from "./core/capabilities-policy.js";
-export { DomainEventBus } from "./core/domain-event-bus.js";
+export { CapabilitiesPolicy } from "./core/capabilities/capabilities-policy.js";
+export type {
+  ProcessSupervisorOptions,
+  SupervisorEventMap,
+} from "./core/coordinator/process-supervisor.js";
+export { ProcessSupervisor } from "./core/coordinator/process-supervisor.js";
+export { DomainEventBus } from "./core/events/domain-event-bus.js";
+export { TypedEventEmitter } from "./core/events/typed-emitter.js";
 export type {
   BackendAdapter,
   BackendCapabilities,
@@ -49,18 +55,18 @@ export type {
   TeamObserver,
 } from "./core/interfaces/extensions.js";
 export type { RegisterSessionInput, SessionRegistry } from "./core/interfaces/session-registry.js";
-export type { ProcessSupervisorOptions, SupervisorEventMap } from "./core/process-supervisor.js";
-export { ProcessSupervisor } from "./core/process-supervisor.js";
+export type { LifecycleState } from "./core/session/session-lifecycle.js";
+export {
+  isLifecycleTransitionAllowed,
+  LIFECYCLE_STATES,
+} from "./core/session/session-lifecycle.js";
+export { SessionRuntime } from "./core/session/session-runtime.js";
+export { SimpleSessionRegistry } from "./core/session/simple-session-registry.js";
 export { SessionBridge } from "./core/session-bridge.js";
 export type { SessionCoordinatorOptions } from "./core/session-coordinator.js";
 export { SessionCoordinator } from "./core/session-coordinator.js";
-export type { LifecycleState } from "./core/session-lifecycle.js";
-export { isLifecycleTransitionAllowed, LIFECYCLE_STATES } from "./core/session-lifecycle.js";
-export { SessionRuntime } from "./core/session-runtime.js";
-export { SimpleSessionRegistry } from "./core/simple-session-registry.js";
-export type { SlashCommandResult } from "./core/slash-command-executor.js";
-export { SlashCommandExecutor } from "./core/slash-command-executor.js";
-export { TypedEventEmitter } from "./core/typed-emitter.js";
+export type { SlashCommandResult } from "./core/slash/slash-command-executor.js";
+export { SlashCommandExecutor } from "./core/slash/slash-command-executor.js";
 // Core types
 export type {
   CoreSessionState,

@@ -152,7 +152,7 @@ function checkForbiddenFiles(ruleId, files, evidence) {
 }
 
 function checkRuntimeStateMutationGuard() {
-  const runtimeFile = "src/core/session-runtime.ts";
+  const runtimeFile = "src/core/session/session-runtime.ts";
   if (!exists(runtimeFile)) {
     return [
       {
@@ -185,7 +185,7 @@ function checkRuntimeStateMutationGuard() {
 }
 
 function checkRuntimeOwnedFieldMutationGuard() {
-  const runtimeFile = "src/core/session-runtime.ts";
+  const runtimeFile = "src/core/session/session-runtime.ts";
   if (!exists(runtimeFile)) {
     return [
       {
@@ -234,7 +234,7 @@ function checkRuntimeOwnedFieldMutationGuard() {
 }
 
 function checkSlashRegistryMutationGuard() {
-  const allow = new Set(["src/core/session-runtime.ts"]);
+  const allow = new Set(["src/core/session/session-runtime.ts"]);
 
   const files = walk(resolve(root, "src/core"))
     .map(toRel)
@@ -267,10 +267,10 @@ function main() {
   const nowDate = new Date();
   const waivers = loadWaivers();
 
-  const transportFiles = ["src/core/consumer-gateway.ts", "src/core/session-transport-hub.ts"];
+  const transportFiles = ["src/core/consumer/consumer-gateway.ts", "src/core/session/session-transport-hub.ts"];
   const bridgeFiles = ["src/core/session-bridge.ts"];
   const managerFiles = ["src/core/session-coordinator.ts"];
-  const runtimePlaneFiles = ["src/core/session-bridge.ts", "src/core/unified-message-router.ts"];
+  const runtimePlaneFiles = ["src/core/session-bridge.ts", "src/core/messaging/unified-message-router.ts"];
   const coordinatorEntryFiles = [
     "src/bin/beamcode.ts",
     "src/http/server.ts",
@@ -282,7 +282,7 @@ function main() {
       (f) =>
         f.endsWith(".ts") &&
         !f.endsWith(".test.ts") &&
-        f !== "src/core/session-repository.ts",
+        f !== "src/core/session/session-repository.ts",
     );
   const coreNonTestFiles = walk(resolve(root, "src/core"))
     .map(toRel)
@@ -307,9 +307,9 @@ function main() {
     .filter((f) => f.endsWith(".ts"));
 
   const policyFiles = [
-    "src/core/reconnect-policy.ts",
-    "src/core/idle-policy.ts",
-    "src/core/capabilities-policy.ts",
+    "src/core/policies/reconnect-policy.ts",
+    "src/core/policies/idle-policy.ts",
+    "src/core/capabilities/capabilities-policy.ts",
   ];
 
   const checks = [
@@ -438,7 +438,7 @@ function main() {
       coreNonTestFiles,
       ["session-manager-coordination"],
     ),
-    ...checkForbiddenImports("hub_no_inverted_adapter_logic_import", ["src/core/session-transport-hub.ts"], [
+    ...checkForbiddenImports("hub_no_inverted_adapter_logic_import", ["src/core/session/session-transport-hub.ts"], [
       "interfaces/adapter-names",
       "interfaces/inverted-connection-adapter",
     ]),

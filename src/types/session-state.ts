@@ -1,4 +1,4 @@
-import type { LifecycleState } from "../core/session-lifecycle.js";
+import type { LifecycleState } from "../core/session/session-lifecycle.js";
 import type { DevToolSessionState } from "../core/types/core-session-state.js";
 import type { TeamState } from "../core/types/team-types.js";
 import type { ConsumerRole } from "./auth.js";

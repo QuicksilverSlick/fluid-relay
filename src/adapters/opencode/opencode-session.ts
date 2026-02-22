@@ -5,9 +5,9 @@
  * and opencode's REST + SSE protocol.
  */
 
-import { AsyncMessageQueue } from "../../core/async-message-queue.js";
 import type { BackendSession } from "../../core/interfaces/backend-adapter.js";
-import { extractTraceContext, type MessageTracer } from "../../core/message-tracer.js";
+import { extractTraceContext, type MessageTracer } from "../../core/messaging/message-tracer.js";
+import { AsyncMessageQueue } from "../../core/session/async-message-queue.js";
 import type { UnifiedMessage } from "../../core/types/unified-message.js";
 import { createUnifiedMessage } from "../../core/types/unified-message.js";
 import type { OpencodeHttpClient } from "./opencode-http-client.js";

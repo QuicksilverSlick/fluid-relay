@@ -1,6 +1,6 @@
 # BeamCode Architecture
 
-> Date: 2026-02-21
+> Date: 2026-02-22
 > Scope: Full system architecture — core, adapters, consumer, relay, daemon
 
 ## Table of Contents
@@ -13,18 +13,20 @@
   - [SessionCoordinator](#sessioncoordinator)
   - [SessionRuntime](#sessionruntime)
   - [DomainEventBus](#domaineventbus)
-- [Transport Layer](#transport-layer)
+- [Consumer Plane](#consumer-plane)
   - [ConsumerGateway](#consumergateway)
+  - [ConsumerBroadcaster](#consumerbroadcaster)
+  - [ConsumerGatekeeper](#consumergatekeeper)
+- [Backend Plane](#backend-plane)
   - [BackendConnector](#backendconnector)
-  - [OutboundPublisher](#outboundpublisher)
-- [Services](#services)
+- [Message Plane](#message-plane)
   - [SlashCommandService](#slashcommandservice)
-  - [ConsumerProjector](#consumerprojector)
+  - [UnifiedMessageRouter](#unifiedmessagerouter)
 - [Policy Services](#policy-services)
   - [ReconnectPolicy](#reconnectpolicy)
   - [IdlePolicy](#idlepolicy)
   - [CapabilitiesPolicy](#capabilitiespolicy)
-- [Persistence](#persistence)
+- [Session Services](#session-services)
   - [SessionRepository](#sessionrepository)
 - [Pure Functions](#pure-functions)
 - [Command and Event Flow](#command-and-event-flow)
@@ -149,7 +151,7 @@ The core is built around a **per-session runtime actor** (`SessionRuntime`) that
 |---|------|-----------|
 | 1 | Only `SessionRuntime` can change session state | Eliminates shared-mutable-bag problem |
 | 2 | Transport modules emit commands, never trigger business side effects directly | Clean separation between I/O and logic |
-| 3 | `MessageRouter` is pure mapping + reduction; broadcasting is a projector step | No transport knowledge in message handling |
+| 3 | `UnifiedMessageRouter` is pure mapping + reduction; broadcasting is a separate step | No transport knowledge in message handling |
 | 4 | Slash handling has one entrypoint (`executeSlashCommand`) and one completion contract | No split between registration and interception |
 | 5 | Policy services observe state and emit commands to the runtime — they never mutate | Reconnect, idle, capabilities become advisors |
 | 6 | Explicit lifecycle states for each session | Testable state machine, no implicit status inference |
@@ -161,10 +163,10 @@ The core is built around a **per-session runtime actor** (`SessionRuntime`) that
 
 | Context | Responsibility | Modules |
 |---------|---------------|---------|
-| **SessionControl** | Global lifecycle, per-session state ownership | `SessionCoordinator`, `SessionRuntime` (per-session), `SessionRepository`, `ReconnectPolicy`, `IdlePolicy`, `CapabilitiesPolicy` |
-| **BackendPlane** | Adapter abstraction, connect/send/stream | `BackendConnector`, `AdapterResolver`, `BackendAdapter`(s) |
-| **ConsumerPlane** | WebSocket transport, auth, rate limits, outbound push | `ConsumerGateway`, `OutboundPublisher` |
-| **MessagePlane** | Pure translation, reduction, slash command resolution | `MessageRouter`, `StateReducer`, `ConsumerProjector`, `SlashCommandService` |
+| **SessionControl** | Global lifecycle, per-session state ownership | `SessionCoordinator`, `session/SessionRuntime` (per-session), `session/SessionRepository`, `policies/ReconnectPolicy`, `policies/IdlePolicy`, `capabilities/CapabilitiesPolicy` |
+| **BackendPlane** | Adapter abstraction, connect/send/stream | `backend/BackendConnector`, `AdapterResolver`, `BackendAdapter`(s) |
+| **ConsumerPlane** | WebSocket transport, auth, rate limits, outbound push | `consumer/ConsumerGateway`, `consumer/ConsumerBroadcaster`, `consumer/ConsumerGatekeeper` |
+| **MessagePlane** | Pure translation, reduction, slash command resolution | `messaging/UnifiedMessageRouter`, `session/SessionStateReducer`, `messaging/ConsumerMessageMapper`, `slash/SlashCommandService` |
 
 ---
 
@@ -180,26 +182,35 @@ The core is built around a **per-session runtime actor** (`SessionRuntime`) that
                                  │ constructs
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                       SessionCoordinator                                    │
-│                          (~250 lines)                                       │
+│                       SessionCoordinator (~403L)                            │
 │                                                                             │
-│  Global lifecycle — creates/destroys SessionRuntime instances               │
-│  Reacts to domain events (relaunch, auto-name, process exit)                │
-│  Owns the runtime map, NOT session state                                    │
-└───┬──────────┬──────────┬──────────┬──────────┬─────────────────────────────┘
-    │          │          │          │          │
-    ▼          ▼          ▼          ▼          ▼
-┌────────┐┌────────┐┌─────────┐┌─────────┐┌──────────────┐
-│Session ││Domain  ││Consumer ││ Backend ││   Process    │
-│Reposit.││EventBus││ Gateway ││Connector││  Supervisor  │
-└────────┘└────────┘└─────────┘└─────────┘└──────────────┘
-                         │          │
-                         ▼          ▼
-                    ┌──────────────────────────┐
-                    │    SessionRuntime        │
-                    │    (one per session)     │
-                    │    SOLE STATE OWNER      │
-                    └──────────────────────────┘
+│  Top-level facade: wires bridge + launcher + policies + services            │
+│  Delegates event wiring to CoordinatorEventRelay                            │
+│  Delegates relaunch dedup to BackendRecoveryService                         │
+│  Delegates log redaction to ProcessLogService                               │
+│  Delegates startup restore to StartupRestoreService                         │
+└───┬──────────────────┬──────────────────────────────────────────────────────┘
+    │                  │
+    ▼                  ▼
+┌────────┐  ┌──────────────────────────────────────────────────────────┐
+│Domain  │  │               SessionBridge (~497L)                      │
+│EventBus│  │                                                          │
+└────────┘  │  Wires four bounded contexts, delegates to extracted     │
+            │  services in src/core/bridge/ (12 focused modules)       │
+            └───┬──────────┬──────────┬──────────┬─────────────────────┘
+                │          │          │          │
+                ▼          ▼          ▼          ▼
+          ┌────────┐┌─────────┐┌─────────┐┌──────────────┐
+          │Session ││Consumer ││ Backend ││   Runtime    │
+          │Reposit.││ Gateway ││Connector││   Manager    │
+          └────────┘└─────────┘└─────────┘└────┬─────────┘
+                         │          │          │
+                         ▼          ▼          ▼
+                      ┌──────────────────────────┐
+                      │    SessionRuntime        │
+                      │    (one per session)     │
+                      │    SOLE STATE OWNER      │
+                      └──────────────────────────┘
 ```
 
 ---
@@ -208,43 +219,54 @@ The core is built around a **per-session runtime actor** (`SessionRuntime`) that
 
 ### SessionCoordinator
 
-**File:** `src/core/session-coordinator.ts` (~250 lines)
+**File:** `src/core/session-coordinator.ts` (~403 lines)
 **Context:** SessionControl
-**Writes state:** No (delegates to runtime)
+**Writes state:** No (delegates to runtime via bridge)
 
-The SessionCoordinator is the **global lifecycle manager**. It owns the map of `SessionRuntime` instances but never mutates session state directly — that's each runtime's job.
+The SessionCoordinator is the **global lifecycle manager** and top-level facade. It wires `SessionBridge` with the launcher, transport hub, policies, and extracted services. It never mutates session state directly — that's each runtime's job via the bridge.
 
 **Responsibilities:**
-- **Create sessions:** Builds a `SessionRuntime` instance, registers it in the runtime map, and initiates the backend connection (either by spawning a process for inverted mode or calling `adapter.connect()` for direct mode)
-- **Delete sessions:** Orchestrates teardown — closes the runtime, kills the associated process, removes persisted state, and cleans up the runtime map
-- **List sessions:** Returns snapshots from all active runtimes for API consumers
-- **Restore from storage:** On startup, reads persisted session snapshots from `SessionRepository` and rebuilds runtime instances for session continuity
-- **React to domain events:** Subscribes to the `DomainEventBus` to handle cross-session concerns:
-  - `backend:relaunch_needed` → relaunch backend with deduplication (timer-based to prevent rapid re-spawns)
+- **Create sessions:** Routes to the correct adapter (inverted vs direct connection), initiates the backend, seeds session state
+- **Delete sessions:** Orchestrates teardown — kills CLI process, clears dedup state, closes WS connections, removes from registry
+- **Restore from storage:** Delegates to `StartupRestoreService` (launcher first, then bridge — I6 ordering)
+- **React to domain events:** Delegates to `CoordinatorEventRelay` which subscribes to bridge + launcher events for cross-session concerns:
+  - `backend:relaunch_needed` → delegates to `BackendRecoveryService` (timer-guarded dedup)
   - `session:first_turn` → auto-name the session from the first user message
-  - `process:exited` → update runtime state, decide whether to relaunch or close
+  - `process:exited` → broadcast circuit breaker state
+  - `process:stdout/stderr` → redact secrets via `ProcessLogService`, broadcast to consumers
+
+**Extracted services** (in `src/core/coordinator/`):
+
+| Service | Responsibility |
+|---------|---------------|
+| `CoordinatorEventRelay` | Subscribes to bridge + launcher events, dispatches to handlers |
+| `ProcessLogService` | Buffers and redacts process stdout/stderr |
+| `BackendRecoveryService` | Timer-guarded relaunch dedup, graceful kill before relaunch |
+| `ProcessSupervisor` | Process spawn/track/kill for CLI backends |
+| `StartupRestoreService` | Ordered restore: launcher → registry → bridge |
 
 **Does NOT do:**
 - Mutate any session-level state (history, backend connection, consumer sockets)
-- Forward events between layers
+- Forward events between layers directly (delegates to relay)
 - Route messages
 
 ```typescript
 class SessionCoordinator {
-  private runtimes = new Map<string, SessionRuntime>()
+  readonly bridge: SessionBridge
+  readonly launcher: SessionLauncher
+  readonly registry: SessionRegistry
+  readonly domainEvents: DomainEventBus
 
-  async start(): Promise<void>                               // restore + subscribe + start gateway
-  async stop(): Promise<void>                                // close all runtimes + stop adapters
-  async createSession(options: CreateSessionOptions): Promise<SessionRuntime>
-  async deleteSession(id: string): Promise<void>
-  getRuntime(id: string): SessionRuntime | undefined
-  listSessions(): SessionSummary[]
+  async start(): Promise<void>                               // relay + restore + policies + transport
+  async stop(): Promise<void>                                // stop relay, policies, transport, adapters
+  async createSession(options): Promise<SessionInfo>
+  async deleteSession(id: string): Promise<boolean>
 
-  // Domain event reactions (private)
-  private subscribeToDomainEvents(): void
-  private relaunchWithDedup(sessionId: string): void         // timer-guarded relaunch
-  private autoName(sessionId: string, firstMessage: string): void
-  private handleProcessExit(event: ProcessExitEvent): void
+  // Delegated services (private)
+  private relay: CoordinatorEventRelay
+  private startupRestoreService: StartupRestoreService
+  private recoveryService: BackendRecoveryService
+  private processLogService: ProcessLogService
 }
 ```
 
@@ -252,7 +274,7 @@ class SessionCoordinator {
 
 ### SessionRuntime
 
-**File:** `src/core/session-runtime.ts` (~400 lines)
+**File:** `src/core/session/session-runtime.ts` (~587 lines)
 **Context:** SessionControl
 **Writes state:** **Yes — sole writer**
 
@@ -261,7 +283,7 @@ The SessionRuntime is a **per-session state owner**. One instance exists per act
 **Responsibilities:**
 - **Own all mutable session state:** Lifecycle, backend connection, consumer sockets, conversation history, pending permissions, slash command registry, and the read-only projected `SessionState`
 - **Handle inbound commands:** Receive `InboundCommand` from `ConsumerGateway`, dispatch by type (user_message, permission_response, slash_command, interrupt, queue operations)
-- **Handle backend messages:** Receive `UnifiedMessage` from `BackendConnector`'s consumption loop, run through the pure reducer + projector pipeline, update history, broadcast to consumers, persist
+- **Handle backend messages:** Receive `UnifiedMessage` from `BackendConnector`'s consumption loop, run through the pure reducer + router pipeline, update history, broadcast to consumers, persist
 - **Handle policy commands:** Receive advisory `PolicyCommand` from policy services (reconnect_timeout, idle_reap, capabilities_timeout) and act accordingly
 - **Manage consumers:** Add/remove WebSocket connections, emit consumer:connected/disconnected domain events
 - **Manage backend state:** Store/clear the `BackendSession` reference, emit backend domain events
@@ -269,14 +291,14 @@ The SessionRuntime is a **per-session state owner**. One instance exists per act
 - **Lifecycle state machine:** Maintain explicit `LifecycleState` transitions (starting → awaiting_backend → active → idle → degraded → closing → closed)
 
 **Does NOT do:**
-- Contain business logic — delegates to pure functions (`reducer`, `projector`, `normalizer`)
-- Know about WebSocket protocols — delegates to `OutboundPublisher`
+- Contain business logic — delegates to pure functions (`reducer`, `router`, `normalizer`)
+- Know about WebSocket protocols — delegates to `ConsumerBroadcaster`
 - Know about adapter specifics — delegates to `BackendConnector`
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │                      SessionRuntime                                  │
-│                      (per-session, ~400L)                            │
+│                      (per-session, ~587L)                            │
 │                                                                      │
 │  ┌─────────────────────── PRIVATE STATE ──────────────────────────┐  │
 │  │                                                                │  │
@@ -303,10 +325,10 @@ The SessionRuntime is a **per-session state owner**. One instance exists per act
 │  ┌─── Delegates To (never owns logic) ───────────────────────────┐   │
 │  │                                                               │   │
 │  │  reducer.reduce(state, msg)       → new state      [pure]     │   │
-│  │  projector.project*(msg)          → ConsumerMsg    [pure]     │   │
+│  │  router.project*(msg)             → ConsumerMsg    [pure]     │   │
 │  │  normalizer.normalize(cmd)        → UnifiedMsg     [pure]     │   │
 │  │  slashService.execute(runtime, cmd)                [service]  │   │
-│  │  publisher.broadcast(runtime, msg)                 [I/O]      │   │
+│  │  broadcaster.broadcast(runtime, msg)               [I/O]      │   │
 │  │  repo.persist(snapshot)                            [I/O]      │   │
 │  │                                                               │   │
 │  └───────────────────────────────────────────────────────────────┘   │
@@ -326,7 +348,7 @@ The SessionRuntime is a **per-session state owner**. One instance exists per act
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Why this avoids the god object trap:** The switch-case bodies are 3–8 lines each — they call pure functions (`reducer.reduce`, `projector.mapAssistant`, `normalizer.normalize`) and apply the results. The complexity lives in the pure functions, which are independently testable.
+**Why this avoids the god object trap:** The switch-case bodies are 3–8 lines each — they call pure functions (`reducer.reduce`, `router.mapAssistant`, `normalizer.normalize`) and apply the results. The complexity lives in the pure functions, which are independently testable.
 
 **Serialization:** To avoid async interleaving across `await` boundaries, each runtime processes commands through a lightweight per-session serial executor (promise chain).
 
@@ -334,7 +356,7 @@ The SessionRuntime is a **per-session state owner**. One instance exists per act
 
 ### DomainEventBus
 
-**File:** `src/core/domain-events.ts` (~80 lines)
+**File:** `src/core/events/domain-event-bus.ts` (~52 lines), types in `src/core/interfaces/domain-events.ts`
 **Context:** Infrastructure
 **Writes state:** No
 
@@ -361,11 +383,11 @@ A flat, typed pub/sub bus. All domain events are emitted exactly once at the sou
 
 ---
 
-## Transport Layer
+## Consumer Plane
 
 ### ConsumerGateway
 
-**File:** `src/core/transport/consumer-gateway.ts` (~200 lines)
+**File:** `src/core/consumer/consumer-gateway.ts` (~287 lines)
 **Context:** ConsumerPlane
 **Writes state:** No (emits commands to runtime)
 
@@ -373,7 +395,7 @@ The ConsumerGateway handles all WebSocket I/O for consumer connections. **No bus
 
 **Responsibilities:**
 - **Accept connections:** Look up the target `SessionRuntime` by session ID. If not found, reject with 4004. Delegate authentication to `ConsumerGatekeeper`. On success, call `runtime.addConsumer(ws, identity)` (runtime owns the mutation and emits the domain event)
-- **Replay state:** After accepting a consumer, tell `OutboundPublisher` to send the full replay (identity, session_init, history, pending permissions, queued message)
+- **Replay state:** After accepting a consumer, tell `ConsumerBroadcaster` to send the full replay (identity, session_init, history, pending permissions, queued message)
 - **Validate inbound messages:** Size check (256KB), JSON parse, Zod schema validation, RBAC authorization, rate limiting — all delegated to `ConsumerGatekeeper`
 - **Route valid messages:** Wrap the validated message as an `InboundCommand` and call `runtime.handleInboundCommand(cmd)`
 - **Handle disconnection:** Call `runtime.removeConsumer(ws)` (runtime owns the mutation)
@@ -382,13 +404,42 @@ The ConsumerGateway handles all WebSocket I/O for consumer connections. **No bus
 **Does NOT do:**
 - Parse message semantics (that's the runtime's job)
 - Mutate session state
-- Broadcast to consumers (that's `OutboundPublisher`)
+- Broadcast to consumers (that's `ConsumerBroadcaster`)
 
 ---
 
+### ConsumerBroadcaster
+
+**File:** `src/core/consumer/consumer-broadcaster.ts` (~170 lines)
+**Context:** ConsumerPlane
+**Writes state:** No (reads state from runtime)
+
+The ConsumerBroadcaster (formerly OutboundPublisher) is responsible for pushing `ConsumerMessage` data to WebSocket clients.
+
+**Responsibilities:**
+- **Broadcast to all consumers:** Iterate over the runtime's consumer socket map, JSON-serialize the message, and send to each socket with backpressure protection (skip if `bufferedAmount > 1MB`)
+- **Broadcast to participants only:** Same as above but skip sockets with `OBSERVER` role (used for permission requests and other participant-only data)
+- **Send replay on reconnect:** Send the full state replay to a single newly-connected socket — identity message, session_init, conversation history, pending permissions, queued message
+- **Presence updates:** Broadcast presence_update when consumers connect/disconnect
+- **Session name updates:** Broadcast session_name_update when auto-naming completes
+
+---
+
+### ConsumerGatekeeper
+
+**File:** `src/core/consumer/consumer-gatekeeper.ts` (~157 lines)
+**Context:** ConsumerPlane
+**Writes state:** No (pure validation)
+
+Auth + RBAC + rate limiting. Validates consumer connections and messages. Pluggable `Authenticator` interface for different auth strategies.
+
+---
+
+## Backend Plane
+
 ### BackendConnector
 
-**File:** `src/core/transport/backend-connector.ts` (~300 lines)
+**File:** `src/core/backend/backend-connector.ts` (~644 lines)
 **Context:** BackendPlane
 **Writes state:** No (calls runtime methods that mutate)
 
@@ -409,36 +460,19 @@ The BackendConnector manages adapter lifecycle, the backend message consumption 
 
 ---
 
-### OutboundPublisher
-
-**File:** `src/core/transport/outbound-publisher.ts` (~150 lines)
-**Context:** ConsumerPlane
-**Writes state:** No (reads state from runtime)
-
-The OutboundPublisher is responsible for pushing `ConsumerMessage` data to WebSocket clients.
-
-**Responsibilities:**
-- **Broadcast to all consumers:** Iterate over the runtime's consumer socket map, JSON-serialize the message, and send to each socket with backpressure protection (skip if `bufferedAmount > 1MB`)
-- **Broadcast to participants only:** Same as above but skip sockets with `OBSERVER` role (used for permission requests and other participant-only data)
-- **Send replay on reconnect:** Send the full state replay to a single newly-connected socket — identity message, session_init, conversation history, pending permissions, queued message
-- **Presence updates:** Broadcast presence_update when consumers connect/disconnect
-- **Session name updates:** Broadcast session_name_update when auto-naming completes
-
----
-
-## Services
+## Message Plane
 
 ### SlashCommandService
 
-**File:** `src/core/services/slash-command-service.ts` (~200 lines)
+**File:** `src/core/slash/slash-command-service.ts` (~70 lines, chain in `slash-command-chain.ts` ~394 lines, executor ~104 lines, registry ~176 lines)
 **Context:** MessagePlane
 **Writes state:** No (calls runtime/connector methods)
 
-The SlashCommandService provides a single `execute()` entrypoint for all slash command handling with a chain-of-responsibility strategy pattern.
+The SlashCommandService provides a single `execute()` entrypoint for all slash command handling with a chain-of-responsibility strategy pattern. The strategy chain and execution logic are extracted into separate modules within the `slash/` directory.
 
 **Responsibilities:**
 - **Single entrypoint:** `execute(runtime, cmd)` — resolves the strategy and executes
-- **Strategy 1 — Local:** Built-in commands like `/help`. Generates the result locally, broadcasts via `OutboundPublisher`, records success on the runtime
+- **Strategy 1 — Local:** Built-in commands like `/help`. Generates the result locally, broadcasts via `ConsumerBroadcaster`, records success on the runtime
 - **Strategy 2 — Adapter-native:** If the adapter has its own `AdapterSlashExecutor` that handles the command, delegate to it. Broadcast the result and record success
 - **Strategy 3 — Passthrough:** If the adapter supports passthrough, delegate to `BackendConnector.registerPassthrough()` which sends the command as a user message and intercepts the response
 - **Strategy 4 — Unsupported:** Broadcast an error message and record failure
@@ -447,13 +481,13 @@ The SlashCommandService provides a single `execute()` entrypoint for all slash c
 
 ---
 
-### ConsumerProjector
+### UnifiedMessageRouter
 
-**File:** `src/core/services/consumer-projector.ts` (~150 lines)
+**File:** `src/core/messaging/unified-message-router.ts` (~644 lines)
 **Context:** MessagePlane
 **Writes state:** No (pure)
 
-The ConsumerProjector wraps the existing `ConsumerMessageMapper` (T4 boundary) with dedup and history-worthiness logic.
+The UnifiedMessageRouter wraps the `ConsumerMessageMapper` (T4 boundary) with dedup and history-worthiness logic.
 
 **Responsibilities:**
 - **Project assistant messages:** Map via `ConsumerMessageMapper.mapAssistantMessage()`, then check for duplicates against the conversation history. Return `null` if duplicate (runtime skips broadcasting)
@@ -464,10 +498,10 @@ The ConsumerProjector wraps the existing `ConsumerMessageMapper` (T4 boundary) w
 
 The runtime calls these and applies the results:
 ```
-const consumerMsg = projector.projectAssistant(msg, history)
+const consumerMsg = router.projectAssistant(msg, history)
 if (!consumerMsg) return              // dedup — pure function decided to skip
 history.push(consumerMsg)             // mutation — only runtime does this
-publisher.broadcast(runtime, msg)     // side effect — only runtime triggers this
+broadcaster.broadcast(runtime, msg)   // side effect — only runtime triggers this
 repo.persist(runtime.snapshot())      // persistence — only runtime triggers this
 ```
 
@@ -479,7 +513,7 @@ Policy services follow the **observe and advise** pattern: they subscribe to dom
 
 ### ReconnectPolicy
 
-**File:** `src/core/policy/reconnect-policy.ts` (~60 lines)
+**File:** `src/core/policies/reconnect-policy.ts` (~119 lines)
 **Context:** SessionControl
 
 **Responsibility:** Watch for sessions stuck in `awaiting_backend` state. If a session remains in that state beyond the configured timeout, emit a `reconnect_timeout` PolicyCommand to the runtime.
@@ -492,7 +526,7 @@ Policy services follow the **observe and advise** pattern: they subscribe to dom
 
 ### IdlePolicy
 
-**File:** `src/core/policy/idle-policy.ts` (~80 lines)
+**File:** `src/core/policies/idle-policy.ts` (~141 lines)
 **Context:** SessionControl
 
 **Responsibility:** Periodically sweep all runtimes and identify sessions that are idle (no consumers, no backend, last activity exceeded timeout). Emit `idle_reap` PolicyCommand.
@@ -504,7 +538,7 @@ Policy services follow the **observe and advise** pattern: they subscribe to dom
 
 ### CapabilitiesPolicy
 
-**File:** `src/core/policy/capabilities-policy.ts` (~80 lines)
+**File:** `src/core/capabilities/capabilities-policy.ts` (~191 lines)
 **Context:** SessionControl
 
 **Responsibility:** Ensure the capabilities handshake completes within a timeout after backend connection. If it doesn't, emit `capabilities_timeout` PolicyCommand.
@@ -517,11 +551,11 @@ Policy services follow the **observe and advise** pattern: they subscribe to dom
 
 ---
 
-## Persistence
+## Session Services
 
 ### SessionRepository
 
-**File:** `src/core/persistence/session-repository.ts` (~200 lines)
+**File:** `src/core/session/session-repository.ts` (~253 lines)
 **Context:** SessionControl
 **Writes state:** No (reads snapshots)
 
@@ -551,15 +585,19 @@ interface SessionSnapshot {
 
 These modules are stateless, have no side effects, and contain no transport knowledge. They are independently testable and form the leaves of the dependency graph.
 
-| Module | Boundary | Responsibility |
-|--------|----------|----------------|
-| **InboundNormalizer** | T1 | Transforms `InboundCommand` → `UnifiedMessage`. Validates and normalizes consumer input into the canonical internal format |
-| **SessionStateReducer** | — | Pure state reduction: `(SessionState, UnifiedMessage) → SessionState`. Handles all state transitions from backend messages (model changes, tool state, team state, circuit breaker, etc.) |
-| **ConsumerMessageMapper** | T4 | Transforms `UnifiedMessage` → `ConsumerMessage`. Maps the internal format to the consumer-facing protocol (30+ subtypes). Handles metadata passthrough and null/undefined filtering |
-| **ConsumerGatekeeper** | — | Auth + RBAC + rate limiting. Validates consumer connections and messages. Pluggable `Authenticator` interface for different auth strategies |
-| **GitInfoTracker** | — | Resolves git branch/repo info for a working directory. Called by runtime on `session_init` and `result` events to keep git state current |
-| **TeamToolCorrelationBuffer** | — | Per-session buffer that correlates tool results to team members. Owned by the runtime instance |
-| **MessageTracer** | — | Debug tracing at T1/T2/T3/T4 boundaries. Cross-cutting concern injected into the runtime |
+| Module | File | Boundary | Responsibility |
+|--------|------|----------|----------------|
+| **InboundNormalizer** | `messaging/inbound-normalizer.ts` (~124L) | T1 | Transforms `InboundCommand` → `UnifiedMessage`. Validates and normalizes consumer input into the canonical internal format |
+| **SessionStateReducer** | `session/session-state-reducer.ts` (~255L) | — | Pure state reduction: `(SessionState, UnifiedMessage) → SessionState`. Handles all state transitions from backend messages (model changes, tool state, team state, circuit breaker, etc.) |
+| **ConsumerMessageMapper** | `messaging/consumer-message-mapper.ts` (~343L) | T4 | Transforms `UnifiedMessage` → `ConsumerMessage`. Maps the internal format to the consumer-facing protocol (30+ subtypes). Handles metadata passthrough and null/undefined filtering |
+| **ConsumerGatekeeper** | `consumer/consumer-gatekeeper.ts` (~157L) | — | Auth + RBAC + rate limiting. Validates consumer connections and messages. Pluggable `Authenticator` interface for different auth strategies |
+| **GitInfoTracker** | `session/git-info-tracker.ts` (~110L) | — | Resolves git branch/repo info for a working directory. Called by runtime on `session_init` and `result` events to keep git state current |
+| **TeamToolCorrelationBuffer** | `team/team-tool-correlation.ts` (~92L) | — | Per-session buffer that correlates tool results to team members. Owned by the runtime instance |
+| **MessageTracer** | `messaging/message-tracer.ts` (~631L) | — | Debug tracing at T1/T2/T3/T4 boundaries. Cross-cutting concern injected into the runtime |
+| **TraceDiffer** | `messaging/trace-differ.ts` (~143L) | — | Diff computation for trace inspection at translation boundaries |
+| **TeamStateReducer** | `team/team-state-reducer.ts` (~272L) | — | Pure reducer for team member/task state from tool-use messages |
+| **TeamToolRecognizer** | `team/team-tool-recognizer.ts` (~138L) | — | Recognizes team-related tool patterns from backend messages |
+| **TeamEventDiffer** | `team/team-event-differ.ts` (~104L) | — | Computes team state diffs for domain event emission |
 
 ---
 
@@ -684,7 +722,7 @@ Consumer → Backend:
 │    │                                                             │
 │    ├── runtime.addConsumer(ws, identity)  ← runtime mutates      │
 │    │                                                             │
-│    ├── publisher.sendReplayTo(ws, runtime)                       │
+│    ├── broadcaster.sendReplayTo(ws, runtime)                       │
 │    │     └─ identity, session_init, history, perms, queued       │
 │    │                                                             │
 │    └── (runtime emits consumer:connected DomainEvent)            │
@@ -709,7 +747,7 @@ Consumer → Backend:
 │    ├─ user_message ────────────▶ ┌───────────────────────────┐   │
 │    │                             │ 1. echoMsg = toEcho(cmd)  │   │
 │    │                             │ 2. history.push(echoMsg)  │   │
-│    │                             │ 3. publisher.broadcast()  │   │
+│    │                             │ 3. broadcaster.broadcast()│   │
 │    │                             │ 4. unified = normalize(T1)│   │
 │    │                             │ 5. backend.send(unified)  │──▶│──▶ Backend
 │    │                             │    or pendingMsgs.push()  │   │
@@ -798,10 +836,10 @@ Backend → Consumers:
 │  │                                                               │
 │  ├─ assistant ────────────▶ ┌────────────────────────────┐       │
 │  │                          │ consumerMsg =              │       │
-│  │                          │   projector.project*(msg)  │ pure  │
+│  │                          │   router.project*(msg)     │ pure  │
 │  │                          │ if duplicate: return       │       │
 │  │                          │ history.push(consumerMsg)  │ mut   │
-│  │                          │ publisher.broadcast()    ──┤───────┤──▶ Consumers
+│  │                          │ broadcaster.broadcast()  ──┤───────┤──▶ Consumers
 │  │                          │ repo.persist(snapshot)     │ I/O   │
 │  │                          └────────────────────────────┘       │
 │  │                                                               │
@@ -833,7 +871,8 @@ Backend → Consumers:
                     │
                     ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                     OutboundPublisher                            │
+│                   ConsumerBroadcaster                            │
+│                  (consumer/consumer-broadcaster.ts)               │
 │                                                                  │
 │  broadcast(runtime, msg)                                         │
 │    for each ws in runtime.consumers:                             │
@@ -877,7 +916,7 @@ Backend path:
 
 Outbound path:
   SessionRuntime.handleBackendMessage(unified)
-    └─ ConsumerProjector / ConsumerMessageMapper              [T4]
+    └─ UnifiedMessageRouter / ConsumerMessageMapper           [T4]
        UnifiedMessage -> ConsumerMessage
 ```
 
@@ -1225,47 +1264,71 @@ CoreSessionState → DevToolSessionState → SessionState
 ## Module Dependency Graph
 
 ```
-                    SessionCoordinator (~250L)
+                    SessionCoordinator (~403L)
                    ╱    │        │         ╲
                   ╱     │        │          ╲
                  ╱      │        │           ╲
                 ▼       ▼        ▼            ▼
-         ┌──────────┐  ┌─────┐  ┌──────────┐  ┌───────────────┐
-         │ Session  │  │Domai│  │ Consumer │  │   Process     │
-         │ Reposit. │  │n    │  │ Gateway  │  │   Supervisor  │
-         │ (~200L)  │  │Event│  │ (~200L)  │  │   (existing   │
-         │          │  │Bus  │  │          │  │    launcher)  │
-         └──────────┘  │(~80)│  └────┬─────┘  └───────────────┘
-                       └──┬──┘       │
-                          │     Gatekeeper
-                          │     (existing ~140L)
-                          │
-       ┌──────────────────┼──────────────────────┐
-       │                  │                      │
-       ▼                  ▼                      ▼
-  ┌──────────┐    ┌──────────────┐       ┌────────────┐
-  │ Backend  │    │SessionRuntime│       │  Policies  │
-  │Connector │    │  (~400L)     │       │ •Reconnect │
-  │ (~300L)  │    │              │       │ •Idle      │
-  │          │    │  SOLE OWNER  │       │ •Caps      │
-  └────┬─────┘    │  of state    │       │ (~220L)    │
-       │          └──────┬───────┘       └────────────┘
-       │                 │
-  AdapterResolver        │ delegates to
-  (existing)             │
-                    ┌────┼─────────────┐
-                    ▼    ▼             ▼
-              ┌──────┐┌──────┐  ┌──────────┐
-              │Slash ││Outb. │  │Pure Fns  │
-              │Cmd   ││Publ. │  │•Normaliz.│
-              │Svc   ││(~150)│  │•Reducer  │
-              │(~200)││      │  │•Projector│
-              └──────┘└──────┘  └──────────┘
+  ┌──────────────┐ ┌─────┐ ┌──────────────┐ ┌───────────────┐
+  │ coordinator/ │ │event│ │ SessionBridge│ │   Process     │
+  │ •EventRelay │ │s/   │ │  (~497L)     │ │   Supervisor  │
+  │ •Recovery   │ │dom- │ │              │ │  (coordinator/│
+  │ •LogService │ │ain- │ └──────┬───────┘ │   ~278L)      │
+  │ •Restore    │ │event│        │         └───────────────┘
+  │ •ProcSupvsr │ │-bus │        │
+  └──────────────┘ │(~52)│        │
+                   └──┬──┘       │
+                      │     ┌────┴─────────────────────────────────┐
+                      │     │      │       │        │              │
+                      │     ▼      ▼       ▼        ▼              ▼
+                      │ ┌────────┐┌─────┐┌───────┐┌─────────┐┌──────────┐
+                      │ │Runtime ││Rntm ││consum-││ backend/ ││ bridge/  │
+                      │ │Manager ││Api  ││er/    ││Connector││ •Lifecyc │
+                      │ │(bridge/││     ││Gatewey││ (~644L) ││ •Backend │
+                      │ │ ~60L)  ││~130L││(~287L)│└────┬────┘│ •Broadc. │
+                      │ └───┬────┘└─────┘│Gtkpr  │     │     │ •Info    │
+                      │     │            │(~157L) │     │     │ •Persist │
+                      │     │            │Brdcstr │Resolver   │ •DepsF.  │
+                      │     │            │(~170L) │           │          │
+       ┌──────────────┤     │            └────────┘           └──────────┘
+       │              │     ▼
+       ▼              ▼ ┌──────────────┐       ┌────────────────┐
+  ┌────────────────┐    │session/      │       │  policies/     │
+  │ policies/      │    │SessionRuntime│       │  •Reconnect    │
+  │  •Reconnect    │    │  (~587L)     │       │    (~119L)     │
+  │   (~119L)      │    │              │       │  •Idle (~141L) │
+  │  •Idle (~141L) │    │  SOLE OWNER  │       │                │
+  │ capabilities/  │    │  of state    │       │ capabilities/  │
+  │  •Caps (~191L) │    └──────┬───────┘       │  •Caps (~191L) │
+  └────────────────┘           │               └────────────────┘
+                          delegates to
+                               │
+                    ┌────┬─────┴──────────┐
+                    ▼    ▼                ▼
+              ┌──────┐┌──────┐     ┌────────────┐
+              │slash/ ││consu│     │messaging/  │
+              │Svc   ││mer/ │     │•Normalizer │
+              │(~70L)││Brdcr│     │ (~124L)    │
+              │Chain ││(~170│     │•Reducer    │
+              │(~394)││  L) │     │ (~255L)    │
+              │Exec  │└─────┘     │•MsgMapper  │
+              │(~104)│            │ (~343L)    │
+              │Reg   │            │•Router     │
+              │(~176)│            │ (~644L)    │
+              └──────┘            └────────────┘
 
   No cycles. Pure functions at leaves.
   Runtime delegates to pure fns + services.
-  Transport modules emit commands to runtime.
-  Policies observe and advise.
+  consumer/ + backend/ modules emit commands to runtime.
+  policies/ + capabilities/ observe and advise.
+  coordinator/ services handle cross-session concerns.
+  bridge/ modules own runtime map + extracted bridge APIs.
+  session/ owns runtime, repository, state reducer, lifecycle.
+  messaging/ owns all translation boundary modules.
+  slash/ owns command chain, executor, registry.
+  team/ owns team state reduction + tool correlation.
+  types/ owns UnifiedMessage, CoreSessionState, team types.
+  interfaces/ owns all contract definitions.
 ```
 
 ---
@@ -1274,42 +1337,97 @@ CoreSessionState → DevToolSessionState → SessionState
 
 ```
 src/core/
-├── session-coordinator.ts        — global lifecycle + runtime map (~250L)
-├── session-runtime.ts            — per-session state owner (~400L)
-├── domain-events.ts              — DomainEvent union + DomainEventBus (~80L)
-├── commands.ts                   — InboundCommand, BackendEvent, PolicyCommand types
-├── lifecycle-state.ts            — LifecycleState enum + transition validator
+├── session-coordinator.ts           — top-level facade + lifecycle (~403L)
+├── session-bridge.ts                — wires four bounded contexts (~497L)
+├── index.ts                         — barrel exports (~80L)
 │
-├── transport/
-│   ├── consumer-gateway.ts       — WS accept/reject/message, emits commands (~200L)
-│   ├── backend-connector.ts      — adapter lifecycle + consumption + passthrough (~300L)
-│   └── outbound-publisher.ts     — broadcast + replay + presence (~150L)
+├── backend/                         — BackendPlane
+│   └── backend-connector.ts         — adapter lifecycle + consumption + passthrough (~644L)
 │
-├── services/
-│   ├── slash-command-service.ts  — one execute() entrypoint (~200L)
-│   └── consumer-projector.ts     — wraps T4 mapper + dedup logic (~150L)
+├── bridge/                          — SessionBridge extracted services (12 modules)
+│   ├── runtime-manager.ts           — owns runtime map, lifecycle signal routing (~60L)
+│   ├── runtime-manager-factory.ts   — constructs RuntimeManager with SessionRuntime factory (~40L)
+│   ├── runtime-api.ts               — session-scoped command dispatch (send, interrupt, slash) (~130L)
+│   ├── backend-api.ts               — backend connect/disconnect/isConnected facade (~50L)
+│   ├── session-lifecycle-service.ts — session create/close/remove orchestration (~100L)
+│   ├── session-info-api.ts          — session state queries (getSession, getAllSessions) (~56L)
+│   ├── session-broadcast-api.ts     — consumer broadcast operations (~60L)
+│   ├── session-persistence-service.ts — storage restore/persist delegation (~34L)
+│   ├── bridge-event-forwarder.ts    — lifecycle signal routing on bridge events (~27L)
+│   ├── slash-service-factory.ts     — constructs SlashCommandService + handler chain (~67L)
+│   ├── session-bridge-deps-factory.ts — factory fns for component dep injection (~200L)
+│   └── message-tracing-utils.ts     — traced normalize + ID generators (~52L)
 │
-├── policy/
-│   ├── reconnect-policy.ts       — observe + advise (~60L)
-│   ├── idle-policy.ts            — observe + advise (~80L)
-│   └── capabilities-policy.ts    — observe + advise (~80L)
+├── capabilities/                    — Capabilities handshake policy
+│   └── capabilities-policy.ts       — observe + advise (~191L)
 │
-├── persistence/
-│   └── session-repository.ts     — snapshot persistence (~200L)
+├── consumer/                        — ConsumerPlane
+│   ├── consumer-gateway.ts          — WS accept/reject/message, emits commands (~287L)
+│   ├── consumer-broadcaster.ts      — broadcast + replay + presence (~170L)
+│   └── consumer-gatekeeper.ts       — auth + RBAC + rate limiting (~157L)
 │
-├── consumer-gatekeeper.ts        — auth + RBAC + rate limiting (~139L)
-├── session-state-reducer.ts      — pure reducer (~256L)
-├── consumer-message-mapper.ts    — pure T4 mapper (~345L)
-├── inbound-normalizer.ts         — pure T1 mapper (~125L)
-├── git-info-tracker.ts           — git resolution (~83L)
-├── message-tracer.ts             — debug tracing (~632L)
-├── team-tool-correlation.ts      — team tool pairing
+├── coordinator/                     — Cross-session services for SessionCoordinator
+│   ├── coordinator-event-relay.ts   — bridge+launcher event wiring (~163L)
+│   ├── process-log-service.ts       — stdout/stderr buffering + secret redaction (~41L)
+│   ├── backend-recovery-service.ts  — timer-guarded relaunch dedup (~138L)
+│   ├── process-supervisor.ts        — process spawn/track/kill (~278L)
+│   └── startup-restore-service.ts   — ordered restore (launcher→registry→bridge) (~78L)
 │
-└── interfaces/
-    ├── backend-adapter.ts        — BackendAdapter + BackendSession interfaces
-    ├── adapter-resolver.ts       — adapter lookup
-    ├── domain-events.ts          — DomainEvent type, DomainEventBus interface
-    └── commands.ts               — InboundCommand, PolicyCommand types
+├── events/                          — Domain event infrastructure
+│   ├── domain-event-bus.ts          — flat typed pub/sub bus (~52L)
+│   └── typed-emitter.ts            — strongly-typed EventEmitter base (~55L)
+│
+├── interfaces/                      — Contract definitions
+│   ├── backend-adapter.ts           — BackendAdapter + BackendSession interfaces
+│   ├── domain-events.ts             — DomainEvent union type, DomainEventBus interface
+│   ├── extensions.ts                — Composed adapter extensions (Interruptible, etc.)
+│   ├── runtime-commands.ts          — InboundCommand, PolicyCommand types
+│   ├── session-bridge-coordination.ts — Bridge coordination contracts
+│   ├── session-coordinator-coordination.ts — Coordinator coordination contracts
+│   ├── session-launcher.ts          — Session launcher interface
+│   ├── session-registry.ts          — Session registry interface
+│   └── adapter-names.ts            — Adapter name constants
+│
+├── messaging/                       — MessagePlane: translation boundaries
+│   ├── unified-message-router.ts    — message routing + T4 projection (~644L)
+│   ├── consumer-message-mapper.ts   — pure T4 mapper (~343L)
+│   ├── inbound-normalizer.ts        — pure T1 mapper (~124L)
+│   ├── message-tracer.ts            — debug tracing at T1/T2/T3/T4 (~631L)
+│   └── trace-differ.ts             — diff computation for trace inspection (~143L)
+│
+├── policies/                        — Policy services (observe + advise)
+│   ├── idle-policy.ts               — idle session sweep (~141L)
+│   └── reconnect-policy.ts          — awaiting_backend watchdog (~119L)
+│
+├── session/                         — Per-session state + lifecycle
+│   ├── session-runtime.ts           — per-session state owner (~587L)
+│   ├── session-repository.ts        — snapshot persistence (~253L)
+│   ├── session-state-reducer.ts     — pure state reducer (~255L)
+│   ├── session-lifecycle.ts         — lifecycle state transitions
+│   ├── session-transport-hub.ts     — transport wiring per session
+│   ├── cli-gateway.ts              — CLI WebSocket connection handler
+│   ├── git-info-tracker.ts          — git branch/repo resolution (~110L)
+│   ├── message-queue-handler.ts     — queued message drain logic
+│   ├── async-message-queue.ts       — async message queue implementation
+│   └── simple-session-registry.ts   — in-memory session registry
+│
+├── slash/                           — Slash command subsystem
+│   ├── slash-command-service.ts     — one execute() entrypoint (~70L)
+│   ├── slash-command-chain.ts       — chain-of-responsibility strategies (~394L)
+│   ├── slash-command-executor.ts    — strategy execution (~104L)
+│   └── slash-command-registry.ts    — command registration (~176L)
+│
+├── team/                            — Team/multi-agent state
+│   ├── team-state-reducer.ts        — pure reducer for team state (~272L)
+│   ├── team-tool-correlation.ts     — tool result ↔ team member pairing (~92L)
+│   ├── team-tool-recognizer.ts      — recognizes team tool patterns (~138L)
+│   └── team-event-differ.ts         — team state diff → domain events (~104L)
+│
+└── types/                           — Core type definitions
+    ├── unified-message.ts           — UnifiedMessage envelope (~363L)
+    ├── core-session-state.ts        — CoreSessionState base type
+    ├── team-types.ts                — Team member/task types
+    └── sequenced-message.ts         — Sequence-numbered message wrapper
 
 src/adapters/
 ├── claude/                       — Claude Code CLI (NDJSON/WS, streaming, teams)

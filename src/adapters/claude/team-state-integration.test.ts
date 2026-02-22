@@ -6,8 +6,8 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { reduce } from "../../core/session-state-reducer.js";
-import { TeamToolCorrelationBuffer } from "../../core/team-tool-correlation.js";
+import { reduce } from "../../core/session/session-state-reducer.js";
+import { TeamToolCorrelationBuffer } from "../../core/team/team-tool-correlation.js";
 import { createUnifiedMessage } from "../../core/types/unified-message.js";
 import {
   makeDefaultSessionState,
