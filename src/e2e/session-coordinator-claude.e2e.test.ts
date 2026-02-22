@@ -28,7 +28,7 @@ import {
 } from "./helpers.js";
 import { getRealCliPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
-import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-real-e2e-tests.js";
+import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
 const profile = getE2EProfile();
 const prereqs = getRealCliPrereqState();

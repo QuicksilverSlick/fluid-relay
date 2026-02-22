@@ -23,7 +23,7 @@ import {
 } from "./helpers.js";
 import { getCodexPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
-import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-real-e2e-tests.js";
+import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
 const prereqs = getCodexPrereqState();
 const canBindLocalhost = canBindLocalhostSync();

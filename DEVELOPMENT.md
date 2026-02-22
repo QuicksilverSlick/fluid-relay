@@ -108,7 +108,7 @@ Full tests build on smoke by exercising live AI interactions:
 - Broadcast assistant reply to multiple consumers
 - `set_permission_mode` keeps backend healthy
 
-These are gated behind `it.runIf(runFull)` in the shared test factory (`src/e2e/shared-real-e2e-tests.ts`). Duration varies by backend and API response time.
+These are gated behind `it.runIf(runFull)` in the shared test factory (`src/e2e/shared-e2e-tests.ts`). Duration varies by backend and API response time.
 
 ```bash
 pnpm test:e2e:full             # all adapters
