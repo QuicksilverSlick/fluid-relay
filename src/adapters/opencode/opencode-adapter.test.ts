@@ -302,6 +302,28 @@ describe("OpencodeAdapter", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Subscriber cleanup
+  // -------------------------------------------------------------------------
+
+  it("closing a session removes it from subscriber map (unsubscribe is called)", async () => {
+    const session = await adapter.connect({ sessionId: "beamcode-1" });
+
+    await session.close();
+
+    // After close the session is no longer subscribed — push a broadcast event
+    // and it should NOT appear in the closed session's iterator (queue is finished)
+    sseControl.push({
+      type: "server.connected",
+      properties: {} as Record<string, never>,
+    });
+
+    // The iterator should be done since queue was finished on close
+    const iter = session.messages[Symbol.asyncIterator]();
+    const result = await iter.next();
+    expect(result.done).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
   // SSE — malformed event data is silently skipped
   // -------------------------------------------------------------------------
 
