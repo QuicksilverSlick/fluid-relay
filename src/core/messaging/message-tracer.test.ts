@@ -326,6 +326,38 @@ describe("MessageTracerImpl", () => {
       });
       tracer.destroy();
     });
+
+    it("is session-scoped and excludes other sessions", () => {
+      const { tracer, advance } = createTracer();
+
+      tracer.recv("bridge", "msg", {}, { traceId: "t_s1_ok", sessionId: "s1" });
+      advance(10);
+      tracer.send("bridge", "msg", {}, { traceId: "t_s1_ok", sessionId: "s1" });
+
+      tracer.recv("bridge", "msg", {}, { traceId: "t_s2_ok", sessionId: "s2" });
+      advance(20);
+      tracer.send("bridge", "msg", {}, { traceId: "t_s2_ok", sessionId: "s2" });
+
+      tracer.error("bridge", "msg", "bad payload", { traceId: "t_s2_err", sessionId: "s2" });
+
+      expect(tracer.summary("s1")).toEqual({
+        totalTraces: 1,
+        complete: 1,
+        stale: 0,
+        errors: 0,
+        avgRoundTripMs: 10,
+      });
+
+      expect(tracer.summary("s2")).toEqual({
+        totalTraces: 2,
+        complete: 1,
+        stale: 0,
+        errors: 1,
+        avgRoundTripMs: 20,
+      });
+
+      tracer.destroy();
+    });
   });
 
   describe("trace completion", () => {
