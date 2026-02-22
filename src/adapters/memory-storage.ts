@@ -19,6 +19,10 @@ export class MemoryStorage implements SessionStorage, LauncherStateStorage {
     this.sessions.set(session.id, JSON.parse(JSON.stringify(session)));
   }
 
+  flush(): void {
+    // No debounce in memory storage.
+  }
+
   load(sessionId: string): PersistedSession | null {
     const session = this.sessions.get(sessionId);
     return session ? JSON.parse(JSON.stringify(session)) : null;

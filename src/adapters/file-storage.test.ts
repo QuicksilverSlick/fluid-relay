@@ -139,6 +139,33 @@ describe("FileStorage", () => {
       const loaded = storage.load(VALID_UUID);
       expect((loaded!.messageHistory[0] as any).content).toBe("second");
     });
+
+    it("flush persists pending debounced writes immediately", async () => {
+      storage.save(makeSession(VALID_UUID));
+      await storage.flush();
+
+      const loaded = storage.load(VALID_UUID);
+      expect(loaded).not.toBeNull();
+      expect(loaded!.id).toBe(VALID_UUID);
+    });
+
+    it("flush persists only the latest coalesced pending write", async () => {
+      storage.save(
+        makeSession(VALID_UUID, {
+          messageHistory: [{ type: "user_message", content: "first", timestamp: 1 }],
+        }),
+      );
+      storage.save(
+        makeSession(VALID_UUID, {
+          messageHistory: [{ type: "user_message", content: "second", timestamp: 2 }],
+        }),
+      );
+
+      await storage.flush();
+
+      const loaded = storage.load(VALID_UUID);
+      expect((loaded!.messageHistory[0] as any).content).toBe("second");
+    });
   });
 
   // -----------------------------------------------------------------------

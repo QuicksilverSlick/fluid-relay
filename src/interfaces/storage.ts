@@ -6,6 +6,8 @@ export interface SessionStorage {
   save(session: PersistedSession): void;
   /** Immediate write — use for critical state changes. */
   saveSync(session: PersistedSession): void;
+  /** Flush pending debounced writes (best-effort, optional for storage adapters). */
+  flush?(): Promise<void> | void;
   load(sessionId: string): PersistedSession | null;
   loadAll(): PersistedSession[];
   remove(sessionId: string): void;

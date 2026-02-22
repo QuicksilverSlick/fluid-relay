@@ -13,6 +13,7 @@ import type { CliAdapterName } from "../interfaces/adapter-names.js";
 import type { InvertedConnectionAdapter } from "../interfaces/inverted-connection-adapter.js";
 import { isInvertedConnectionAdapter } from "../interfaces/inverted-connection-adapter.js";
 import type { SessionTransportHubDeps } from "../interfaces/session-coordinator-coordination.js";
+import { BufferedWebSocket } from "./buffered-websocket.js";
 
 type CliSocket = WebSocketLike & {
   on(event: "message", handler: (data: string | Buffer) => void): void;
@@ -56,39 +57,7 @@ export class CliGateway {
     }
 
     const adapter = invertedAdapter;
-    const buffered: unknown[] = [];
-    let buffering = true;
-    let replayed = false;
-    socket.on("message", (data: unknown) => {
-      if (buffering) buffered.push(data);
-    });
-
-    const socketForAdapter = {
-      send: (data: string) => socket.send(data),
-      close: (code?: number, reason?: string) => socket.close(code, reason),
-      get bufferedAmount() {
-        return socket.bufferedAmount;
-      },
-      on: ((event: string, handler: (...args: unknown[]) => void) => {
-        if (event === "message") {
-          socket.on("message", handler as (data: string | Buffer) => void);
-        } else if (event === "close") {
-          socket.on("close", handler as () => void);
-        } else if (event === "error") {
-          socket.on("error", handler as (err: Error) => void);
-        } else {
-          return;
-        }
-        if (event === "message" && !replayed) {
-          replayed = true;
-          for (const msg of buffered) {
-            handler(msg);
-          }
-          buffered.length = 0;
-          buffering = false;
-        }
-      }) as CliSocket["on"],
-    };
+    const socketForAdapter = new BufferedWebSocket(socket).asSocket();
 
     this.deps.bridge.setAdapterName(sessionId, adapterName ?? this.deps.adapter?.name ?? "unknown");
     this.deps.bridge

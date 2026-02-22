@@ -118,6 +118,26 @@ describe("SessionBridge — Programmatic API", () => {
     expect(initMsg.session.git_branch).toBe("develop");
     expect(mockGitResolver.resolve).toHaveBeenCalledWith("/project");
   });
+
+  it("flushes storage on close when storage exposes flush()", async () => {
+    const storage = {
+      save: vi.fn(),
+      saveSync: vi.fn(),
+      load: vi.fn(() => null),
+      loadAll: vi.fn(() => []),
+      remove: vi.fn(),
+      setArchived: vi.fn(() => false),
+      flush: vi.fn().mockResolvedValue(undefined),
+    };
+    const flushBridge = new SessionBridge({
+      storage: storage as any,
+      config: { port: 3456 },
+    });
+
+    await flushBridge.close();
+
+    expect(storage.flush).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ─── Auth Integration ───────────────────────────────────────────────────────
