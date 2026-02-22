@@ -136,6 +136,11 @@ export class RuntimeApi {
   }
 
   sendToBackend(sessionId: string, message: UnifiedMessage): void {
+    const session = this.store.get(sessionId);
+    if (!session) {
+      this.logger.warn(`No backend session for ${sessionId}, cannot send message`);
+      return;
+    }
     this.withMutableSessionVoid(sessionId, "sendToBackend", (session) =>
       this.runtime(session).sendToBackend(message),
     );
@@ -158,12 +163,7 @@ export class RuntimeApi {
     run: (session: Session) => T,
   ): T {
     const session = this.store.get(sessionId);
-    if (!session) {
-      if (operation === "sendToBackend") {
-        this.logger.warn(`No backend session for ${sessionId}, cannot send message`);
-      }
-      return onMissing;
-    }
+    if (!session) return onMissing;
     if (!this.leaseCoordinator.ensureLease(sessionId, this.leaseOwnerId)) {
       this.logger.warn("Session mutation blocked: lease not owned by this runtime", {
         sessionId,
