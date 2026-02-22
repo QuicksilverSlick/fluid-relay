@@ -9,12 +9,12 @@ import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { expect } from "vitest";
 import { WebSocket } from "ws";
-import type { SessionCoordinator } from "../../core/session-coordinator.js";
+import type { SessionCoordinator } from "../core/session-coordinator.js";
 import {
   attachPrebuffer,
   collectMessages,
   waitForMessageType,
-} from "../../test-utils/session-test-utils.js";
+} from "../test-utils/session-test-utils.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -395,4 +395,4 @@ export {
   closeWebSockets,
   waitForMessage,
   waitForMessageType,
-} from "../../test-utils/session-test-utils.js";
+} from "../test-utils/session-test-utils.js";

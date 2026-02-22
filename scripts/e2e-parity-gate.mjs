@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
 
 const REQUIRED_SCRIPTS = [
-  "test:e2e:mock",
-  "test:e2e:realcli:smoke:process",
-  "test:e2e:real:claude:smoke",
+  "test:e2e:smoke",
+  "test:e2e:smoke:process",
+  "test:e2e:claude:smoke",
 ];
 
 const REQUIRED_TEST_FILES = [
@@ -26,9 +26,9 @@ const REQUIRED_TEST_FILES = [
   "src/adapters/gemini/gemini-adapter.integration.test.ts",
   "src/adapters/acp/acp-adapter.integration.test.ts",
   "src/adapters/opencode/opencode-adapter.integration.test.ts",
-  // Real backend e2e tests
-  "src/e2e/real/smoke.e2e.test.ts",
-  "src/e2e/real/handshake.e2e.test.ts",
+  // E2E tests (real backends)
+  "src/e2e/smoke.e2e.test.ts",
+  "src/e2e/handshake.e2e.test.ts",
 ];
 
 const REQUIRED_DOCS = [];

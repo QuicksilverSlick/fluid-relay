@@ -57,43 +57,66 @@ BeamCode has **three test tiers**, all powered by [Vitest](https://vitest.dev/).
 | Tier | Command | Speed | Credentials | What it validates |
 |------|---------|-------|-------------|-------------------|
 | **Unit + Integration** | `pnpm test` | ~2s | None | Core logic, adapters, translators, crypto, daemon, session lifecycle, streaming, permissions, message queues |
-| **E2E real — smoke** | `pnpm test:e2e:real:smoke` | ~30–60s | Required | Happy-path with real CLI binaries: spawn, connect, init, clean shutdown |
-| **E2E real — full** | `pnpm test:e2e:real:full` | minutes | Required | Full coverage: live prompt/response, streaming, cancel, slash commands |
+| **E2E smoke** | `pnpm test:e2e:smoke` | ~30–60s | Binary only | Spawn, connect, init, clean shutdown — no AI calls |
+| **E2E full** | `pnpm test:e2e:full` | minutes | Binary + API key or CLI OAuth | Live prompt/response, streaming, interrupt, multi-turn |
 
-> Both real tiers can be scoped to a single adapter (e.g. `pnpm test:e2e:real:gemini`) or a single test name with `-t`. See [Running a Single Test](#running-a-single-test).
+> Both E2E tiers can be scoped to a single adapter (e.g. `pnpm test:e2e:gemini`) or a single test name with `-t`. See [Running a Single Test](#running-a-single-test).
 
-#### Integration tests (formerly mock E2E)
+#### Integration tests
 
-Session lifecycle, status flow, streaming conversation, permission routing, presence/RBAC, message queue, and WebSocket server flow tests now run as `*.integration.test.ts` files alongside the modules they test (under `src/core/` and `src/server/`). They use `MockProcessManager` and require no credentials. They run automatically with `pnpm test`.
+Session lifecycle, status flow, streaming conversation, permission routing, presence/RBAC, message queue, and WebSocket server flow tests run as `*.integration.test.ts` files alongside the modules they test (under `src/core/` and `src/server/`). They use `MockProcessManager` and require no credentials. They run automatically with `pnpm test`.
 
-#### Real — Smoke
+#### Why smoke vs full?
 
-Smoke tests spawn the actual CLI binary (claude, gemini, codex, etc.) and verify the minimum happy path:
+E2E tests are split into two tiers because they differ on **cost, speed, and credential requirements**:
 
-- Process spawns successfully
-- CLI connects back to beamcode's WebSocket server
-- `session_init` is received by the consumer
-- Clean shutdown without errors
+| | Smoke | Full |
+|---|---|---|
+| **API calls** | None — only spawns the CLI binary | Sends real prompts, consumes tokens |
+| **Credentials** | Binary in PATH is enough | Also needs API key or CLI OAuth (e.g. `claude auth login`) |
+| **Duration** | ~30–60s (dominated by CLI startup) | Minutes (waiting for AI responses) |
+| **CI trigger** | Every PR | Nightly only |
+| **Failure means** | Process/connection/infrastructure bug | Message translation or protocol bug |
 
-They don't send prompts or wait for AI responses. Duration is dominated by the CLI startup time (~10–30s).
+Smoke tests prove the infrastructure works (spawn → connect → init → teardown). Full tests prove the data path works (prompt → stream → assistant reply → result). If smoke passes but full fails, the bug is in message handling, not process management.
+
+#### E2E Smoke
+
+Smoke tests spawn the actual CLI binary (claude, gemini, codex, etc.) and verify:
+
+- Process spawns and connects back to beamcode's WebSocket server
+- Consumer receives `session_init` and `cli_connected`
+- Multiple consumers, reconnection, and concurrent sessions work
+- `deleteSession` cleans up properly
+
+No prompts are sent — no AI API calls, no cost.
 
 ```bash
-pnpm test:e2e:real:smoke            # all adapters
-pnpm test:e2e:real:claude:smoke
-pnpm test:e2e:real:agent-sdk:smoke
+pnpm test:e2e:smoke            # all adapters
+pnpm test:e2e:claude:smoke
+pnpm test:e2e:agent-sdk:smoke
 ```
 
-#### Real — Full
+#### E2E Full
 
-Full tests build on smoke by also exercising live AI interactions — sending a user message and waiting for an assistant reply, slash commands, interrupt, session resume, etc. These are gated behind `it.runIf(runFull)` in the shared test factory. Duration varies by backend and API response time.
+Full tests build on smoke by exercising live AI interactions:
+
+- Send `user_message`, receive `assistant` reply with expected content
+- `stream_event` messages arrive before `result`
+- Multi-turn conversation (second prompt after first completes)
+- Interrupt mid-turn and recover with a fresh prompt
+- Broadcast assistant reply to multiple consumers
+- `set_permission_mode` keeps backend healthy
+
+These are gated behind `it.runIf(runFull)` in the shared test factory (`src/e2e/shared-real-e2e-tests.ts`). Duration varies by backend and API response time.
 
 ```bash
-pnpm test:e2e:real:full             # all adapters
-pnpm test:e2e:real:claude
-pnpm test:e2e:real:agent-sdk
-pnpm test:e2e:real:codex
-pnpm test:e2e:real:gemini
-pnpm test:e2e:real:opencode
+pnpm test:e2e:full             # all adapters
+pnpm test:e2e:claude
+pnpm test:e2e:agent-sdk
+pnpm test:e2e:codex
+pnpm test:e2e:gemini
+pnpm test:e2e:opencode
 ```
 
 ### Running a Single Test
@@ -107,18 +130,18 @@ pnpm exec vitest run src/utils/ndjson.test.ts
 
 # Real backend — single file, single test
 E2E_PROFILE=real-smoke USE_REAL_CLI=true \
-  pnpm exec vitest run src/e2e/real/session-coordinator-claude.e2e.test.ts \
+  pnpm exec vitest run src/e2e/session-coordinator-claude.e2e.test.ts \
   --config vitest.e2e.real.config.ts \
   -t "launch emits process spawn"
 
 # Per-backend shortcut scripts also accept -t via --
-pnpm test:e2e:real:gemini -- -t "user_message gets an assistant reply"
-pnpm test:e2e:real:claude -- -t "broadcast assistant reply"
+pnpm test:e2e:gemini -- -t "user_message gets an assistant reply"
+pnpm test:e2e:claude -- -t "broadcast assistant reply"
 ```
 
 ### Real Backend Prerequisites
 
-Tests auto-skip when a prerequisite is missing (detection logic in `src/e2e/real/prereqs.ts`).
+Tests auto-skip when a prerequisite is missing (detection logic in `src/e2e/prereqs.ts`).
 
 | Backend | Binary | Auth |
 |---------|--------|------|
@@ -157,7 +180,7 @@ cd web && pnpm exec vitest run --coverage  # frontend → ./web/coverage/
 
 ² Full nightly requires secrets for each adapter: `ANTHROPIC_API_KEY` (Claude / Agent SDK), `GOOGLE_API_KEY` (Gemini), and equivalent credentials for Codex and OpenCode. Until all secrets are configured in CI, run missing adapters manually before release.
 
-> Until nightly CI is fully configured for all adapters, run `pnpm test:e2e:real:<adapter>` manually before releasing changes that affect a specific adapter.
+> Until nightly CI is fully configured for all adapters, run `pnpm test:e2e:<adapter>` manually before releasing changes that affect a specific adapter.
 
 ### Debugging Real E2E Test Failures
 
@@ -190,7 +213,7 @@ If the trace dump isn't enough, enable `BEAMCODE_TRACE=1` and redirect stderr to
 ```bash
 BEAMCODE_TRACE=1 BEAMCODE_TRACE_LEVEL=full BEAMCODE_TRACE_ALLOW_SENSITIVE=1 \
   E2E_PROFILE=real-full USE_REAL_CLI=true \
-  pnpm exec vitest run src/e2e/real/session-coordinator-gemini.e2e.test.ts \
+  pnpm exec vitest run src/e2e/session-coordinator-gemini.e2e.test.ts \
   --config vitest.e2e.real.config.ts \
   -t "user_message gets an assistant reply" 2>trace.ndjson
 ```
@@ -235,10 +258,10 @@ A `-fieldName` entry in the `diff` array means the field was **silently dropped*
 | File | Purpose |
 |------|---------|
 | `src/test-utils/session-test-utils.ts` | `setupTestSessionCoordinator()`, `connectTestConsumer()`, `waitForMessageType()`, etc. |
-| `src/e2e/real/helpers.ts` | `attachTrace()`, `dumpTraceOnFailure()`, `getTrace()` |
-| `src/e2e/real/session-coordinator-setup.ts` | `setupRealSession()` — coordinator with trace attached |
-| `src/e2e/real/prereqs.ts` | Binary/auth detection, auto-skip logic |
-| `src/e2e/real/shared-real-e2e-tests.ts` | Shared parameterised test factory (`registerSharedSmokeTests`, `registerSharedFullTests`) |
+| `src/e2e/helpers.ts` | `attachTrace()`, `dumpTraceOnFailure()`, `getTrace()` |
+| `src/e2e/session-coordinator-setup.ts` | `setupRealSession()` — coordinator with trace attached |
+| `src/e2e/prereqs.ts` | Binary/auth detection, auto-skip logic |
+| `src/e2e/shared-real-e2e-tests.ts` | Shared parameterised test factory (`registerSharedSmokeTests`, `registerSharedFullTests`) |
 | `src/core/messaging/message-tracer.ts` | `MessageTracerImpl` for T1–T4 boundary tracing |
 
 ### Shared Test Helpers

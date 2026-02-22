@@ -6,7 +6,7 @@ import { MockProcessManager } from "../adapters/mock-process-manager.js";
 import { NodeProcessManager } from "../adapters/node-process-manager.js";
 import { NodeWebSocketServer } from "../adapters/node-ws-server.js";
 import { SessionCoordinator } from "../core/session-coordinator.js";
-import { getE2EProfile, isRealCliProfile } from "../e2e/helpers/e2e-profile.js";
+import { getE2EProfile, isRealCliProfile } from "../e2e/e2e-profile.js";
 import type { Authenticator } from "../interfaces/auth.js";
 import type { ProcessManager } from "../interfaces/process-manager.js";
 import type { ProviderConfig } from "../types/config.js";

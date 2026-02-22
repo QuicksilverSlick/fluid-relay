@@ -1,38 +1,36 @@
 /**
- * Real Agent SDK backend e2e tests.
+ * Real Gemini backend e2e tests.
  *
- * Uses SessionCoordinator.createSession({ adapterName: "claude:agent-sdk" })
- * to exercise the full lifecycle: in-process SDK query, consumer comms.
+ * Uses SessionCoordinator.createSession({ adapterName: "gemini" }) to exercise
+ * the full lifecycle: spawn gemini --experimental-acp, connect backend, consumer comms.
  *
- * The Agent SDK is a direct-connection adapter (no child process).
- * It runs in-process via `import("@anthropic-ai/claude-agent-sdk")`.
- *
- * Prereqs: Claude CLI available + logged in, SDK package installed.
- * No separate API key needed — the SDK uses CLI auth.
+ * Gated by gemini binary + API key availability + localhost bind check.
+ * Note: gemini requires credentials even for smoke tests (the --experimental-acp
+ * handshake needs authentication).
  */
 
 import { afterEach, describe } from "vitest";
-import type { SessionCoordinator } from "../../core/session-coordinator.js";
+import type { SessionCoordinator } from "../core/session-coordinator.js";
 import {
   canBindLocalhostSync,
   deleteTrace,
   dumpTraceOnFailure,
   type TestContextLike,
 } from "./helpers.js";
-import { getAgentSdkPrereqState } from "./prereqs.js";
+import { getGeminiPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
 import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-real-e2e-tests.js";
 
-const prereqs = getAgentSdkPrereqState();
+const prereqs = getGeminiPrereqState();
 const canBindLocalhost = canBindLocalhostSync();
 const runSmoke = prereqs.ok && canBindLocalhost;
 const runFull = runSmoke && prereqs.canRunPromptTests;
 
-describe("E2E Real Agent SDK SessionCoordinator", () => {
+describe("E2E Real Gemini SessionCoordinator", () => {
   const activeCoordinators: SessionCoordinator[] = [];
 
   afterEach(async (context: TestContextLike) => {
-    dumpTraceOnFailure(context, activeCoordinators, "agent-sdk-e2e-debug");
+    dumpTraceOnFailure(context, activeCoordinators, "gemini-e2e-debug");
 
     while (activeCoordinators.length > 0) {
       const coordinator = activeCoordinators.pop();
@@ -48,10 +46,9 @@ describe("E2E Real Agent SDK SessionCoordinator", () => {
   // -------------------------------------------------------------------------
 
   const sharedConfig = {
-    adapterName: "claude:agent-sdk" as const,
-    tokenPrefix: "AGENTSDK",
-    setup: (opts?: Parameters<typeof setupRealSession>[1]) =>
-      setupRealSession("claude:agent-sdk", opts),
+    adapterName: "gemini" as const,
+    tokenPrefix: "GEMINI",
+    setup: (opts?: Parameters<typeof setupRealSession>[1]) => setupRealSession("gemini", opts),
     runSmoke,
     runFull,
     activeCoordinators,

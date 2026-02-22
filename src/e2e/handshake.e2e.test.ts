@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createProcessManager } from "../../test-utils/session-test-utils.js";
-import { getE2EProfile } from "../helpers/e2e-profile.js";
+import { createProcessManager } from "../test-utils/session-test-utils.js";
+import { getE2EProfile } from "./e2e-profile.js";
 import { getRealCliPrereqState } from "./prereqs.js";
 
 describe("E2E Real CLI handshake smoke", () => {

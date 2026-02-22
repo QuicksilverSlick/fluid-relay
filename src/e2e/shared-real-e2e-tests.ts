@@ -8,9 +8,9 @@
  */
 
 import { expect, it } from "vitest";
-import type { CliAdapterName } from "../../adapters/create-adapter.js";
-import type { SessionCoordinator } from "../../core/session-coordinator.js";
-import type { Authenticator } from "../../interfaces/auth.js";
+import type { CliAdapterName } from "../adapters/create-adapter.js";
+import type { SessionCoordinator } from "../core/session-coordinator.js";
+import type { Authenticator } from "../interfaces/auth.js";
 import {
   assistantTextContains,
   closeWebSockets,

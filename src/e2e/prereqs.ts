@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { isClaudeAvailable } from "../../utils/claude-detection.js";
+import { isClaudeAvailable } from "../utils/claude-detection.js";
 
 // ---------------------------------------------------------------------------
 // Shared prereq state type

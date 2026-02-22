@@ -5,21 +5,21 @@
  * sessions for any backend adapter (codex, gemini, opencode, claude).
  */
 
-import { createAdapterResolver } from "../../adapters/adapter-resolver.js";
-import { ClaudeLauncher } from "../../adapters/claude/claude-launcher.js";
-import type { CliAdapterName } from "../../adapters/create-adapter.js";
-import { MemoryStorage } from "../../adapters/memory-storage.js";
-import { NodeProcessManager } from "../../adapters/node-process-manager.js";
-import { NodeWebSocketServer } from "../../adapters/node-ws-server.js";
+import { createAdapterResolver } from "../adapters/adapter-resolver.js";
+import { ClaudeLauncher } from "../adapters/claude/claude-launcher.js";
+import type { CliAdapterName } from "../adapters/create-adapter.js";
+import { MemoryStorage } from "../adapters/memory-storage.js";
+import { NodeProcessManager } from "../adapters/node-process-manager.js";
+import { NodeWebSocketServer } from "../adapters/node-ws-server.js";
 import {
   type MessageTracer,
   MessageTracerImpl,
   noopTracer,
   type TraceLevel,
-} from "../../core/messaging/message-tracer.js";
-import { SessionCoordinator } from "../../core/session-coordinator.js";
-import type { Authenticator } from "../../interfaces/auth.js";
-import type { LauncherStateStorage, SessionStorage } from "../../interfaces/storage.js";
+} from "../core/messaging/message-tracer.js";
+import { SessionCoordinator } from "../core/session-coordinator.js";
+import type { Authenticator } from "../interfaces/auth.js";
+import type { LauncherStateStorage, SessionStorage } from "../interfaces/storage.js";
 import { attachTrace, reservePort } from "./helpers.js";
 
 export interface SetupRealSessionOptions {
