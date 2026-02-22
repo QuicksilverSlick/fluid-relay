@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 
-import { MemoryStorage } from "../adapters/memory-storage.js";
-import type { WebSocketLike } from "../interfaces/transport.js";
 import {
   createBridgeWithAdapter,
   ErrorBackendAdapter,
@@ -15,7 +13,6 @@ import {
   makeStatusChangeMsg,
   makeStreamEventUnifiedMsg,
   noopLogger,
-  PassthroughBackendAdapter,
   setupInitializedSession,
   tick,
 } from "../testing/adapter-test-helpers.js";
@@ -27,22 +24,6 @@ import {
 import { SessionBridge } from "./session-bridge.js";
 
 // ─── Local Helpers ────────────────────────────────────────────────────────────
-
-/**
- * A mock socket using vi.fn() so tests can mutate sentMessages.length = 0.
- */
-function createViMockSocket(): WebSocketLike & {
-  sentMessages: string[];
-  send: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
-} {
-  const sentMessages: string[] = [];
-  return {
-    send: vi.fn((data: string) => sentMessages.push(data)),
-    close: vi.fn(),
-    sentMessages,
-  };
-}
 
 /** Check whether the backend received a user_message with the given text content. */
 function backendReceivedUserMessage(backendSession: MockBackendSession, text: string): boolean {
@@ -137,52 +118,6 @@ describe("SessionBridge — delegation integration", () => {
           sessionId: "sess-1",
         }),
       );
-    });
-  });
-
-  // ── Passthrough echo interception ───────────────────────────────────
-
-  describe("passthrough echo interception", () => {
-    it("converts passthrough user-echo into slash_command_result", async () => {
-      const storage = new MemoryStorage();
-      const passthroughAdapter = new PassthroughBackendAdapter();
-      const passthroughBridge = new SessionBridge({
-        storage,
-        config: { port: 3456 },
-        logger: noopLogger,
-        adapter: passthroughAdapter,
-      });
-      const consumer = createViMockSocket();
-
-      await passthroughBridge.connectBackend("sess-p");
-      const backendSession = passthroughAdapter.getSession("sess-p")!;
-      passthroughBridge.handleConsumerOpen(consumer, authContext("sess-p"));
-      consumer.sentMessages.length = 0;
-
-      passthroughBridge.handleConsumerMessage(
-        consumer,
-        "sess-p",
-        JSON.stringify({ type: "slash_command", command: "/context", request_id: "req-ctx" }),
-      );
-
-      expect(
-        backendSession.sentMessages.some(
-          (m) =>
-            m.type === "user_message" &&
-            m.content.some((b) => b.type === "text" && "text" in b && b.text === "/context"),
-        ),
-      ).toBe(true);
-
-      backendSession.emitUserEcho("Context: 23% used");
-      await tick();
-
-      const msgs = consumer.sentMessages.map((s) => JSON.parse(s));
-      const result = msgs.find((m: { type: string }) => m.type === "slash_command_result");
-      expect(result).toBeDefined();
-      expect(result.command).toBe("/context");
-      expect(result.request_id).toBe("req-ctx");
-      expect(result.source).toBe("cli");
-      expect(result.content).toContain("Context");
     });
   });
 
@@ -542,158 +477,6 @@ describe("SessionBridge — delegation integration", () => {
         (m: any) => m.type === "session_update" && m.session?.git_ahead !== undefined,
       );
       expect(updateMsg).toBeUndefined();
-    });
-  });
-
-  // ── Slash command programmatic API ──────────────────────────────────
-
-  describe("slash command programmatic API", () => {
-    let bridge: SessionBridge;
-    let adapter: MockBackendAdapter;
-
-    beforeEach(() => {
-      // Use a PassthroughMockAdapter (slashCommands: true) for slash command tests
-      const passthroughAdapter = new (class extends MockBackendAdapter {
-        override readonly capabilities = {
-          streaming: true,
-          permissions: true,
-          slashCommands: true,
-          availability: "local" as const,
-          teams: false,
-        };
-      })();
-      const created = createBridgeWithAdapter({ adapter: passthroughAdapter });
-      bridge = created.bridge;
-      adapter = created.adapter;
-    });
-
-    it("programmatic executeSlashCommand returns emulated result for /help", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      const result = await bridge.executeSlashCommand("sess-1", "/help");
-      expect(result).toBeDefined();
-      expect(result!.content).toContain("Available commands:");
-      expect(result!.source).toBe("emulated");
-    });
-
-    it("programmatic executeSlashCommand returns null for unknown sessions", async () => {
-      const result = await bridge.executeSlashCommand("nonexistent", "/model");
-      expect(result).toBeNull();
-    });
-
-    it("programmatic executeSlashCommand forwards native commands", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-      backendSession.pushMessage(
-        makeSessionInitMsg({ slash_commands: ["/compact", "/files", "/release-notes"] }),
-      );
-      await tick();
-
-      backendSession.sentMessages.length = 0;
-
-      const result = await bridge.executeSlashCommand("sess-1", "/compact");
-      expect(result).toBeNull(); // native commands return null
-      expect(backendReceivedUserMessage(backendSession, "/compact")).toBe(true);
-    });
-  });
-
-  // ── Slash command registry enrichment ───────────────────────────────
-
-  describe("slash command registry enrichment", () => {
-    let bridge: SessionBridge;
-    let adapter: MockBackendAdapter;
-
-    beforeEach(() => {
-      const passthroughAdapter = new (class extends MockBackendAdapter {
-        override readonly capabilities = {
-          streaming: true,
-          permissions: true,
-          slashCommands: true,
-          availability: "local" as const,
-          teams: false,
-        };
-      })();
-      const created = createBridgeWithAdapter({ adapter: passthroughAdapter });
-      bridge = created.bridge;
-      adapter = created.adapter;
-    });
-
-    it("populates registry when CLI reports slash_commands and skills in init", async () => {
-      const ws = createMockSocket();
-
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-      bridge.handleConsumerOpen(ws, authContext("sess-1"));
-      backendSession.pushMessage(
-        makeSessionInitMsg({
-          slash_commands: ["/compact", "/vim"],
-          skills: ["commit", "review-pr"],
-        }),
-      );
-      await tick();
-
-      ws.sentMessages.length = 0;
-
-      bridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "slash_command", command: "/help" }),
-      );
-
-      await tick();
-
-      const msgs = ws.sentMessages.map((m) => JSON.parse(m));
-      const result = msgs.find((m: any) => m.type === "slash_command_result");
-      expect(result).toBeDefined();
-      expect(result.content).toContain("/commit");
-      expect(result.content).toContain("/review-pr");
-    });
-
-    it("enriches registry from capabilities commands", async () => {
-      const ws = createMockSocket();
-
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-      bridge.handleConsumerOpen(ws, authContext("sess-1"));
-      backendSession.pushMessage(makeSessionInitMsg({ skills: ["commit"] }));
-      await tick();
-
-      backendSession.pushMessage(
-        makeControlResponseUnifiedMsg({
-          response: {
-            commands: [
-              {
-                name: "/compact",
-                description: "Compact conversation",
-                argumentHint: "[strategy]",
-              },
-              { name: "/vim", description: "Toggle vim mode" },
-            ],
-            models: [],
-            account: null,
-          },
-        }),
-      );
-      await tick();
-
-      ws.sentMessages.length = 0;
-
-      bridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "slash_command", command: "/help" }),
-      );
-
-      await tick();
-
-      const msgs = ws.sentMessages.map((m) => JSON.parse(m));
-      const result = msgs.find((m: any) => m.type === "slash_command_result");
-      expect(result).toBeDefined();
-      expect(result.content).toContain("/compact");
-      expect(result.content).toContain("/commit");
     });
   });
 });
