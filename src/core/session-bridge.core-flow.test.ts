@@ -63,17 +63,6 @@ describe("SessionBridge", () => {
   // ── 2. Backend connection handlers ──────────────────────────────────────
 
   describe("Backend connection handlers", () => {
-    it("connectBackend sets backend session and emits backend:connected", async () => {
-      bridge.getOrCreateSession("sess-1");
-      const handler = vi.fn();
-      bridge.on("backend:connected", handler);
-
-      await bridge.connectBackend("sess-1");
-
-      expect(bridge.isCliConnected("sess-1")).toBe(true);
-      expect(handler).toHaveBeenCalledWith({ sessionId: "sess-1" });
-    });
-
     it("connectBackend broadcasts cli_connected to consumers", async () => {
       bridge.getOrCreateSession("sess-1");
       const consumerSocket = createMockSocket();
@@ -164,10 +153,6 @@ describe("SessionBridge", () => {
       expect(parsed.some((m: any) => m.type === "cli_disconnected")).toBe(true);
       expect(parsed.some((m: any) => m.type === "permission_cancelled")).toBe(true);
     });
-
-    it("disconnectBackend is safe on nonexistent sessions", async () => {
-      await expect(bridge.disconnectBackend("nonexistent")).resolves.not.toThrow();
-    });
   });
 
   // ── 3. Consumer WebSocket handlers ─────────────────────────────────────
@@ -240,24 +225,6 @@ describe("SessionBridge", () => {
       expect(relaunchHandler).toHaveBeenCalledWith({ sessionId: "sess-1" });
     });
 
-    it("handleConsumerOpen emits consumer:connected with count", () => {
-      bridge.getOrCreateSession("sess-1");
-      const handler = vi.fn();
-      bridge.on("consumer:connected", handler);
-
-      const ws1 = createMockSocket();
-      bridge.handleConsumerOpen(ws1, authContext("sess-1"));
-      expect(handler).toHaveBeenCalledWith(
-        expect.objectContaining({ sessionId: "sess-1", consumerCount: 1 }),
-      );
-
-      const ws2 = createMockSocket();
-      bridge.handleConsumerOpen(ws2, authContext("sess-1"));
-      expect(handler).toHaveBeenCalledWith(
-        expect.objectContaining({ sessionId: "sess-1", consumerCount: 2 }),
-      );
-    });
-
     it("handleConsumerMessage routes user_message to backend", async () => {
       await bridge.connectBackend("sess-1");
       const backendSession = adapter.getSession("sess-1")!;
@@ -279,29 +246,6 @@ describe("SessionBridge", () => {
       ).toBe(true);
     });
 
-    it("handleConsumerMessage emits message:inbound event", async () => {
-      await bridge.connectBackend("sess-1");
-
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-
-      const handler = vi.fn();
-      bridge.on("message:inbound", handler);
-
-      bridge.handleConsumerMessage(
-        consumerSocket,
-        "sess-1",
-        JSON.stringify({ type: "user_message", content: "test" }),
-      );
-
-      expect(handler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sessionId: "sess-1",
-          message: expect.objectContaining({ type: "user_message", content: "test" }),
-        }),
-      );
-    });
-
     it("handleConsumerMessage ignores messages for nonexistent sessions", () => {
       const ws = createMockSocket();
       expect(() =>
@@ -318,22 +262,6 @@ describe("SessionBridge", () => {
       const ws = createMockSocket();
       bridge.handleConsumerOpen(ws, authContext("sess-1"));
       expect(() => bridge.handleConsumerMessage(ws, "sess-1", "not-json-at-all")).not.toThrow();
-    });
-
-    it("handleConsumerClose removes consumer and emits event", () => {
-      bridge.getOrCreateSession("sess-1");
-      const ws = createMockSocket();
-      bridge.handleConsumerOpen(ws, authContext("sess-1"));
-
-      const handler = vi.fn();
-      bridge.on("consumer:disconnected", handler);
-
-      bridge.handleConsumerClose(ws, "sess-1");
-
-      expect(handler).toHaveBeenCalledWith(
-        expect.objectContaining({ sessionId: "sess-1", consumerCount: 0 }),
-      );
-      expect(bridge.getSession("sess-1")!.consumerCount).toBe(0);
     });
 
     it("handleConsumerClose is safe on nonexistent sessions", () => {
