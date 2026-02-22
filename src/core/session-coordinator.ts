@@ -32,7 +32,6 @@ import { CoordinatorEventRelay } from "./coordinator/coordinator-event-relay.js"
 import { ProcessLogService } from "./coordinator/process-log-service.js";
 import { StartupRestoreService } from "./coordinator/startup-restore-service.js";
 import { DomainEventBus } from "./domain-event-bus.js";
-import { IdlePolicy } from "./idle-policy.js";
 import type { CliAdapterName } from "./interfaces/adapter-names.js";
 import type { AdapterResolver } from "./interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "./interfaces/backend-adapter.js";
@@ -44,7 +43,8 @@ import type {
 import type { SessionLauncher } from "./interfaces/session-launcher.js";
 import type { SessionRegistry } from "./interfaces/session-registry.js";
 import type { MessageTracer } from "./messaging/message-tracer.js";
-import { ReconnectPolicy } from "./reconnect-policy.js";
+import { IdlePolicy } from "./policies/idle-policy.js";
+import { ReconnectPolicy } from "./policies/reconnect-policy.js";
 import { SessionBridge } from "./session-bridge.js";
 import { SessionTransportHub } from "./session-transport-hub.js";
 import { TypedEventEmitter } from "./typed-emitter.js";

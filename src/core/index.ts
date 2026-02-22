@@ -5,8 +5,6 @@ export { CapabilitiesPolicy } from "./capabilities-policy.js";
 export { CliGateway } from "./cli-gateway.js";
 export { ConsumerGateway } from "./consumer/consumer-gateway.js";
 export { DomainEventBus } from "./domain-event-bus.js";
-export { IdlePolicy } from "./idle-policy.js";
-
 // ─── Interface / type re-exports ─────────────────────────────────────────────
 export type {
   BackendAdapter,
@@ -29,9 +27,10 @@ export type {
   Reconnectable,
   TeamObserver,
 } from "./interfaces/extensions.js";
+export { IdlePolicy } from "./policies/idle-policy.js";
+export { ReconnectPolicy } from "./policies/reconnect-policy.js";
 export type { ProcessSupervisorOptions, SupervisorEventMap } from "./process-supervisor.js";
 export { ProcessSupervisor } from "./process-supervisor.js";
-export { ReconnectPolicy } from "./reconnect-policy.js";
 export { SessionBridge } from "./session-bridge.js";
 export { SessionCoordinator, type SessionCoordinatorOptions } from "./session-coordinator.js";
 export {

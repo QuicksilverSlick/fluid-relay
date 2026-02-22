@@ -11,7 +11,7 @@
 import type {
   IdleSessionReaperDeps,
   IdleSessionReaper as IIdleSessionReaper,
-} from "./interfaces/session-coordinator-coordination.js";
+} from "../interfaces/session-coordinator-coordination.js";
 
 export type IdlePolicyDeps = IdleSessionReaperDeps;
 

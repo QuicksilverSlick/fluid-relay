@@ -11,7 +11,7 @@
 import type {
   ReconnectController as IReconnectController,
   ReconnectControllerDeps,
-} from "./interfaces/session-coordinator-coordination.js";
+} from "../interfaces/session-coordinator-coordination.js";
 
 export type ReconnectPolicyDeps = ReconnectControllerDeps;
 
