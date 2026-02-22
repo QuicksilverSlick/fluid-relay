@@ -300,8 +300,13 @@ Temporary exceptions go in `docs/refactor-plan/architecture-waivers.json` with `
 ```bash
 pnpm build
 node dist/bin/beamcode.mjs --no-tunnel        # start locally
+pnpm start -- --no-tunnel                     # equivalent via pnpm
 curl http://localhost:9414/health              # health check
 node dist/bin/beamcode.mjs --no-tunnel --port 8080
+
+# With full trace output redirected to file
+node dist/bin/beamcode.mjs --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
+pnpm start -- --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
 ```
 
 `Ctrl+C` once = graceful shutdown. `Ctrl+C` twice = force exit.
@@ -331,6 +336,20 @@ See **[docs/unified-message-protocol.md](docs/unified-message-protocol.md)** for
 | `interrupt` | consumer → backend | — |
 | `session_lifecycle` | internal | ✅ |
 
+#### `status_change` values
+
+The `status` field on a `status_change` message reflects the session's current operational state:
+
+| Value | Meaning |
+|-------|---------|
+| `"running"` | Actively processing a prompt |
+| `"idle"` | Ready to accept a new message |
+| `"compacting"` | Context window is being compacted |
+| `"retry"` | Rate-limited — backend is waiting to retry; `metadata` contains `message`, `attempt`, and `next` (epoch ms until next attempt) |
+| `null` | Unknown / transitional |
+
+When `status === "retry"`, the frontend renders the message and attempt count in the streaming indicator and clears it automatically when the backend resumes.
+
 ---
 
 ## Message Tracing
@@ -342,12 +361,14 @@ BeamCode includes a debug tracing system that logs every message crossing a tran
 ```bash
 # Smart mode (default): bodies included, large fields truncated, sensitive keys redacted
 beamcode --trace
+pnpm start -- --trace
 
 # Headers only: traceId, type, direction, timing, size — no body
 beamcode --trace --trace-level headers
 
 # Full payloads: every message logged as-is (requires explicit opt-in)
 beamcode --trace --trace-level full --trace-allow-sensitive
+pnpm start -- --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
 
 # Environment-variable controls (CLI flags override env)
 BEAMCODE_TRACE=1 beamcode
