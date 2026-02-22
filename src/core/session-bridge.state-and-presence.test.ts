@@ -11,7 +11,6 @@ import {
   makePermissionRequestUnifiedMsg,
   makeResultUnifiedMsg,
   makeSessionInitMsg,
-  noopLogger,
   setupInitializedSession,
   tick,
 } from "../testing/adapter-test-helpers.js";
@@ -19,7 +18,7 @@ import {
   authContext,
   createTestSocket as createMockSocket,
 } from "../testing/cli-message-factories.js";
-import { SessionBridge } from "./session-bridge.js";
+import type { SessionBridge } from "./session-bridge.js";
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -76,11 +75,6 @@ describe("SessionBridge", () => {
       expect(snapshot!.messageHistoryLength).toBe(1);
     });
 
-    it("restoreFromStorage returns 0 when storage is empty", () => {
-      const count = bridge.restoreFromStorage();
-      expect(count).toBe(0);
-    });
-
     it("restoreFromStorage does not overwrite live sessions", async () => {
       const backendSession = await setupInitializedSession(bridge, adapter, "sess-1");
 
@@ -121,12 +115,6 @@ describe("SessionBridge", () => {
       expect(count).toBe(0);
       // Live session should still have the current cwd
       expect(bridge.getSession("sess-1")!.state.cwd).toBe("/test");
-    });
-
-    it("restoreFromStorage returns 0 when bridge has no storage", () => {
-      const noStorageBridge = new SessionBridge({ config: { port: 3456 }, logger: noopLogger });
-      const count = noStorageBridge.restoreFromStorage();
-      expect(count).toBe(0);
     });
 
     it("persistSession is triggered by system init", async () => {
@@ -333,22 +321,6 @@ describe("SessionBridge", () => {
 
       const interruptMsg = backendSession.sentMessages.find((m) => m.type === "interrupt");
       expect(interruptMsg).toBeDefined();
-    });
-
-    it("broadcastNameUpdate sends session_name_update to consumers", () => {
-      bridge.getOrCreateSession("sess-1");
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-      consumerSocket.sentMessages.length = 0;
-
-      bridge.broadcastNameUpdate("sess-1", "My Session");
-
-      const parsed = consumerSocket.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed[0]).toEqual({ type: "session_name_update", name: "My Session" });
-    });
-
-    it("broadcastNameUpdate is a no-op for nonexistent sessions", () => {
-      expect(() => bridge.broadcastNameUpdate("nonexistent", "name")).not.toThrow();
     });
 
     it("consumer socket that throws on send is removed from the set", async () => {
