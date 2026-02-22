@@ -238,32 +238,56 @@ describe("NodeWebSocketServer", () => {
 
   // ── External HTTP server attachment (lines 100-106) ─────────────────
 
-  it("attaches to an external HTTP server instead of creating its own (lines 100-106)", async () => {
+  it("attaches to an external HTTP server, exposes port, and wrapSocket.close() works (lines 73-77, 29, 100-106)", async () => {
     const httpServer = createServer();
     await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
     const addr = httpServer.address() as { port: number };
     const port = addr.port;
 
     server = new NodeWebSocketServer({ port: 0, server: httpServer });
-    const connections: string[] = [];
+    const closedSessionIds: string[] = [];
 
     // listen() with external server takes the early-return path (lines 100-106)
-    await server.listen((_, sessionId) => {
-      connections.push(sessionId);
+    await server.listen((socket, sessionId) => {
+      // Call socket.close() to cover line 29 (wrapSocket.close)
+      socket.close(1000, "test-initiated close");
+      closedSessionIds.push(sessionId);
     });
 
+    // server.port falls back to httpServer.address() — covers lines 73-77
+    expect(server.port).toBe(port);
+
     const ws = new WebSocket(`ws://localhost:${port}/ws/cli/${TEST_UUID_1}`);
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve) => {
       ws.on("open", resolve);
-      ws.on("error", reject);
+      ws.on("error", resolve); // proceed even if close happens immediately
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(connections).toContain(TEST_UUID_1);
-    ws.close();
+    expect(closedSessionIds).toContain(TEST_UUID_1);
+    ws.terminate();
     await server.close();
     server = null;
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  });
+
+  // ── port getter falls back to httpServer when wss is null (lines 73-77) ────
+
+  it("port getter falls back to httpServer.address() when wss not yet initialized (lines 73-77)", async () => {
+    const httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const addr = httpServer.address() as { port: number };
+    const expectedPort = addr.port;
+
+    // Create with external server but do NOT call listen() — wss stays null
+    // port getter: wss?.address() is undefined → false → checks this.options.server (line 73)
+    const externalServer = new NodeWebSocketServer({ port: 0, server: httpServer });
+    expect(externalServer.port).toBe(expectedPort); // lines 73-75
+
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+
+    // After httpServer closes, httpServer.address() returns null → line 77 (return undefined)
+    expect(externalServer.port).toBeUndefined();
   });
 
   // ── close() before listen() — wss is null (lines 175-176) ───────────
