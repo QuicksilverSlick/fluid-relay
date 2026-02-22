@@ -45,8 +45,8 @@ import type { SessionRegistry } from "./interfaces/session-registry.js";
 import type { MessageTracer } from "./messaging/message-tracer.js";
 import { IdlePolicy } from "./policies/idle-policy.js";
 import { ReconnectPolicy } from "./policies/reconnect-policy.js";
+import { SessionTransportHub } from "./session/session-transport-hub.js";
 import { SessionBridge } from "./session-bridge.js";
-import { SessionTransportHub } from "./session-transport-hub.js";
 import { TypedEventEmitter } from "./typed-emitter.js";
 
 /**

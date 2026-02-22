@@ -8,13 +8,13 @@
  * @module SessionControl
  */
 
-import type { AuthContext } from "../interfaces/auth.js";
-import type { WebSocketLike } from "../interfaces/transport.js";
-import { CliGateway } from "./cli-gateway.js";
+import type { AuthContext } from "../../interfaces/auth.js";
+import type { WebSocketLike } from "../../interfaces/transport.js";
+import { CliGateway } from "../cli-gateway.js";
 import type {
   SessionTransportHub as ISessionTransportHub,
   SessionTransportHubDeps,
-} from "./interfaces/session-coordinator-coordination.js";
+} from "../interfaces/session-coordinator-coordination.js";
 
 export class SessionTransportHub implements ISessionTransportHub {
   private server: SessionTransportHubDeps["server"];
