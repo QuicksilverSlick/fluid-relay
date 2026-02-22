@@ -9,9 +9,9 @@
  * @module SessionControl
  */
 
-import type { GitInfo, GitInfoResolver } from "../interfaces/git-resolver.js";
-import type { SessionState } from "../types/session-state.js";
-import type { Session } from "./session/session-repository.js";
+import type { GitInfo, GitInfoResolver } from "../../interfaces/git-resolver.js";
+import type { SessionState } from "../../types/session-state.js";
+import type { Session } from "./session-repository.js";
 
 // ─── Standalone helper ──────────────────────────────────────────────────────
 

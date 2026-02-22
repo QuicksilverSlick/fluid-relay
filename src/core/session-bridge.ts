@@ -56,12 +56,12 @@ import { ConsumerBroadcaster, MAX_CONSUMER_MESSAGE_SIZE } from "./consumer/consu
 import { ConsumerGatekeeper, type RateLimiterFactory } from "./consumer/consumer-gatekeeper.js";
 import { ConsumerGateway } from "./consumer/consumer-gateway.js";
 import { TypedEventEmitter } from "./events/typed-emitter.js";
-import { GitInfoTracker } from "./git-info-tracker.js";
 import type { AdapterResolver } from "./interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "./interfaces/backend-adapter.js";
 import type { InboundCommand, PolicyCommand } from "./interfaces/runtime-commands.js";
 import { type MessageTracer, noopTracer } from "./messaging/message-tracer.js";
 import { UnifiedMessageRouter } from "./messaging/unified-message-router.js";
+import { GitInfoTracker } from "./session/git-info-tracker.js";
 import { MessageQueueHandler } from "./session/message-queue-handler.js";
 import type { LifecycleState } from "./session/session-lifecycle.js";
 import { type Session, SessionRepository } from "./session/session-repository.js";

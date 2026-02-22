@@ -5,8 +5,8 @@ import type { RateLimiter } from "../../interfaces/rate-limiter.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { PermissionRequest } from "../../types/cli-messages.js";
 import type { BridgeEventMap } from "../../types/events.js";
-import type { GitInfoTracker } from "../git-info-tracker.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
+import type { GitInfoTracker } from "../session/git-info-tracker.js";
 import type { Session } from "../session/session-repository.js";
 import type { InboundCommand } from "./runtime-commands.js";
 
