@@ -173,16 +173,12 @@ export function handleApiSessions(
         }
 
         const name = parsed.name.trim().slice(0, 100);
-
-        const session = sessionCoordinator.registry.getSession(sessionId);
-        if (!session) {
+        const renamed = sessionCoordinator.renameSession(sessionId, name);
+        if (!renamed) {
           json(res, 404, { error: "Session not found" });
           return;
         }
-
-        sessionCoordinator.registry.setSessionName(sessionId, name);
-        sessionCoordinator.bridge.broadcastNameUpdate(sessionId, name);
-        json(res, 200, { ...session, name });
+        json(res, 200, renamed);
       })
       .catch((err) => {
         const status = err instanceof Error && err.message === "Request body too large" ? 413 : 400;

@@ -31,6 +31,7 @@ const BRIDGE_EVENTS = [
   "permission:requested",
   "permission:resolved",
   "session:first_turn_completed",
+  "session:renamed",
   "session:closed",
   "slash_command:executed",
   "slash_command:failed",
