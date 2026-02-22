@@ -410,7 +410,7 @@ describe("SessionCoordinator", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Process output forwarding (Step 11)
+  // Process output forwarding
   // -----------------------------------------------------------------------
 
   describe("process output forwarding", () => {
@@ -446,7 +446,7 @@ describe("SessionCoordinator", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Session auto-naming on first turn (Step 4)
+  // Session auto-naming on first turn
   // -----------------------------------------------------------------------
 
   describe("session auto-naming on first turn", () => {

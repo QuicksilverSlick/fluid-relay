@@ -1,11 +1,11 @@
 /**
  * SessionCoordinator — top-level facade and entry point.
  *
- * Owns the session registry and wires the transport layer (ConsumerGateway,
- * BackendConnector), policy services (ReconnectPolicy, IdlePolicy), and the
+ * Owns the session registry and wires the transport layer (SessionTransportHub,
+ * SessionBridge), policy services (ReconnectPolicy, IdlePolicy), and the
  * DomainEventBus. Each accepted session gets one SessionRuntime. Consumers
- * and backends connect here; all session lifecycle events flow through this
- * class and are published to the bus for other subsystems to observe.
+ * and backends connect via the bridge; all session lifecycle events flow through
+ * this class and are published to the bus for other subsystems to observe.
  */
 
 import { randomUUID } from "node:crypto";
@@ -50,8 +50,7 @@ import { SessionTransportHub } from "./session/session-transport-hub.js";
 import { SessionBridge } from "./session-bridge.js";
 
 /**
- * Facade wiring SessionBridge + ClaudeLauncher together.
- * Replaces the manual wiring previously in index.ts:34-68.
+ * Facade wiring SessionBridge + SessionLauncher together.
  *
  * Auto-wires:
  * - backend:session_id → registry.setBackendSessionId
@@ -324,9 +323,10 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
 
   /**
    * Graceful shutdown:
-   * 1. Kill all CLI processes
-   * 2. Close all sessions (sockets)
-   * 3. Clear timers
+   * 1. Stop event relay and clear timers
+   * 2. Stop transport hub
+   * 3. Kill all CLI processes
+   * 4. Close all sessions (sockets) and adapters
    */
   async stop(): Promise<void> {
     this.relay.stop();

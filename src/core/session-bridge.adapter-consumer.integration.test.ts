@@ -140,7 +140,6 @@ describe("Adapter → SessionBridge → Consumer Integration", () => {
       bridge.handleConsumerOpen(socket1, { sessionId, transport: {} });
       bridge.handleConsumerOpen(socket2, { sessionId, transport: {} });
 
-      // Connect backend (replaces handleCLIOpen)
       await bridge.connectBackend(sessionId);
       const backendSession = adapter.getSession(sessionId)!;
 
@@ -350,7 +349,6 @@ describe("Adapter → SessionBridge → Consumer Integration", () => {
       bridge.handleConsumerOpen(socket1, { sessionId, transport: {} });
       bridge.handleConsumerOpen(socket2, { sessionId: sessionId2, transport: {} });
 
-      // Connect backend sessions (replaces handleCLIOpen for both sessions)
       await bridge.connectBackend(sessionId);
       await bridge.connectBackend(sessionId2);
       const backendSession1 = adapter.getSession(sessionId)!;
@@ -601,7 +599,6 @@ describe("Adapter → SessionBridge → Consumer Integration", () => {
     it("consumer message is stored and backend response reaches consumer", async () => {
       const consumerSocket = createMockSocket();
 
-      // Connect consumer, then backend (replaces handleCLIOpen)
       bridge.handleConsumerOpen(consumerSocket, { sessionId, transport: {} });
       await bridge.connectBackend(sessionId);
       const backendSession = adapter.getSession(sessionId)!;
@@ -649,7 +646,6 @@ describe("Adapter → SessionBridge → Consumer Integration", () => {
         JSON.stringify({ type: "user_message", content: "queued message" }),
       );
 
-      // Now connect backend (replaces handleCLIOpen)
       await bridge.connectBackend(sessionId);
       const backendSession = adapter.getSession(sessionId)!;
 

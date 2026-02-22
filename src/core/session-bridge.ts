@@ -4,7 +4,7 @@
  * Owns the session lifecycle and delegates to specialized components:
  * - **ConsumerPlane**: ConsumerGateway, ConsumerGatekeeper, ConsumerBroadcaster
  * - **BackendPlane**: BackendConnector
- * - **MessagePlane**: UnifiedMessageRouter, ConsumerMessageMapper, InboundNormalizer
+ * - **MessagePlane**: UnifiedMessageRouter, SlashCommandService
  * - **SessionControl**: CapabilitiesPolicy, GitInfoTracker, SessionRepository
  *
  * Delegates runtime ownership to RuntimeManager.
@@ -295,7 +295,7 @@ export class SessionBridge extends TypedEventEmitter<BridgeEventMap> {
     );
   }
 
-  // ── Event forwarding ─────────────────────────────────────────────────────
+  // ── Runtime access ──────────────────────────────────────────────────────
 
   getLifecycleState(sessionId: string): LifecycleState | undefined {
     return this.runtimeManager.getLifecycleState(sessionId);
