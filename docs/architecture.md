@@ -1,6 +1,6 @@
 # BeamCode Architecture
 
-> Date: 2026-02-21
+> Date: 2026-02-22
 > Scope: Full system architecture — core, adapters, consumer, relay, daemon
 
 ## Table of Contents
@@ -191,10 +191,10 @@ The core is built around a **per-session runtime actor** (`SessionRuntime`) that
     │                  │
     ▼                  ▼
 ┌────────┐  ┌──────────────────────────────────────────────────────────┐
-│Domain  │  │               SessionBridge (~720L)                       │
+│Domain  │  │               SessionBridge (~500L)                       │
 │EventBus│  │                                                           │
-└────────┘  │  Wires four bounded contexts, delegates runtime map       │
-            │  ownership to RuntimeManager (src/core/bridge/)           │
+└────────┘  │  Wires four bounded contexts, delegates to extracted      │
+            │  services in src/core/bridge/ (12 focused modules)        │
             └───┬──────────┬──────────┬──────────┬─────────────────────┘
                 │          │          │          │
                 ▼          ▼          ▼          ▼
@@ -271,7 +271,7 @@ class SessionCoordinator {
 
 ### SessionRuntime
 
-**File:** `src/core/session-runtime.ts` (~400 lines)
+**File:** `src/core/session-runtime.ts` (~590 lines)
 **Context:** SessionControl
 **Writes state:** **Yes — sole writer**
 
@@ -295,7 +295,7 @@ The SessionRuntime is a **per-session state owner**. One instance exists per act
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │                      SessionRuntime                                  │
-│                      (per-session, ~400L)                            │
+│                      (per-session, ~590L)                            │
 │                                                                      │
 │  ┌─────────────────────── PRIVATE STATE ──────────────────────────┐  │
 │  │                                                                │  │
@@ -1251,26 +1251,27 @@ CoreSessionState → DevToolSessionState → SessionState
                 ▼       ▼        ▼            ▼
   ┌──────────────┐ ┌─────┐ ┌──────────────┐ ┌───────────────┐
   │ coordinator/ │ │Domai│ │ SessionBridge│ │   Process     │
-  │ •EventRelay │ │n    │ │  (~720L)     │ │   Supervisor  │
+  │ •EventRelay │ │n    │ │  (~500L)     │ │   Supervisor  │
   │ •Recovery   │ │Event│ │              │ │   (existing   │
   │ •LogService │ │Bus  │ └──────┬───────┘ │    launcher)  │
   │ •Restore    │ │(~80)│        │         └───────────────┘
   └──────────────┘ └──┬──┘       │
-                      │     ┌────┴──────────────────────────┐
-                      │     │      │         │              │
-                      │     ▼      ▼         ▼              ▼
-                      │ ┌────────┐┌───────┐┌─────────┐┌──────────┐
-                      │ │Runtime ││Consum.││ Backend ││ Consumer │
-                      │ │Manager ││Gatewey││Connector││Broadcast.│
-                      │ │(bridge/│└───┬───┘└────┬────┘└──────────┘
-                      │ └───┬────┘    │         │
-                      │     │    Gatekeeper     │
-                      │     │    (~140L)   AdapterResolver
-       ┌──────────────┤     │
+                      │     ┌────┴─────────────────────────────────┐
+                      │     │      │       │        │              │
+                      │     ▼      ▼       ▼        ▼              ▼
+                      │ ┌────────┐┌─────┐┌───────┐┌─────────┐┌──────────┐
+                      │ │Runtime ││Rntm ││Consum.││ Backend ││ bridge/  │
+                      │ │Manager ││Api  ││Gatewey││Connector││ •Lifecyc │
+                      │ │(bridge/││     │└───┬───┘└────┬────┘│ •Backend │
+                      │ │ ~60L)  ││~130L│    │         │     │ •Broadc. │
+                      │ └───┬────┘└─────┘    │         │     │ •Info    │
+                      │     │           Gatekeeper     │     │ •Persist │
+                      │     │           (~140L)   Resolver   │ •DepsF.  │
+       ┌──────────────┤     │                                └──────────┘
        │              │     ▼
        ▼              ▼ ┌──────────────┐       ┌────────────┐
   ┌────────────┐        │SessionRuntime│       │  Policies  │
-  │ Policies   │        │  (~400L)     │       │ •Reconnect │
+  │ Policies   │        │  (~590L)     │       │ •Reconnect │
   │ •Reconnect │        │              │       │ •Idle      │
   │ •Idle      │        │  SOLE OWNER  │       │ •Caps      │
   │ •Caps      │        │  of state    │       │ (~220L)    │
@@ -1292,7 +1293,7 @@ CoreSessionState → DevToolSessionState → SessionState
   Transport modules emit commands to runtime.
   Policies observe and advise.
   coordinator/ services handle cross-session concerns.
-  bridge/ owns the runtime map.
+  bridge/ modules own runtime map + extracted bridge APIs.
 ```
 
 ---
@@ -1302,14 +1303,25 @@ CoreSessionState → DevToolSessionState → SessionState
 ```
 src/core/
 ├── session-coordinator.ts        — top-level facade + lifecycle (~400L)
-├── session-bridge.ts             — wires four bounded contexts (~720L)
-├── session-runtime.ts            — per-session state owner (~400L)
+├── session-bridge.ts             — wires four bounded contexts (~500L)
+├── session-runtime.ts            — per-session state owner (~590L)
 ├── domain-events.ts              — DomainEvent union + DomainEventBus (~80L)
 ├── commands.ts                   — InboundCommand, BackendEvent, PolicyCommand types
 ├── lifecycle-state.ts            — LifecycleState enum + transition validator
 │
 ├── bridge/
-│   └── runtime-manager.ts        — owns runtime map, lifecycle signal routing
+│   ├── runtime-manager.ts        — owns runtime map, lifecycle signal routing (~60L)
+│   ├── runtime-manager-factory.ts — constructs RuntimeManager with SessionRuntime factory (~40L)
+│   ├── runtime-api.ts            — session-scoped command dispatch (send, interrupt, slash) (~130L)
+│   ├── backend-api.ts            — backend connect/disconnect/isConnected facade (~50L)
+│   ├── session-lifecycle-service.ts — session create/close/remove orchestration (~100L)
+│   ├── session-info-api.ts       — session state queries (getSession, getAllSessions) (~56L)
+│   ├── session-broadcast-api.ts  — consumer broadcast operations (~60L)
+│   ├── session-persistence-service.ts — storage restore/persist delegation (~34L)
+│   ├── bridge-event-forwarder.ts — lifecycle signal routing on bridge events (~27L)
+│   ├── slash-service-factory.ts  — constructs SlashCommandService + handler chain (~67L)
+│   ├── session-bridge-deps-factory.ts — factory fns for component dep injection (~200L)
+│   └── message-tracing-utils.ts  — traced normalize + ID generators (~52L)
 │
 ├── coordinator/
 │   ├── coordinator-event-relay.ts    — bridge+launcher event wiring

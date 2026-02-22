@@ -16,7 +16,7 @@ Architecture reference, testing, and message tracing.
 
 See [docs/architecture-diagram.md](docs/architecture-diagram.md) for the full architecture diagram, data flows, module decomposition, and package structure.
 
-**Summary:** An HTTP+WS server routes `ConsumerMessage` / `InboundMessage` through `SessionBridge` (a `TypedEventEmitter` orchestrator decomposed into 15+ focused modules) to a `BackendAdapter` — Claude, ACP, Codex, Gemini, or OpenCode. A daemon layer manages process lifecycle; a relay layer adds Cloudflare Tunnel + E2E encryption for remote access.
+**Summary:** An HTTP+WS server routes `ConsumerMessage` / `InboundMessage` through `SessionBridge` (~500L, decomposed into 12 focused modules in `bridge/`) and `SessionCoordinator` (~400L, with 4 extracted services in `coordinator/`) to a `BackendAdapter` — Claude, ACP, Codex, Gemini, or OpenCode. A daemon layer manages process lifecycle; a relay layer adds Cloudflare Tunnel + E2E encryption for remote access.
 
 ---
 
