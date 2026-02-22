@@ -2,7 +2,6 @@
 
 export { BackendConnector } from "./backend/backend-connector.js";
 export { CapabilitiesPolicy } from "./capabilities-policy.js";
-export { CliGateway } from "./cli-gateway.js";
 export { ConsumerGateway } from "./consumer/consumer-gateway.js";
 export type {
   ProcessSupervisorOptions,
@@ -35,6 +34,7 @@ export type {
 } from "./interfaces/extensions.js";
 export { IdlePolicy } from "./policies/idle-policy.js";
 export { ReconnectPolicy } from "./policies/reconnect-policy.js";
+export { CliGateway } from "./session/cli-gateway.js";
 export {
   isLifecycleTransitionAllowed,
   LIFECYCLE_STATES,

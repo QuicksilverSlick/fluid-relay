@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import type { SessionTransportHubDeps } from "../interfaces/session-coordinator-coordination.js";
 import { CliGateway } from "./cli-gateway.js";
-import type { SessionTransportHubDeps } from "./interfaces/session-coordinator-coordination.js";
 
 function createSocket() {
   const handlers: Record<string, Array<(...args: unknown[]) => void>> = {};

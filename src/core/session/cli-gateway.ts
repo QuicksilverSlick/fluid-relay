@@ -8,11 +8,11 @@
  * @module BackendPlane
  */
 
-import type { WebSocketLike } from "../interfaces/transport.js";
-import type { CliAdapterName } from "./interfaces/adapter-names.js";
-import type { InvertedConnectionAdapter } from "./interfaces/inverted-connection-adapter.js";
-import { isInvertedConnectionAdapter } from "./interfaces/inverted-connection-adapter.js";
-import type { SessionTransportHubDeps } from "./interfaces/session-coordinator-coordination.js";
+import type { WebSocketLike } from "../../interfaces/transport.js";
+import type { CliAdapterName } from "../interfaces/adapter-names.js";
+import type { InvertedConnectionAdapter } from "../interfaces/inverted-connection-adapter.js";
+import { isInvertedConnectionAdapter } from "../interfaces/inverted-connection-adapter.js";
+import type { SessionTransportHubDeps } from "../interfaces/session-coordinator-coordination.js";
 
 type CliSocket = WebSocketLike & {
   on(event: "message", handler: (data: string | Buffer) => void): void;
