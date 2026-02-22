@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import type { AuthContext } from "../interfaces/auth.js";
@@ -233,5 +234,43 @@ describe("NodeWebSocketServer", () => {
 
     expect(ws.readyState).toBe(WebSocket.OPEN);
     ws.close();
+  });
+
+  // ── External HTTP server attachment (lines 100-106) ─────────────────
+
+  it("attaches to an external HTTP server instead of creating its own (lines 100-106)", async () => {
+    const httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const addr = httpServer.address() as { port: number };
+    const port = addr.port;
+
+    server = new NodeWebSocketServer({ port: 0, server: httpServer });
+    const connections: string[] = [];
+
+    // listen() with external server takes the early-return path (lines 100-106)
+    await server.listen((_, sessionId) => {
+      connections.push(sessionId);
+    });
+
+    const ws = new WebSocket(`ws://localhost:${port}/ws/cli/${TEST_UUID_1}`);
+    await new Promise<void>((resolve, reject) => {
+      ws.on("open", resolve);
+      ws.on("error", reject);
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(connections).toContain(TEST_UUID_1);
+    ws.close();
+    await server.close();
+    server = null;
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  });
+
+  // ── close() before listen() — wss is null (lines 175-176) ───────────
+
+  it("close() resolves immediately when wss is null (not yet started)", async () => {
+    const uninitServer = new NodeWebSocketServer({ port: 0 });
+    // close() without ever calling listen() — wss is null
+    await expect(uninitServer.close()).resolves.toBeUndefined();
   });
 });

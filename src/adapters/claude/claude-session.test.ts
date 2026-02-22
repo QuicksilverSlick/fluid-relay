@@ -584,6 +584,129 @@ describe("ClaudeSession", () => {
     expect(ws.readyState).toBe(3); // CLOSED
   });
 
+  // -------------------------------------------------------------------------
+  // traceUnparsedLine with tracer (lines 269-278)
+  // ─ via handleIncoming NDJSON parse failure (line 206)
+  // ─ via handleBufferedRemainder parse failure (line 220)
+  // -------------------------------------------------------------------------
+
+  it("traceUnparsedLine emits recv+error trace events when NDJSON line is invalid (line 206, 272-278)", async () => {
+    const lines: string[] = [];
+    const tracer = new MessageTracerImpl({
+      level: "smart",
+      allowSensitive: false,
+      write: (line) => lines.push(line),
+      staleTimeoutMs: 60_000,
+    });
+
+    const ws = new MockWebSocket();
+    const session = new ClaudeSession({
+      sessionId: "trace-unparse",
+      socketPromise: Promise.resolve(ws) as any,
+      tracer,
+    });
+
+    await tick();
+
+    // Send NDJSON with an invalid line — the newline causes it to go through
+    // the lineBuffer path, and JSON.parse fails on each invalid line (line 206)
+    ws.emit("message", "not-valid-json\n");
+    await tick();
+
+    await session.close();
+    tracer.destroy();
+
+    const events = lines.map((l) => JSON.parse(l) as TraceEvent);
+    const unparsedEvents = events.filter((e) => e.messageType === "raw_unparsed_line");
+    expect(unparsedEvents.length).toBeGreaterThanOrEqual(1);
+    const errorEvent = unparsedEvents.find((e) => e.error);
+    expect(errorEvent?.action).toBe("dropped");
+    expect(errorEvent?.outcome).toBe("parse_error");
+  });
+
+  it("handleBufferedRemainder catch path emits trace events when flush() returns invalid JSON (line 220)", async () => {
+    const lines: string[] = [];
+    const tracer = new MessageTracerImpl({
+      level: "smart",
+      allowSensitive: false,
+      write: (line) => lines.push(line),
+      staleTimeoutMs: 60_000,
+    });
+
+    const ws = new MockWebSocket();
+    const session = new ClaudeSession({
+      sessionId: "trace-remainder",
+      socketPromise: Promise.resolve(ws) as any,
+      tracer,
+    });
+
+    await tick();
+
+    // Send partial (no newline) and unparseable data so it goes into the line buffer
+    // without being emitted as a line. When the socket closes, handleBufferedRemainder
+    // calls lineBuffer.flush() which returns this fragment, and JSON.parse fails (line 220).
+    ws.emit("message", "{partial-json-no-newline");
+    await tick();
+
+    // Close socket — triggers handleBufferedRemainder → flush → parse fail → line 220
+    ws.emit("close");
+    await tick();
+
+    tracer.destroy();
+
+    const events = lines.map((l) => JSON.parse(l) as TraceEvent);
+    const unparsedEvents = events.filter((e) => e.messageType === "raw_unparsed_line");
+    expect(unparsedEvents.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // traceFromCliMessage control_response branch (line 302)
+  // -------------------------------------------------------------------------
+
+  it("traceFromCliMessage handles control_response and extracts request_id (line 302)", async () => {
+    const lines: string[] = [];
+    const tracer = new MessageTracerImpl({
+      level: "smart",
+      allowSensitive: false,
+      write: (line) => lines.push(line),
+      staleTimeoutMs: 60_000,
+    });
+
+    const ws = new MockWebSocket();
+    const session = new ClaudeSession({
+      sessionId: "trace-ctrl-resp",
+      socketPromise: Promise.resolve(ws) as any,
+      tracer,
+    });
+
+    await tick();
+
+    // Send a control_response CLI message — this exercises the `control_response` branch
+    // in traceFromCliMessage (line 302), which returns { requestId: msg.response.request_id }
+    ws.emit(
+      "message",
+      JSON.stringify({
+        type: "control_response",
+        response: {
+          request_id: "ctrl-req-123",
+          granted: true,
+          updatedInput: null,
+        },
+      }),
+    );
+    await tick();
+
+    await session.close();
+    tracer.destroy();
+
+    // The tracer should have emitted a "native_inbound" event with the requestId
+    const events = lines.map((l) => JSON.parse(l) as TraceEvent);
+    const inbound = events.find(
+      (e) => e.messageType === "native_inbound" && e.requestId === "ctrl-req-123",
+    );
+    expect(inbound).toBeDefined();
+  });
+
   it("golden: unmapped backend type emits unmapped_type trace outcome", async () => {
     const lines: string[] = [];
     const tracer = new MessageTracerImpl({
