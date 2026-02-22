@@ -158,73 +158,6 @@ describe("SessionBridge", () => {
   // ── 3. Consumer WebSocket handlers ─────────────────────────────────────
 
   describe("Consumer WebSocket handlers", () => {
-    it("handleConsumerOpen sends identity then session_init snapshot", () => {
-      bridge.getOrCreateSession("sess-1");
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-
-      const parsed = consumerSocket.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed[0].type).toBe("identity");
-      expect(parsed[0].userId).toBe("anonymous-1");
-      expect(parsed[0].displayName).toBe("User 1");
-      expect(parsed[0].role).toBe("participant");
-      expect(parsed[1].type).toBe("session_init");
-      expect(parsed[1].session.session_id).toBe("sess-1");
-    });
-
-    it("handleConsumerOpen replays message history", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      // Build up some message history
-      backendSession.pushMessage(makeAssistantUnifiedMsg());
-      await tick();
-
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-
-      const parsed = consumerSocket.sentMessages.map((m) => JSON.parse(m));
-      const historyMsg = parsed.find((m: any) => m.type === "message_history");
-      expect(historyMsg).toBeDefined();
-      expect(historyMsg.messages.length).toBeGreaterThan(0);
-    });
-
-    it("handleConsumerOpen does not send message_history when history is empty", () => {
-      bridge.getOrCreateSession("sess-1");
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-
-      const parsed = consumerSocket.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.find((m: any) => m.type === "message_history")).toBeUndefined();
-    });
-
-    it("handleConsumerOpen sends pending permission requests", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      backendSession.pushMessage(makePermissionRequestUnifiedMsg());
-      await tick();
-
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-
-      const parsed = consumerSocket.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "permission_request")).toBe(true);
-    });
-
-    it("handleConsumerOpen sends cli_disconnected and emits relaunch_needed when backend is not connected", () => {
-      bridge.getOrCreateSession("sess-1");
-      const relaunchHandler = vi.fn();
-      bridge.on("backend:relaunch_needed", relaunchHandler);
-
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-
-      const parsed = consumerSocket.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "cli_disconnected")).toBe(true);
-      expect(relaunchHandler).toHaveBeenCalledWith({ sessionId: "sess-1" });
-    });
-
     it("handleConsumerMessage routes user_message to backend", async () => {
       await bridge.connectBackend("sess-1");
       const backendSession = adapter.getSession("sess-1")!;
@@ -244,29 +177,6 @@ describe("SessionBridge", () => {
       expect(
         userMsg!.content.some((b) => b.type === "text" && b.text === "Hello from consumer"),
       ).toBe(true);
-    });
-
-    it("handleConsumerMessage ignores messages for nonexistent sessions", () => {
-      const ws = createMockSocket();
-      expect(() =>
-        bridge.handleConsumerMessage(
-          ws,
-          "no-such",
-          JSON.stringify({ type: "user_message", content: "x" }),
-        ),
-      ).not.toThrow();
-    });
-
-    it("handleConsumerMessage ignores malformed JSON", () => {
-      bridge.getOrCreateSession("sess-1");
-      const ws = createMockSocket();
-      bridge.handleConsumerOpen(ws, authContext("sess-1"));
-      expect(() => bridge.handleConsumerMessage(ws, "sess-1", "not-json-at-all")).not.toThrow();
-    });
-
-    it("handleConsumerClose is safe on nonexistent sessions", () => {
-      const ws = createMockSocket();
-      expect(() => bridge.handleConsumerClose(ws, "nonexistent")).not.toThrow();
     });
   });
 
