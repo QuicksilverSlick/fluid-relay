@@ -567,6 +567,22 @@ describe("SessionRuntime", () => {
     expect(session.consumerRateLimiters.size).toBe(0);
   });
 
+  it("continues shutdown cleanup when a consumer close throws", () => {
+    const session = createMockSession({ id: "s1" });
+    const runtime = new SessionRuntime(session, makeDeps());
+    const ws1 = createTestSocket();
+    const ws2 = createTestSocket();
+    ws1.close.mockImplementation(() => {
+      throw new Error("already closed");
+    });
+    runtime.addConsumer(ws1, { userId: "u1", displayName: "U1", role: "participant" });
+    runtime.addConsumer(ws2, { userId: "u2", displayName: "U2", role: "observer" });
+
+    expect(() => runtime.closeAllConsumers()).not.toThrow();
+    expect(ws2.close).toHaveBeenCalledTimes(1);
+    expect(session.consumerSockets.size).toBe(0);
+  });
+
   it("clears backend connection references", () => {
     const abort = new AbortController();
     const session = createMockSession({

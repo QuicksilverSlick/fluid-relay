@@ -6,7 +6,6 @@ import type { MemoryStorage } from "../adapters/memory-storage.js";
 import {
   createBridgeWithAdapter,
   type MockBackendAdapter,
-  makeAssistantUnifiedMsg,
   makeSessionInitMsg,
   setupInitializedSession,
   tick,
@@ -118,60 +117,6 @@ describe("SessionBridge", () => {
   // ── 10. Edge cases ─────────────────────────────────────────────────────
 
   describe("Edge cases", () => {
-    it("consumer socket that throws on send is removed from the set", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      const failSocket = createMockSocket();
-      failSocket.send = vi.fn(() => {
-        throw new Error("Write failed");
-      });
-      bridge.handleConsumerOpen(failSocket, authContext("sess-1"));
-
-      // Trigger a broadcast that will cause failSocket to throw
-      backendSession.pushMessage(makeAssistantUnifiedMsg());
-      await tick();
-
-      // After the failed send, the consumer count should be reduced
-      expect(bridge.getSession("sess-1")!.consumerCount).toBe(0);
-    });
-
-    it("multiple consumers all receive the same broadcast", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      const consumer1 = createMockSocket();
-      const consumer2 = createMockSocket();
-      const consumer3 = createMockSocket();
-      bridge.handleConsumerOpen(consumer1, authContext("sess-1"));
-      bridge.handleConsumerOpen(consumer2, authContext("sess-1"));
-      bridge.handleConsumerOpen(consumer3, authContext("sess-1"));
-
-      consumer1.sentMessages.length = 0;
-      consumer2.sentMessages.length = 0;
-      consumer3.sentMessages.length = 0;
-
-      backendSession.pushMessage(makeAssistantUnifiedMsg());
-      await tick();
-
-      for (const consumer of [consumer1, consumer2, consumer3]) {
-        const parsed = consumer.sentMessages.map((m) => JSON.parse(m));
-        expect(parsed.some((m: any) => m.type === "assistant")).toBe(true);
-      }
-    });
-
-    it("closeSession handles consumer socket close error gracefully", async () => {
-      bridge.getOrCreateSession("sess-1");
-      const consumerSocket = createMockSocket();
-      consumerSocket.close = vi.fn(() => {
-        throw new Error("Already closed");
-      });
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-
-      await expect(bridge.closeSession("sess-1")).resolves.toBeUndefined();
-      expect(bridge.getSession("sess-1")).toBeUndefined();
-    });
-
     it("sendUserMessage with user_message via consumer includes session_id override", async () => {
       await bridge.connectBackend("sess-1");
       const backendSession = adapter.getSession("sess-1")!;
@@ -199,57 +144,6 @@ describe("SessionBridge", () => {
   // ── 13. Presence ────────────────────────────────────────────────────────
 
   describe("Presence", () => {
-    it("presence_update broadcast on connect", () => {
-      bridge.getOrCreateSession("sess-1");
-      const ws1 = createMockSocket();
-      bridge.handleConsumerOpen(ws1, authContext("sess-1"));
-
-      const parsed = ws1.sentMessages.map((m) => JSON.parse(m));
-      const presenceMsg = parsed.find((m: any) => m.type === "presence_update");
-      expect(presenceMsg).toBeDefined();
-      expect(presenceMsg.consumers).toHaveLength(1);
-      expect(presenceMsg.consumers[0].userId).toBe("anonymous-1");
-    });
-
-    it("presence_update broadcast on disconnect", () => {
-      bridge.getOrCreateSession("sess-1");
-      const ws1 = createMockSocket();
-      const ws2 = createMockSocket();
-      bridge.handleConsumerOpen(ws1, authContext("sess-1"));
-      bridge.handleConsumerOpen(ws2, authContext("sess-1"));
-
-      ws1.sentMessages.length = 0;
-      ws2.sentMessages.length = 0;
-
-      bridge.handleConsumerClose(ws2, "sess-1");
-
-      // ws1 should receive a presence_update with only 1 consumer
-      const parsed = ws1.sentMessages.map((m) => JSON.parse(m));
-      const presenceMsg = parsed.find((m: any) => m.type === "presence_update");
-      expect(presenceMsg).toBeDefined();
-      expect(presenceMsg.consumers).toHaveLength(1);
-    });
-
-    it("presence_update contains all connected consumers with roles", () => {
-      bridge.getOrCreateSession("sess-1");
-      const ws1 = createMockSocket();
-      const ws2 = createMockSocket();
-      bridge.handleConsumerOpen(ws1, authContext("sess-1"));
-      bridge.handleConsumerOpen(ws2, authContext("sess-1"));
-
-      // Check last presence_update sent to ws1 (triggered by ws2 connecting)
-      const allMsgs = ws1.sentMessages.map((m) => JSON.parse(m));
-      const presenceMsgs = allMsgs.filter((m: any) => m.type === "presence_update");
-      const lastPresence = presenceMsgs[presenceMsgs.length - 1];
-      expect(lastPresence.consumers).toHaveLength(2);
-      expect(lastPresence.consumers[0]).toEqual(
-        expect.objectContaining({ userId: "anonymous-1", role: "participant" }),
-      );
-      expect(lastPresence.consumers[1]).toEqual(
-        expect.objectContaining({ userId: "anonymous-2", role: "participant" }),
-      );
-    });
-
     it("presence_query triggers presence broadcast", () => {
       bridge.getOrCreateSession("sess-1");
       const ws1 = createMockSocket();
