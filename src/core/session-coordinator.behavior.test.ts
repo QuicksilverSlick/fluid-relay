@@ -1349,7 +1349,7 @@ describe("SessionCoordinator", () => {
 
   describe("restoreFromStorage: dual-registry path", () => {
     it("restores from both launcher and separate registry", async () => {
-      const { SimpleSessionRegistry } = await import("./simple-session-registry.js");
+      const { SimpleSessionRegistry } = await import("./session/simple-session-registry.js");
 
       const launcherStorage = new MemoryStorage();
       const registryStorage = new MemoryStorage();
@@ -1421,7 +1421,7 @@ describe("SessionCoordinator", () => {
     });
 
     it("marks direct-connection sessions from registry as exited", async () => {
-      const { SimpleSessionRegistry } = await import("./simple-session-registry.js");
+      const { SimpleSessionRegistry } = await import("./session/simple-session-registry.js");
 
       const registryStorage = new MemoryStorage();
 
@@ -1478,7 +1478,7 @@ describe("SessionCoordinator", () => {
     });
 
     it("registry.deleteSession removes from registry, not launcher", async () => {
-      const { SimpleSessionRegistry } = await import("./simple-session-registry.js");
+      const { SimpleSessionRegistry } = await import("./session/simple-session-registry.js");
 
       const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
       const registry = new SimpleSessionRegistry();

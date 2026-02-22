@@ -8,9 +8,9 @@
  * @module SessionControl
  */
 
-import type { LauncherStateStorage } from "../interfaces/storage.js";
-import type { SessionInfo } from "../types/session-state.js";
-import type { RegisterSessionInput, SessionRegistry } from "./interfaces/session-registry.js";
+import type { LauncherStateStorage } from "../../interfaces/storage.js";
+import type { SessionInfo } from "../../types/session-state.js";
+import type { RegisterSessionInput, SessionRegistry } from "../interfaces/session-registry.js";
 
 /**
  * Simple in-memory session registry backed by an optional LauncherStateStorage.
