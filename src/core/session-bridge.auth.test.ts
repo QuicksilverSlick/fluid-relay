@@ -48,6 +48,8 @@ describe("SessionBridge — auth", () => {
   // ── Authentication ──────────────────────────────────────────────────
 
   describe("Authentication", () => {
+    const flushAuth = () => new Promise((r) => setTimeout(r, 0));
+
     it("rejects consumer when authenticator throws", async () => {
       const authenticator: Authenticator = {
         authenticate: vi.fn().mockRejectedValue(new Error("Invalid token")),
@@ -62,7 +64,7 @@ describe("SessionBridge — auth", () => {
       authBridge.handleConsumerOpen(ws, authContext("sess-1"));
 
       // Let the authenticator promise reject
-      await new Promise((r) => setTimeout(r, 0));
+      await flushAuth();
 
       expect(ws.close).toHaveBeenCalledWith(4001, "Authentication failed");
       expect(failedHandler).toHaveBeenCalledWith({
@@ -71,11 +73,11 @@ describe("SessionBridge — auth", () => {
       });
     });
 
-    it("accepts consumer when authenticator resolves", async () => {
+    it("accepts authenticated consumer and sends identity + session_init", async () => {
       const identity: ConsumerIdentity = {
-        userId: "user-42",
-        displayName: "Alice",
-        role: "participant",
+        userId: "user-99",
+        displayName: "Bob",
+        role: "observer",
       };
       const authenticator: Authenticator = {
         authenticate: vi.fn().mockResolvedValue(identity),
@@ -89,47 +91,25 @@ describe("SessionBridge — auth", () => {
       const ws = createMockSocket();
       authBridge.handleConsumerOpen(ws, authContext("sess-1"));
 
-      await new Promise((r) => setTimeout(r, 0));
+      await flushAuth();
 
       expect(ws.close).not.toHaveBeenCalled();
       const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "identity")).toBe(true);
-      expect(parsed.some((m: any) => m.type === "session_init")).toBe(true);
-      expect(authedHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sessionId: "sess-1",
-          userId: "user-42",
-          displayName: "Alice",
-          role: "participant",
-        }),
-      );
-    });
-
-    it("sends identity message to authenticated consumer", async () => {
-      const identity: ConsumerIdentity = {
-        userId: "user-99",
-        displayName: "Bob",
-        role: "observer",
-      };
-      const authenticator: Authenticator = {
-        authenticate: vi.fn().mockResolvedValue(identity),
-      };
-      const { bridge: authBridge } = createBridge({ authenticator });
-      authBridge.getOrCreateSession("sess-1");
-
-      const ws = createMockSocket();
-      authBridge.handleConsumerOpen(ws, authContext("sess-1"));
-
-      await new Promise((r) => setTimeout(r, 0));
-
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      const identityMsg = parsed.find((m: any) => m.type === "identity");
-      expect(identityMsg).toEqual({
+      expect(parsed.find((m: any) => m.type === "identity")).toEqual({
         type: "identity",
         userId: "user-99",
         displayName: "Bob",
         role: "observer",
       });
+      expect(parsed.some((m: any) => m.type === "session_init")).toBe(true);
+      expect(authedHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "sess-1",
+          userId: "user-99",
+          displayName: "Bob",
+          role: "observer",
+        }),
+      );
     });
 
     it("assigns anonymous identity when no authenticator (dev mode)", () => {
@@ -147,7 +127,7 @@ describe("SessionBridge — auth", () => {
       });
     });
 
-    it("authenticator receives correct sessionId in context", async () => {
+    it("authenticator receives session and transport metadata", async () => {
       const authenticator: Authenticator = {
         authenticate: vi.fn().mockResolvedValue({
           userId: "u1",
@@ -159,34 +139,17 @@ describe("SessionBridge — auth", () => {
       authBridge.getOrCreateSession("my-session");
 
       const ws = createMockSocket();
-      authBridge.handleConsumerOpen(ws, authContext("my-session"));
-
-      await new Promise((r) => setTimeout(r, 0));
-
-      expect(authenticator.authenticate).toHaveBeenCalledWith(
-        expect.objectContaining({ sessionId: "my-session" }),
-      );
-    });
-
-    it("authenticator receives transport metadata", async () => {
-      const authenticator: Authenticator = {
-        authenticate: vi.fn().mockResolvedValue({
-          userId: "u1",
-          displayName: "U1",
-          role: "participant",
-        }),
+      const transport = {
+        headers: { authorization: "Bearer abc" },
+        query: { token: "xyz" },
       };
-      const { bridge: authBridge } = createBridge({ authenticator });
-      authBridge.getOrCreateSession("sess-1");
+      authBridge.handleConsumerOpen(ws, { sessionId: "my-session", transport });
 
-      const ws = createMockSocket();
-      const transport = { headers: { authorization: "Bearer abc" }, query: { token: "xyz" } };
-      authBridge.handleConsumerOpen(ws, { sessionId: "sess-1", transport });
-
-      await new Promise((r) => setTimeout(r, 0));
+      await flushAuth();
 
       expect(authenticator.authenticate).toHaveBeenCalledWith(
         expect.objectContaining({
+          sessionId: "my-session",
           transport: expect.objectContaining({ headers: { authorization: "Bearer abc" } }),
         }),
       );
@@ -217,19 +180,21 @@ describe("SessionBridge — auth", () => {
       return ws;
     }
 
-    it("observer receives all broadcast messages", async () => {
+    async function setupObserverSession(sessionId = "sess-1") {
       const { bridge: obsBridge, adapter: obsAdapter } = createObserverBridge();
-      obsBridge.getOrCreateSession("sess-1");
-
-      await obsBridge.connectBackend("sess-1");
-      const backendSession = obsAdapter.getSession("sess-1")!;
+      obsBridge.getOrCreateSession(sessionId);
+      await obsBridge.connectBackend(sessionId);
+      const backendSession = obsAdapter.getSession(sessionId)!;
       backendSession.pushMessage(makeSessionInitMsg());
       await tick();
+      const ws = await connectObserver(obsBridge, sessionId);
+      backendSession.sentMessages.length = 0;
+      backendSession.sentRawMessages.length = 0;
+      return { obsBridge, backendSession, ws };
+    }
 
-      const ws = createMockSocket();
-      obsBridge.handleConsumerOpen(ws, authContext("sess-1"));
-      await new Promise((r) => setTimeout(r, 0));
-      ws.sentMessages.length = 0;
+    it("observer receives all broadcast messages", async () => {
+      const { backendSession, ws } = await setupObserverSession("sess-1");
 
       backendSession.pushMessage(makeAssistantUnifiedMsg());
       await tick();
@@ -238,149 +203,29 @@ describe("SessionBridge — auth", () => {
       expect(parsed.some((m: any) => m.type === "assistant")).toBe(true);
     });
 
-    it("observer blocked from user_message", async () => {
-      const { bridge: obsBridge, adapter: obsAdapter } = createObserverBridge();
-      obsBridge.getOrCreateSession("sess-1");
+    it("observer is blocked from participant-only command types", async () => {
+      const { obsBridge, backendSession, ws } = await setupObserverSession("sess-1");
 
-      await obsBridge.connectBackend("sess-1");
-      const backendSession = obsAdapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
+      const blockedMessages = [
+        { type: "user_message", content: "hello" },
+        { type: "permission_response", request_id: "perm-req-1", behavior: "allow" },
+        { type: "interrupt" },
+        { type: "set_model", model: "claude-opus-4-20250514" },
+        { type: "set_permission_mode", mode: "plan" },
+      ];
 
-      const ws = await connectObserver(obsBridge, "sess-1");
-      // Clear any messages sent during init (e.g. initialize control_request)
-      backendSession.sentMessages.length = 0;
-      backendSession.sentRawMessages.length = 0;
-
-      obsBridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "user_message", content: "hello" }),
-      );
-
-      // Should NOT reach backend
-      expect(backendSession.sentMessages).toHaveLength(0);
-      expect(backendSession.sentRawMessages).toHaveLength(0);
-
-      // Should get error back
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "error")).toBe(true);
-    });
-
-    it("observer blocked from permission_response", async () => {
-      const { bridge: obsBridge, adapter: obsAdapter } = createObserverBridge();
-      obsBridge.getOrCreateSession("sess-1");
-
-      await obsBridge.connectBackend("sess-1");
-      const backendSession = obsAdapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      // Push a permission request so there is a pending permission to respond to
-      backendSession.pushMessage(makePermissionRequestUnifiedMsg());
-      await tick();
-
-      const ws = await connectObserver(obsBridge, "sess-1");
-      backendSession.sentMessages.length = 0;
-      backendSession.sentRawMessages.length = 0;
-
-      obsBridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({
-          type: "permission_response",
-          request_id: "perm-req-1",
-          behavior: "allow",
-        }),
-      );
-
-      expect(backendSession.sentMessages).toHaveLength(0);
-      expect(backendSession.sentRawMessages).toHaveLength(0);
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "error")).toBe(true);
-    });
-
-    it("observer blocked from interrupt", async () => {
-      const { bridge: obsBridge, adapter: obsAdapter } = createObserverBridge();
-      obsBridge.getOrCreateSession("sess-1");
-
-      await obsBridge.connectBackend("sess-1");
-      const backendSession = obsAdapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      const ws = await connectObserver(obsBridge, "sess-1");
-      backendSession.sentMessages.length = 0;
-      backendSession.sentRawMessages.length = 0;
-
-      obsBridge.handleConsumerMessage(ws, "sess-1", JSON.stringify({ type: "interrupt" }));
-
-      expect(backendSession.sentMessages).toHaveLength(0);
-      expect(backendSession.sentRawMessages).toHaveLength(0);
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "error")).toBe(true);
-    });
-
-    it("observer blocked from set_model", async () => {
-      const { bridge: obsBridge, adapter: obsAdapter } = createObserverBridge();
-      obsBridge.getOrCreateSession("sess-1");
-
-      await obsBridge.connectBackend("sess-1");
-      const backendSession = obsAdapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      const ws = await connectObserver(obsBridge, "sess-1");
-      backendSession.sentMessages.length = 0;
-      backendSession.sentRawMessages.length = 0;
-
-      obsBridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "set_model", model: "claude-opus-4-20250514" }),
-      );
-
-      expect(backendSession.sentMessages).toHaveLength(0);
-      expect(backendSession.sentRawMessages).toHaveLength(0);
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "error")).toBe(true);
-    });
-
-    it("observer blocked from set_permission_mode", async () => {
-      const { bridge: obsBridge, adapter: obsAdapter } = createObserverBridge();
-      obsBridge.getOrCreateSession("sess-1");
-
-      await obsBridge.connectBackend("sess-1");
-      const backendSession = obsAdapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      const ws = await connectObserver(obsBridge, "sess-1");
-      backendSession.sentMessages.length = 0;
-      backendSession.sentRawMessages.length = 0;
-
-      obsBridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "set_permission_mode", mode: "plan" }),
-      );
-
-      expect(backendSession.sentMessages).toHaveLength(0);
-      expect(backendSession.sentRawMessages).toHaveLength(0);
-      const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "error")).toBe(true);
+      for (const message of blockedMessages) {
+        ws.sentMessages.length = 0;
+        obsBridge.handleConsumerMessage(ws, "sess-1", JSON.stringify(message));
+        expect(backendSession.sentMessages).toHaveLength(0);
+        expect(backendSession.sentRawMessages).toHaveLength(0);
+        const parsed = ws.sentMessages.map((m) => JSON.parse(m));
+        expect(parsed.some((m: any) => m.type === "error")).toBe(true);
+      }
     });
 
     it("observer receives error message when blocked", async () => {
-      const { bridge: obsBridge, adapter: obsAdapter } = createObserverBridge();
-      obsBridge.getOrCreateSession("sess-1");
-
-      await obsBridge.connectBackend("sess-1");
-      const backendSession = obsAdapter.getSession("sess-1")!;
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      const ws = await connectObserver(obsBridge, "sess-1");
+      const { obsBridge, ws } = await setupObserverSession("sess-1");
 
       obsBridge.handleConsumerMessage(
         ws,
@@ -394,7 +239,7 @@ describe("SessionBridge — auth", () => {
       expect(errorMsg.message).toBe("Observers cannot send user_message messages");
     });
 
-    it("participant can send all message types", async () => {
+    it("participant can send user_message", async () => {
       // Default anonymous is participant
       bridge.getOrCreateSession("sess-1");
 
@@ -422,10 +267,7 @@ describe("SessionBridge — auth", () => {
     });
 
     it("observer can send presence_query", async () => {
-      const { bridge: obsBridge } = createObserverBridge();
-      obsBridge.getOrCreateSession("sess-1");
-
-      const ws = await connectObserver(obsBridge, "sess-1");
+      const { obsBridge, ws } = await setupObserverSession("sess-1");
       ws.sentMessages.length = 0;
 
       obsBridge.handleConsumerMessage(ws, "sess-1", JSON.stringify({ type: "presence_query" }));

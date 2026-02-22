@@ -795,6 +795,50 @@ describe("BackendConnector", () => {
 
       expect(session.backendSessionId).toBeUndefined();
     });
+
+    it("emits backendConsumption error when backend stream iterator throws", async () => {
+      const adapter = new TestAdapter();
+      adapter.nextSession = {
+        sessionId: "sess-1",
+        send: vi.fn(),
+        sendRaw: vi.fn(),
+        messages: {
+          [Symbol.asyncIterator]: () => ({
+            next: async () => {
+              throw new Error("stream boom");
+            },
+          }),
+        },
+        close: vi.fn(),
+      } as any;
+
+      const deps = createDeps({ adapter });
+      const mgr = new BackendConnector(deps);
+      const session = createSession();
+
+      await mgr.connectBackend(session);
+      await tick(30);
+
+      expect(deps.emitEvent).toHaveBeenCalledWith(
+        "error",
+        expect.objectContaining({
+          source: "backendConsumption",
+          sessionId: "sess-1",
+          error: expect.any(Error),
+        }),
+      );
+      expect(deps.emitEvent).toHaveBeenCalledWith(
+        "backend:disconnected",
+        expect.objectContaining({
+          sessionId: "sess-1",
+          reason: "stream ended",
+        }),
+      );
+      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(session, {
+        type: "cli_disconnected",
+      });
+      expect(session.backendSession).toBeNull();
+    });
   });
 
   describe("isBackendConnected", () => {
