@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 
-import { MemoryStorage } from "../adapters/memory-storage.js";
+import type { MemoryStorage } from "../adapters/memory-storage.js";
 import {
   createBridgeWithAdapter,
   type MockBackendAdapter,
@@ -19,7 +19,7 @@ import {
   authContext,
   createTestSocket as createMockSocket,
 } from "../testing/cli-message-factories.js";
-import { SessionBridge } from "./session-bridge.js";
+import type { SessionBridge } from "./session-bridge.js";
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -427,63 +427,6 @@ describe("SessionBridge", () => {
       expect(userMsg!.content.some((b) => b.type === "text" && b.text === "Hello!")).toBe(true);
     });
 
-    it("permission_response routes through sendPermissionResponse", async () => {
-      backendSession.pushMessage(makePermissionRequestUnifiedMsg());
-      await tick();
-      backendSession.sentMessages.length = 0;
-
-      bridge.handleConsumerMessage(
-        consumerWs,
-        "sess-1",
-        JSON.stringify({
-          type: "permission_response",
-          request_id: "perm-req-1",
-          behavior: "allow",
-        }),
-      );
-
-      // In the adapter path, sendPermissionResponse sends a UnifiedMessage
-      const permMsg = backendSession.sentMessages.find((m) => m.type === "permission_response");
-      expect(permMsg).toBeDefined();
-    });
-
-    it("interrupt routes through sendInterrupt", () => {
-      bridge.handleConsumerMessage(consumerWs, "sess-1", JSON.stringify({ type: "interrupt" }));
-
-      const interruptMsg = backendSession.sentMessages.find((m) => m.type === "interrupt");
-      expect(interruptMsg).toBeDefined();
-    });
-
-    it("set_model routes through sendSetModel", () => {
-      bridge.handleConsumerMessage(
-        consumerWs,
-        "sess-1",
-        JSON.stringify({ type: "set_model", model: "claude-opus-4-20250514" }),
-      );
-
-      // In the adapter path, set_model is normalized to configuration_change
-      const setModelMsg = backendSession.sentMessages.find(
-        (m) => m.type === "configuration_change" && m.metadata.subtype === "set_model",
-      );
-      expect(setModelMsg).toBeDefined();
-      expect(setModelMsg!.metadata.model).toBe("claude-opus-4-20250514");
-    });
-
-    it("set_permission_mode routes through sendSetPermissionMode", () => {
-      bridge.handleConsumerMessage(
-        consumerWs,
-        "sess-1",
-        JSON.stringify({ type: "set_permission_mode", mode: "bypassPermissions" }),
-      );
-
-      // In the adapter path, set_permission_mode is normalized to configuration_change
-      const setModeMsg = backendSession.sentMessages.find(
-        (m) => m.type === "configuration_change" && m.metadata.subtype === "set_permission_mode",
-      );
-      expect(setModeMsg).toBeDefined();
-      expect(setModeMsg!.metadata.mode).toBe("bypassPermissions");
-    });
-
     it("set_adapter returns an error message to the consumer", () => {
       bridge.handleConsumerMessage(
         consumerWs,
@@ -501,5 +444,4 @@ describe("SessionBridge", () => {
       expect(parsed.message).toMatch(/cannot be changed/i);
     });
   });
-
 });

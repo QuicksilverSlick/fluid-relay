@@ -142,6 +142,80 @@ describe("SessionRuntime", () => {
     );
   });
 
+  it("routes permission_response inbound commands to sendPermissionResponse", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+    const sendPermissionResponse = vi
+      .spyOn(runtime, "sendPermissionResponse")
+      .mockImplementation(() => {});
+
+    runtime.handleInboundCommand(
+      {
+        type: "permission_response",
+        request_id: "perm-1",
+        behavior: "allow",
+        updated_input: { key: "value" },
+        updated_permissions: [{ type: "setMode", mode: "plan" }],
+        message: "ok",
+      },
+      createTestSocket(),
+    );
+
+    expect(sendPermissionResponse).toHaveBeenCalledWith("perm-1", "allow", {
+      updatedInput: { key: "value" },
+      updatedPermissions: [{ type: "setMode", mode: "plan" }],
+      message: "ok",
+    });
+  });
+
+  it("routes interrupt inbound commands to sendInterrupt", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+    const sendInterrupt = vi.spyOn(runtime, "sendInterrupt").mockImplementation(() => {});
+
+    runtime.handleInboundCommand({ type: "interrupt" }, createTestSocket());
+
+    expect(sendInterrupt).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes set_model inbound commands to sendSetModel", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+    const sendSetModel = vi.spyOn(runtime, "sendSetModel").mockImplementation(() => {});
+
+    runtime.handleInboundCommand(
+      {
+        type: "set_model",
+        model: "claude-opus",
+      },
+      createTestSocket(),
+    );
+
+    expect(sendSetModel).toHaveBeenCalledWith("claude-opus");
+  });
+
+  it("routes set_permission_mode inbound commands to sendSetPermissionMode", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+    const sendSetPermissionMode = vi
+      .spyOn(runtime, "sendSetPermissionMode")
+      .mockImplementation(() => {});
+
+    runtime.handleInboundCommand(
+      {
+        type: "set_permission_mode",
+        mode: "plan",
+      },
+      createTestSocket(),
+    );
+
+    expect(sendSetPermissionMode).toHaveBeenCalledWith("plan");
+  });
+
   it("rejects set_adapter for active sessions", () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
