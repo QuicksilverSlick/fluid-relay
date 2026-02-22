@@ -40,6 +40,7 @@ describe("composeBackendPlane", () => {
       broadcaster,
       capabilitiesPolicy: { cancelPendingInitialize: vi.fn() } as any,
       runtime: () => runtime as any,
+      routeBackendMessage: vi.fn(),
       emitEvent: vi.fn(),
       getOrCreateSession: (sessionId) => store.getOrCreate(sessionId),
     });
@@ -54,6 +55,7 @@ describe("composeBackendPlane", () => {
       broadcaster,
       capabilitiesPolicy: { cancelPendingInitialize: vi.fn() } as any,
       runtime: () => runtime as any,
+      routeBackendMessage: vi.fn(),
       emitEvent: vi.fn(),
       getOrCreateSession: (sessionId) => store.getOrCreate(sessionId),
     });

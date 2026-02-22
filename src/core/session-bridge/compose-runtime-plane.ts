@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { resolveConfig } from "../../types/config.js";
 import { noopLogger } from "../../utils/noop-logger.js";
 import type { BackendConnector } from "../backend/backend-connector.js";
@@ -13,6 +14,10 @@ import { noopTracer } from "../messaging/message-tracer.js";
 import type { UnifiedMessageRouter } from "../messaging/unified-message-router.js";
 import type { GitInfoTracker } from "../session/git-info-tracker.js";
 import type { MessageQueueHandler } from "../session/message-queue-handler.js";
+import {
+  InMemorySessionLeaseCoordinator,
+  type SessionLeaseCoordinator,
+} from "../session/session-lease-coordinator.js";
 import { type Session, SessionRepository } from "../session/session-repository.js";
 import { SlashCommandRegistry } from "../slash/slash-command-registry.js";
 import type { SlashCommandService } from "../slash/slash-command-service.js";
@@ -43,6 +48,8 @@ export type RuntimePlane = {
   runtimeApi: RuntimeApi;
   persistenceService: SessionPersistenceService;
   infoApi: SessionInfoApi;
+  leaseCoordinator: SessionLeaseCoordinator;
+  leaseOwnerId: string;
 };
 
 export function composeRuntimePlane({
@@ -66,6 +73,8 @@ export function composeRuntimePlane({
   const tracer = options?.tracer ?? noopTracer;
   const gitResolver = options?.gitResolver ?? null;
   const metrics = options?.metrics ?? null;
+  const leaseCoordinator = options?.leaseCoordinator ?? new InMemorySessionLeaseCoordinator();
+  const leaseOwnerId = options?.leaseOwnerId ?? `beamcode-${process.pid}-${randomUUID()}`;
 
   const runtimeManager = createRuntimeManager({
     now: () => Date.now(),
@@ -93,12 +102,22 @@ export function composeRuntimePlane({
       }),
     routeBackendMessage: (runtimeSession, unified) =>
       getMessageRouter().route(runtimeSession, unified),
+    canMutateSession: (sessionId) => leaseCoordinator.ensureLease(sessionId, leaseOwnerId),
+    onMutationRejected: (sessionId, operation) =>
+      logger.warn("Session mutation blocked: lease not owned by this runtime", {
+        sessionId,
+        operation,
+        leaseOwnerId,
+        currentLeaseOwner: leaseCoordinator.currentOwner(sessionId),
+      }),
   });
 
   const runtimeApi = new RuntimeApi({
     store,
     runtimeManager,
     logger,
+    leaseCoordinator,
+    leaseOwnerId,
   });
   const persistenceService = new SessionPersistenceService({
     store,
@@ -123,5 +142,7 @@ export function composeRuntimePlane({
     runtimeApi,
     persistenceService,
     infoApi,
+    leaseCoordinator,
+    leaseOwnerId,
   };
 }

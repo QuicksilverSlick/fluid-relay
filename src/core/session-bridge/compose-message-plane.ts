@@ -16,6 +16,7 @@ import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
 import { UnifiedMessageRouter } from "../messaging/unified-message-router.js";
 import { MessageQueueHandler } from "../session/message-queue-handler.js";
+import type { SessionLeaseCoordinator } from "../session/session-lease-coordinator.js";
 import type { SessionRepository } from "../session/session-repository.js";
 import type { RuntimeAccessor } from "./types.js";
 
@@ -33,6 +34,8 @@ type ComposeMessagePlaneOptions = {
   runtime: RuntimeAccessor;
   emitEvent: (type: string, payload: unknown) => void;
   emitSessionClosed: (sessionId: string) => void;
+  leaseCoordinator?: SessionLeaseCoordinator;
+  leaseOwnerId?: string;
   sendUserMessage: (
     sessionId: string,
     content: string,
@@ -68,6 +71,8 @@ export function composeMessagePlane({
   runtime,
   emitEvent,
   emitSessionClosed,
+  leaseCoordinator,
+  leaseOwnerId,
   sendUserMessage,
 }: ComposeMessagePlaneOptions): MessagePlane {
   const capabilitiesPolicy = new CapabilitiesPolicy(
@@ -93,6 +98,8 @@ export function composeMessagePlane({
     metrics,
     logger,
     emitSessionClosed,
+    leaseCoordinator,
+    leaseOwnerId,
   });
   const slashService = createSlashService({
     broadcaster,

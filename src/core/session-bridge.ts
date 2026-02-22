@@ -151,6 +151,8 @@ export class SessionBridge extends TypedEventEmitter<BridgeEventMap> {
       runtime: (session) => this.runtime(session),
       emitEvent,
       emitSessionClosed: (sessionId) => this.emit("session:closed", { sessionId }),
+      leaseCoordinator: runtimePlane.leaseCoordinator,
+      leaseOwnerId: runtimePlane.leaseOwnerId,
       sendUserMessage: (sessionId, content, options) =>
         this.sendUserMessage(sessionId, content, options),
     });
@@ -169,6 +171,8 @@ export class SessionBridge extends TypedEventEmitter<BridgeEventMap> {
       broadcaster: this.broadcaster,
       capabilitiesPolicy: this.capabilitiesPolicy,
       runtime: (session) => this.runtime(session),
+      routeBackendMessage: (sessionId, message) =>
+        this.runtimeApi.handleBackendMessage(sessionId, message),
       emitEvent,
       getOrCreateSession: (sessionId) => this.getOrCreateSession(sessionId),
     });
@@ -317,7 +321,7 @@ export class SessionBridge extends TypedEventEmitter<BridgeEventMap> {
   // ── Consumer message routing ─────────────────────────────────────────────
 
   private routeConsumerMessage(session: Session, msg: InboundCommand, ws: WebSocketLike): void {
-    this.runtime(session).handleInboundCommand(msg, ws);
+    this.runtimeApi.handleInboundCommand(session.id, msg, ws);
   }
 
   // ── Slash command handling (delegated via SessionRuntime -> SlashCommandService) ─────

@@ -847,7 +847,9 @@ describe("SessionRuntime", () => {
       id: "s1",
       backendSession: {
         send: vi.fn(),
-        sendRaw: vi.fn(() => { throw new Error("not supported"); }),
+        sendRaw: vi.fn(() => {
+          throw new Error("not supported");
+        }),
         close: vi.fn(),
         messages: (async function* () {})(),
         sessionId: "s1",
@@ -865,5 +867,137 @@ describe("SessionRuntime", () => {
 
     // Should not throw or change state
     expect(() => runtime.handlePolicyCommand({ type: "capabilities_timeout" })).not.toThrow();
+  });
+
+  it("blocks mutating commands when lease check denies ownership", () => {
+    const send = vi.fn();
+    const session = createMockSession({ id: "s1", backendSession: { send } as any });
+    const onMutationRejected = vi.fn();
+    const deps = makeDeps({
+      canMutateSession: vi.fn().mockReturnValue(false),
+      onMutationRejected,
+    });
+    const runtime = new SessionRuntime(session, deps);
+
+    const accepted = runtime.sendUserMessage("blocked");
+    runtime.handleInboundCommand(
+      {
+        type: "user_message",
+        content: "blocked-2",
+        session_id: "backend-1",
+      },
+      createTestSocket(),
+    );
+
+    expect(accepted).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    expect(session.messageHistory).toEqual([]);
+    expect(onMutationRejected).toHaveBeenCalledWith("s1", "sendUserMessage");
+    expect(onMutationRejected).toHaveBeenCalledWith("s1", "handleInboundCommand");
+  });
+
+  it("blocks backend connection state updates when lease is not owned", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps({
+      canMutateSession: vi.fn().mockReturnValue(false),
+      onMutationRejected: vi.fn(),
+    });
+    const runtime = new SessionRuntime(session, deps);
+    const backendSession = { close: vi.fn() } as any;
+
+    runtime.attachBackendConnection({
+      backendSession,
+      backendAbort: new AbortController(),
+      supportsSlashPassthrough: true,
+      slashExecutor: null,
+    });
+    runtime.setState({ ...runtime.getState(), model: "blocked" });
+
+    expect(runtime.getBackendSession()).toBeNull();
+    expect(runtime.getState().model).not.toBe("blocked");
+  });
+
+  it("covers lease-denied guards across mutating runtime APIs", async () => {
+    const session = createMockSession({
+      id: "s1",
+      backendSession: {
+        send: vi.fn(),
+        sendRaw: vi.fn(),
+        close: vi.fn(),
+        messages: (async function* () {})(),
+        sessionId: "s1",
+      } as any,
+    });
+    const onMutationRejected = vi.fn();
+    const deps = makeDeps({
+      canMutateSession: vi.fn().mockReturnValue(false),
+      onMutationRejected,
+    });
+    const runtime = new SessionRuntime(session, deps);
+    const ws = createTestSocket();
+
+    runtime.setAdapterName("claude");
+    runtime.setLastStatus("running");
+    runtime.setState({ ...runtime.getState(), model: "guarded" });
+    runtime.setBackendSessionId("backend-guarded");
+    runtime.setMessageHistory([{ type: "user_message", content: "x", timestamp: 1 } as any]);
+    runtime.setQueuedMessage({
+      consumerId: "c1",
+      displayName: "u",
+      content: "queued",
+      queuedAt: Date.now(),
+    });
+    const timer = setTimeout(() => {}, 60_000);
+    runtime.setPendingInitialize({
+      requestId: "init-1",
+      timer,
+    });
+    clearTimeout(timer);
+    runtime.registerCLICommands([{ name: "/help", description: "help" }]);
+    runtime.registerSlashCommandNames(["/compact"]);
+    runtime.registerSkillCommands(["skill-a"]);
+    runtime.clearDynamicSlashRegistry();
+    runtime.seedSessionState({ cwd: "/tmp", model: "m" });
+    runtime.allocateAnonymousIdentityIndex();
+    runtime.addConsumer(ws, { userId: "u1", displayName: "u1", role: "participant" });
+    runtime.enqueuePendingPassthrough({
+      command: "/status",
+      requestId: "r1",
+      slashRequestId: "sr1",
+      traceId: "t1",
+      startedAtMs: 1,
+    });
+    runtime.shiftPendingPassthrough();
+    runtime.storePendingPermission("p1", {
+      id: "p1",
+      request_id: "p1",
+      command: "cmd",
+      input: {},
+      timestamp: Date.now(),
+      expires_at: Date.now() + 1000,
+      tool_name: "test",
+      tool_use_id: "tu1",
+      safety_risk: null,
+    } as any);
+    runtime.drainPendingMessages();
+    runtime.drainPendingPermissionIds();
+    runtime.checkRateLimit(ws, () => undefined);
+    runtime.transitionLifecycle("active", "test");
+    runtime.sendPermissionResponse("p1", "allow");
+    runtime.sendInterrupt();
+    runtime.sendSetModel("m2");
+    runtime.sendSetPermissionMode("plan");
+    runtime.handlePolicyCommand({ type: "reconnect_timeout" });
+    await runtime.executeSlashCommand("/help");
+    runtime.sendToBackend(createUnifiedMessage({ type: "interrupt", role: "system" }));
+    runtime.handleBackendMessage(createUnifiedMessage({ type: "result", role: "assistant" }));
+    runtime.handleSignal("backend:connected");
+
+    // Basic sanity: guard callback was exercised heavily.
+    expect(onMutationRejected).toHaveBeenCalled();
+    // No guarded state changes should have applied.
+    expect(runtime.getState().model).not.toBe("guarded");
+    expect(runtime.getConsumerCount()).toBe(0);
+    expect(runtime.getLifecycleState()).toBe("awaiting_backend");
   });
 });

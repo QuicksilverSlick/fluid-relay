@@ -55,6 +55,8 @@ export type {
   TeamObserver,
 } from "./core/interfaces/extensions.js";
 export type { RegisterSessionInput, SessionRegistry } from "./core/interfaces/session-registry.js";
+export type { SessionLeaseCoordinator } from "./core/session/session-lease-coordinator.js";
+export { InMemorySessionLeaseCoordinator } from "./core/session/session-lease-coordinator.js";
 export type { LifecycleState } from "./core/session/session-lifecycle.js";
 export {
   isLifecycleTransitionAllowed,

@@ -7,6 +7,7 @@ import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js"
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { Session, SessionRepository } from "../session/session-repository.js";
+import type { UnifiedMessage } from "../types/unified-message.js";
 import type { RuntimeAccessor, SessionBridgeInitOptions } from "./types.js";
 
 type ComposeBackendPlaneOptions = {
@@ -18,6 +19,7 @@ type ComposeBackendPlaneOptions = {
   broadcaster: ConsumerBroadcaster;
   capabilitiesPolicy: CapabilitiesPolicy;
   runtime: RuntimeAccessor;
+  routeBackendMessage: (sessionId: string, msg: UnifiedMessage) => void;
   emitEvent: (type: string, payload: unknown) => void;
   getOrCreateSession: (sessionId: string) => Session;
 };
@@ -36,6 +38,7 @@ export function composeBackendPlane({
   broadcaster,
   capabilitiesPolicy,
   runtime,
+  routeBackendMessage,
   emitEvent,
   getOrCreateSession,
 }: ComposeBackendPlaneOptions): BackendPlane {
@@ -46,7 +49,7 @@ export function composeBackendPlane({
       logger,
       metrics,
       broadcaster,
-      routeUnifiedMessage: (session, msg) => runtime(session).handleBackendMessage(msg),
+      routeUnifiedMessage: (session, msg) => routeBackendMessage(session.id, msg),
       emitEvent,
       runtime: (session) => runtime(session),
       tracer,
