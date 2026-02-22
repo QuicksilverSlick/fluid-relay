@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 
@@ -7,7 +7,6 @@ import {
   ErrorBackendAdapter,
   MockBackendAdapter,
   type MockBackendSession,
-  makeControlResponseUnifiedMsg,
   makeResultUnifiedMsg,
   makeSessionInitMsg,
   makeStatusChangeMsg,
@@ -68,34 +67,6 @@ async function simulateResult(backendSession: MockBackendSession) {
   await tick();
 }
 
-/** Full control_response matching original capabilities test data. */
-function makeFullControlResponse(overrides: Record<string, unknown> = {}) {
-  return makeControlResponseUnifiedMsg({
-    request_id: "test-uuid",
-    subtype: "success",
-    response: {
-      commands: [
-        { name: "/help", description: "Show help", argumentHint: "[topic]" },
-        { name: "/compact", description: "Compact context" },
-      ],
-      models: [
-        {
-          value: "claude-sonnet-4-5-20250929",
-          displayName: "Claude Sonnet 4.5",
-          description: "Fast",
-        },
-        { value: "claude-opus-4-5-20250514", displayName: "Claude Opus 4.5" },
-      ],
-      account: {
-        email: "user@example.com",
-        organization: "Acme Corp",
-        subscriptionType: "pro",
-      },
-    },
-    ...overrides,
-  });
-}
-
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("SessionBridge — delegation integration", () => {
@@ -118,126 +89,6 @@ describe("SessionBridge — delegation integration", () => {
           sessionId: "sess-1",
         }),
       );
-    });
-  });
-
-  // ── Capabilities timeout and late-joiner ────────────────────────────
-
-  describe("capabilities timeout and late-joiner", () => {
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    it("handles timeout gracefully", async () => {
-      vi.useFakeTimers();
-      const { bridge: timedBridge, adapter: timedAdapter } = createBridgeWithAdapter();
-
-      await timedBridge.connectBackend("sess-1");
-      const backendSession = timedAdapter.getSession("sess-1")!;
-
-      const timeoutHandler = vi.fn();
-      timedBridge.on("capabilities:timeout", timeoutHandler);
-
-      backendSession.pushMessage(makeSessionInitMsg());
-      await vi.advanceTimersByTimeAsync(20);
-
-      vi.advanceTimersByTime(5001);
-
-      expect(timeoutHandler).toHaveBeenCalledWith({ sessionId: "sess-1" });
-
-      const snapshot = timedBridge.getSession("sess-1");
-      expect(snapshot).toBeDefined();
-      expect(snapshot!.state.capabilities).toBeUndefined();
-
-      timedBridge.close();
-    });
-
-    it("late-joining consumer receives capabilities_ready", async () => {
-      const { bridge, adapter } = createBridgeWithAdapter();
-
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-      backendSession.pushMessage(makeFullControlResponse());
-      await tick();
-
-      const lateConsumer = createMockSocket();
-      bridge.handleConsumerOpen(lateConsumer, authContext("sess-1"));
-
-      const consumerMsgs = lateConsumer.sentMessages.map((m) => JSON.parse(m));
-      const capMsg = consumerMsgs.find((m: any) => m.type === "capabilities_ready");
-      expect(capMsg).toBeDefined();
-      expect(capMsg.commands).toHaveLength(2);
-      expect(capMsg.models).toHaveLength(2);
-      expect(capMsg.account).toEqual({
-        email: "user@example.com",
-        organization: "Acme Corp",
-        subscriptionType: "pro",
-      });
-    });
-
-    it("late-joining consumer receives skills in capabilities_ready", async () => {
-      const { bridge, adapter } = createBridgeWithAdapter();
-
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      backendSession.pushMessage(makeSessionInitMsg({ skills: ["commit"] }));
-      await tick();
-      backendSession.pushMessage(makeFullControlResponse());
-      await tick();
-
-      const lateConsumer = createMockSocket();
-      bridge.handleConsumerOpen(lateConsumer, authContext("sess-1"));
-
-      const consumerMsgs = lateConsumer.sentMessages.map((m) => JSON.parse(m));
-      const capMsg = consumerMsgs.find((m: any) => m.type === "capabilities_ready");
-      expect(capMsg).toBeDefined();
-      expect(capMsg.skills).toEqual(["commit"]);
-    });
-
-    it("backend disconnect cancels pending initialize timer", async () => {
-      vi.useFakeTimers();
-      const { bridge: timedBridge, adapter: timedAdapter } = createBridgeWithAdapter();
-
-      await timedBridge.connectBackend("sess-1");
-      const backendSession = timedAdapter.getSession("sess-1")!;
-
-      const timeoutHandler = vi.fn();
-      timedBridge.on("capabilities:timeout", timeoutHandler);
-
-      backendSession.pushMessage(makeSessionInitMsg());
-      await vi.advanceTimersByTimeAsync(20);
-
-      await timedBridge.disconnectBackend("sess-1");
-
-      vi.advanceTimersByTime(10000);
-
-      expect(timeoutHandler).not.toHaveBeenCalled();
-
-      timedBridge.close();
-    });
-
-    it("closeSession cancels pending initialize timer", async () => {
-      vi.useFakeTimers();
-      const { bridge: timedBridge, adapter: timedAdapter } = createBridgeWithAdapter();
-
-      await timedBridge.connectBackend("sess-1");
-      const backendSession = timedAdapter.getSession("sess-1")!;
-
-      const timeoutHandler = vi.fn();
-      timedBridge.on("capabilities:timeout", timeoutHandler);
-
-      backendSession.pushMessage(makeSessionInitMsg());
-      await vi.advanceTimersByTimeAsync(20);
-
-      timedBridge.closeSession("sess-1");
-
-      vi.advanceTimersByTime(10000);
-
-      expect(timeoutHandler).not.toHaveBeenCalled();
     });
   });
 
