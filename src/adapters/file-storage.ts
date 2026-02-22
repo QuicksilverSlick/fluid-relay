@@ -51,6 +51,7 @@ function safeJoin(base: string, filename: string): string {
 export class FileStorage implements SessionStorage, LauncherStateStorage {
   private dir: string;
   private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private pendingSaves = new Map<string, PersistedSession>();
   private debounceMs: number;
   private logger: Logger;
 
@@ -122,14 +123,31 @@ export class FileStorage implements SessionStorage, LauncherStateStorage {
   }
 
   save(session: PersistedSession): void {
+    this.pendingSaves.set(session.id, session);
     const existing = this.debounceTimers.get(session.id);
     if (existing) clearTimeout(existing);
 
     const timer = setTimeout(() => {
       this.debounceTimers.delete(session.id);
-      this.saveSync(session);
+      const pending = this.pendingSaves.get(session.id);
+      if (!pending) return;
+      this.pendingSaves.delete(session.id);
+      this.saveSync(pending);
     }, this.debounceMs);
     this.debounceTimers.set(session.id, timer);
+  }
+
+  async flush(): Promise<void> {
+    const pending = Array.from(this.pendingSaves.values());
+    for (const timer of this.debounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.debounceTimers.clear();
+    this.pendingSaves.clear();
+
+    for (const session of pending) {
+      this.saveSync(session);
+    }
   }
 
   saveSync(session: PersistedSession): void {
@@ -181,6 +199,7 @@ export class FileStorage implements SessionStorage, LauncherStateStorage {
       clearTimeout(timer);
       this.debounceTimers.delete(sessionId);
     }
+    this.pendingSaves.delete(sessionId);
     try {
       unlinkSync(this.filePath(sessionId));
     } catch {
