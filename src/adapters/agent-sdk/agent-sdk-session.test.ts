@@ -210,6 +210,53 @@ describe("AgentSdkSession", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // Input iterable — covers lines 257, 260, 281
+  // -------------------------------------------------------------------------
+
+  describe("input iterable", () => {
+    it("send() queues user_message to inputQueue when SDK has not called next() yet (line 281)", async () => {
+      const session = await AgentSdkSession.create({ sessionId: "test-queue-send" });
+
+      // The mock SDK does not consume the input iterable, so inputResolve is null.
+      // send() → pushInput() → else branch → this.inputQueue.push() (line 281)
+      session.send(
+        createUnifiedMessage({
+          type: "user_message",
+          role: "user",
+          content: [{ type: "text", text: "queued message" }],
+        }),
+      );
+
+      expect((session as any).inputQueue).toHaveLength(1);
+
+      await session.close();
+    });
+
+    it("createInputIterable next() returns queued item immediately (line 257) then done when inputDone (line 260)", async () => {
+      const session = await AgentSdkSession.create({ sessionId: "test-input-iter" });
+
+      // Manually push an item to the inputQueue
+      (session as any).pushInput({ type: "user", message: { role: "user", content: "hello" } });
+      expect((session as any).inputQueue).toHaveLength(1);
+
+      // Get a fresh iterator from createInputIterable
+      const iter = (session as any).createInputIterable()[Symbol.asyncIterator]();
+
+      // First next() — queue has item → line 257 (immediate resolve)
+      const r1 = await iter.next();
+      expect(r1.done).toBe(false);
+      expect(r1.value.type).toBe("user");
+
+      // Now set inputDone = true, then call next() → line 260 (done: true)
+      (session as any).inputDone = true;
+      const r2 = await iter.next();
+      expect(r2.done).toBe(true);
+
+      await session.close();
+    });
+  });
+
   describe("backendSessionId", () => {
     it("captures the backend session ID from system:init", async () => {
       const session = await AgentSdkSession.create({
