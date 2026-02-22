@@ -19,7 +19,6 @@ export default defineConfig({
         "src/test-utils/**",
         "src/e2e/**",
         "src/interfaces/**",
-        "src/bin/**",
       ],
       reportsDirectory: "./coverage",
       thresholds: {

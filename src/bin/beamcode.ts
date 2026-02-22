@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createAdapterResolver } from "../adapters/adapter-resolver.js";
 import { ClaudeLauncher } from "../adapters/claude/claude-launcher.js";
 import { CompositeMetricsCollector } from "../adapters/composite-metrics-collector.js";
@@ -38,7 +40,7 @@ const version = resolvePackageVersion(import.meta.url, [
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-interface CliConfig {
+export interface CliConfig {
   port: number;
   noTunnel: boolean;
   noAutoLaunch: boolean;
@@ -102,7 +104,7 @@ function isTruthyEnv(value: string | undefined): boolean {
   return lower === "1" || lower === "true" || lower === "yes" || lower === "on";
 }
 
-function parseArgs(argv: string[]): CliConfig {
+export function parseArgs(argv: string[]): CliConfig {
   const config: CliConfig = {
     port: 9414,
     noTunnel: false,
@@ -231,8 +233,90 @@ function parseArgs(argv: string[]): CliConfig {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
-async function main(): Promise<void> {
-  const config = parseArgs(process.argv);
+interface ServiceStopper {
+  stop(): Promise<void>;
+}
+
+interface ClosableServer {
+  close(callback: () => void): void;
+}
+
+export interface ShutdownHandlerDeps {
+  sessionCoordinator: ServiceStopper;
+  cloudflared: ServiceStopper;
+  daemon: ServiceStopper;
+  httpServer: ClosableServer;
+  timeoutMs?: number;
+  onExit?: (code: number) => void;
+  logger?: Pick<typeof console, "log" | "error">;
+}
+
+export function createShutdownHandler({
+  sessionCoordinator,
+  cloudflared,
+  daemon,
+  httpServer,
+  timeoutMs = 10_000,
+  onExit = (code: number) => process.exit(code),
+  logger = console,
+}: ShutdownHandlerDeps): () => Promise<void> {
+  let shuttingDown = false;
+  let forceExitTimer: ReturnType<typeof setTimeout> | null = null;
+
+  return async () => {
+    if (shuttingDown) {
+      logger.log("\n  Force exiting...");
+      if (forceExitTimer) clearTimeout(forceExitTimer);
+      onExit(1);
+      return;
+    }
+    shuttingDown = true;
+    logger.log("\n  Shutting down...");
+
+    forceExitTimer = setTimeout(() => {
+      logger.error("  Shutdown timed out, force exiting.");
+      onExit(1);
+    }, timeoutMs);
+
+    try {
+      await sessionCoordinator.stop();
+    } catch {
+      // best-effort
+    }
+    try {
+      await cloudflared.stop();
+    } catch {
+      // best-effort
+    }
+    try {
+      await daemon.stop();
+    } catch {
+      // best-effort
+    }
+
+    httpServer.close(() => {
+      if (forceExitTimer) clearTimeout(forceExitTimer);
+      onExit(0);
+    });
+  };
+}
+
+export function isCliEntrypoint(
+  metaUrl: string,
+  argv1: string | undefined = process.argv[1],
+): boolean {
+  if (!argv1) return false;
+  try {
+    const modulePath = realpathSync(fileURLToPath(metaUrl));
+    const entryPath = realpathSync(resolve(argv1));
+    return modulePath === entryPath;
+  } catch {
+    return metaUrl === pathToFileURL(resolve(argv1)).href;
+  }
+}
+
+export async function runBeamcode(argv: string[] = process.argv): Promise<void> {
+  const config = parseArgs(argv);
   const logger = new StructuredLogger({
     component: "beamcode",
     level: config.verbose ? LogLevel.DEBUG : LogLevel.INFO,
@@ -463,50 +547,20 @@ ${activeSessionId ? `\n  Session: ${activeSessionId}` : ""}
 `);
 
   // 9. Graceful shutdown
-  let shuttingDown = false;
-  let forceExitTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const shutdown = async () => {
-    if (shuttingDown) {
-      console.log("\n  Force exiting...");
-      if (forceExitTimer) clearTimeout(forceExitTimer);
-      process.exit(1);
-    }
-    shuttingDown = true;
-    console.log("\n  Shutting down...");
-
-    forceExitTimer = setTimeout(() => {
-      console.error("  Shutdown timed out, force exiting.");
-      process.exit(1);
-    }, 10_000);
-
-    try {
-      await sessionCoordinator.stop();
-    } catch {
-      // best-effort
-    }
-    try {
-      await cloudflared.stop();
-    } catch {
-      // best-effort
-    }
-    try {
-      await daemon.stop();
-    } catch {
-      // best-effort
-    }
-
-    httpServer.close(() => {
-      if (forceExitTimer) clearTimeout(forceExitTimer);
-      process.exit(0);
-    });
-  };
+  const shutdown = createShutdownHandler({
+    sessionCoordinator,
+    cloudflared,
+    daemon,
+    httpServer,
+  });
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+if (isCliEntrypoint(import.meta.url)) {
+  runBeamcode().catch((err) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
+}
