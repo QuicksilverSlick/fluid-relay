@@ -7,7 +7,7 @@ import {
 } from "../../testing/cli-message-factories.js";
 import { CONSUMER_PROTOCOL_VERSION } from "../../types/consumer-messages.js";
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
-import type { Session } from "../session-repository.js";
+import type { Session } from "../session/session-repository.js";
 import type { ConsumerGatewayDeps } from "./consumer-gateway.js";
 import { ConsumerGateway } from "./consumer-gateway.js";
 

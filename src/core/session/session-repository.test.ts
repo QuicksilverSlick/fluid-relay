@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionStorage } from "../interfaces/storage.js";
-import type { PersistedSession } from "../types/session-state.js";
+import type { SessionStorage } from "../../interfaces/storage.js";
+import type { PersistedSession } from "../../types/session-state.js";
 import {
   makeDefaultState,
   SessionRepository,

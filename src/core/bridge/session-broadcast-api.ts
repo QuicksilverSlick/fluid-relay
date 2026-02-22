@@ -1,5 +1,5 @@
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
-import type { Session, SessionRepository } from "../session-repository.js";
+import type { Session, SessionRepository } from "../session/session-repository.js";
 
 export interface SessionBroadcastApiOptions {
   store: SessionRepository;

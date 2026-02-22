@@ -1,6 +1,6 @@
 import type { SessionStorage } from "../../interfaces/storage.js";
 import type { SessionSnapshot, SessionState } from "../../types/session-state.js";
-import type { Session, SessionRepository } from "../session-repository.js";
+import type { Session, SessionRepository } from "../session/session-repository.js";
 import type { RuntimeManager } from "./runtime-manager.js";
 
 export interface SessionInfoApiOptions {

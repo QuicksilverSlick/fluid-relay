@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "../../interfaces/logger.js";
 import type { MetricsCollector } from "../../interfaces/metrics.js";
 import { createMockSession } from "../../testing/cli-message-factories.js";
-import type { Session, SessionRepository } from "../session-repository.js";
+import type { Session, SessionRepository } from "../session/session-repository.js";
 import type { RuntimeManager } from "./runtime-manager.js";
 import { SessionLifecycleService } from "./session-lifecycle-service.js";
 

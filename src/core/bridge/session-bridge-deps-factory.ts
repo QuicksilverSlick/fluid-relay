@@ -16,8 +16,8 @@ import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import type { MessageQueueHandler } from "../message-queue-handler.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { UnifiedMessageRouterDeps } from "../messaging/unified-message-router.js";
-import type { Session, SessionRepository } from "../session-repository.js";
-import type { SessionRuntime } from "../session-runtime.js";
+import type { Session, SessionRepository } from "../session/session-repository.js";
+import type { SessionRuntime } from "../session/session-runtime.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 
 type EmitBridgeEvent = (

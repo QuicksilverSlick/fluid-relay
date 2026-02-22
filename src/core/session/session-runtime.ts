@@ -9,25 +9,25 @@
  * lifecycle transitions.
  */
 
-import type { ConsumerIdentity } from "../interfaces/auth.js";
-import type { RateLimiter } from "../interfaces/rate-limiter.js";
-import type { WebSocketLike } from "../interfaces/transport.js";
+import type { ConsumerIdentity } from "../../interfaces/auth.js";
+import type { RateLimiter } from "../../interfaces/rate-limiter.js";
+import type { WebSocketLike } from "../../interfaces/transport.js";
 import type {
   InitializeAccount,
   InitializeCommand,
   InitializeModel,
   PermissionRequest,
-} from "../types/cli-messages.js";
-import type { ConsumerMessage } from "../types/consumer-messages.js";
-import type { SessionSnapshot } from "../types/session-state.js";
-import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
-import type { InboundCommand, PolicyCommand } from "./interfaces/runtime-commands.js";
-import type { MessageQueueHandler } from "./message-queue-handler.js";
-import type { LifecycleState } from "./session/session-lifecycle.js";
-import { isLifecycleTransitionAllowed } from "./session/session-lifecycle.js";
+} from "../../types/cli-messages.js";
+import type { ConsumerMessage } from "../../types/consumer-messages.js";
+import type { SessionSnapshot } from "../../types/session-state.js";
+import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import type { InboundCommand, PolicyCommand } from "../interfaces/runtime-commands.js";
+import type { MessageQueueHandler } from "../message-queue-handler.js";
+import type { SlashCommandService } from "../slash/slash-command-service.js";
+import type { UnifiedMessage } from "../types/unified-message.js";
+import type { LifecycleState } from "./session-lifecycle.js";
+import { isLifecycleTransitionAllowed } from "./session-lifecycle.js";
 import type { Session } from "./session-repository.js";
-import type { SlashCommandService } from "./slash/slash-command-service.js";
-import type { UnifiedMessage } from "./types/unified-message.js";
 
 export type RuntimeTraceInfo = {
   traceId?: string;
@@ -475,7 +475,7 @@ export class SessionRuntime {
       behavior,
       updated_input: options?.updatedInput,
       updated_permissions: options?.updatedPermissions as
-        | import("../types/cli-messages.js").PermissionUpdate[]
+        | import("../../types/cli-messages.js").PermissionUpdate[]
         | undefined,
       message: options?.message,
     });

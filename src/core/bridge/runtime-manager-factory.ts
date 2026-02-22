@@ -1,5 +1,5 @@
-import type { Session } from "../session-repository.js";
-import { SessionRuntime, type SessionRuntimeDeps } from "../session-runtime.js";
+import type { Session } from "../session/session-repository.js";
+import { SessionRuntime, type SessionRuntimeDeps } from "../session/session-runtime.js";
 import { RuntimeManager } from "./runtime-manager.js";
 
 export interface RuntimeManagerFactoryDeps {

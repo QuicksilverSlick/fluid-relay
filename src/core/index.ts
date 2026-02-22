@@ -36,10 +36,10 @@ export {
   LIFECYCLE_STATES,
   type LifecycleState,
 } from "./session/session-lifecycle.js";
+export { SessionRepository } from "./session/session-repository.js";
+export { SessionRuntime } from "./session/session-runtime.js";
 export { SessionBridge } from "./session-bridge.js";
 export { SessionCoordinator, type SessionCoordinatorOptions } from "./session-coordinator.js";
-export { SessionRepository } from "./session-repository.js";
-export { SessionRuntime } from "./session-runtime.js";
 export { TypedEventEmitter } from "./typed-emitter.js";
 export type {
   CoreSessionState,

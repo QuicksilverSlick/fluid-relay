@@ -5,7 +5,7 @@ import type {
   InitializeModel,
 } from "../../types/cli-messages.js";
 import type { PolicyCommand } from "../interfaces/runtime-commands.js";
-import type { Session, SessionRepository } from "../session-repository.js";
+import type { Session, SessionRepository } from "../session/session-repository.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import type { RuntimeManager } from "./runtime-manager.js";
 

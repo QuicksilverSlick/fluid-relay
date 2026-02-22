@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionRuntime } from "../session-runtime.js";
+import type { SessionRuntime } from "../session/session-runtime.js";
 import { RuntimeManager } from "./runtime-manager.js";
 
 function stubSession(id: string) {

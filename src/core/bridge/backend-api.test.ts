@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Session, SessionRepository } from "../session-repository.js";
+import type { Session, SessionRepository } from "../session/session-repository.js";
 import { BackendApi } from "./backend-api.js";
 
 function stubSession(id: string): Session {

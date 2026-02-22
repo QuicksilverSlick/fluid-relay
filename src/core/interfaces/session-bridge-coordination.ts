@@ -7,7 +7,7 @@ import type { PermissionRequest } from "../../types/cli-messages.js";
 import type { BridgeEventMap } from "../../types/events.js";
 import type { GitInfoTracker } from "../git-info-tracker.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
-import type { Session } from "../session-repository.js";
+import type { Session } from "../session/session-repository.js";
 import type { InboundCommand } from "./runtime-commands.js";
 
 export type EmitBridgeEvent = <K extends keyof BridgeEventMap>(

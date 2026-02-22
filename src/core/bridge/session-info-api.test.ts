@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SessionState } from "../../types/session-state.js";
-import type { Session, SessionRepository } from "../session-repository.js";
+import type { Session, SessionRepository } from "../session/session-repository.js";
 import type { RuntimeManager } from "./runtime-manager.js";
 import { SessionInfoApi } from "./session-info-api.js";
 

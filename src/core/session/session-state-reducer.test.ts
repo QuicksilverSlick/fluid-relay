@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createUnifiedMessage } from "../types/unified-message.js";
 import { reduce } from "./session-state-reducer.js";
-import { createUnifiedMessage } from "./types/unified-message.js";
 
 /** Minimal valid SessionState for testing. */
 function baseState() {

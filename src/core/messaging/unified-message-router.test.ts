@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeDefaultState, type Session } from "../session-repository.js";
+import { makeDefaultState, type Session } from "../session/session-repository.js";
 import { createUnifiedMessage, type UnifiedMessage } from "../types/unified-message.js";
 import { noopTracer } from "./message-tracer.js";
 import { UnifiedMessageRouter, type UnifiedMessageRouterDeps } from "./unified-message-router.js";

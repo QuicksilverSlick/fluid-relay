@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockSession } from "../../testing/cli-message-factories.js";
-import { SessionRuntime } from "../session-runtime.js";
+import { SessionRuntime } from "../session/session-runtime.js";
 import { createRuntimeManager } from "./runtime-manager-factory.js";
 
 function makeFactoryDeps(overrides?: Record<string, unknown>) {

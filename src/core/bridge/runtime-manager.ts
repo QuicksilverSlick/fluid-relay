@@ -9,8 +9,8 @@
  */
 
 import type { LifecycleState } from "../session/session-lifecycle.js";
-import type { Session } from "../session-repository.js";
-import type { SessionRuntime } from "../session-runtime.js";
+import type { Session } from "../session/session-repository.js";
+import type { SessionRuntime } from "../session/session-runtime.js";
 
 export class RuntimeManager {
   private runtimes = new Map<string, SessionRuntime>();

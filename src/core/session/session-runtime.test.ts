@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMockSession, createTestSocket } from "../testing/cli-message-factories.js";
-import { normalizeInbound } from "./messaging/inbound-normalizer.js";
+import { createMockSession, createTestSocket } from "../../testing/cli-message-factories.js";
+import { normalizeInbound } from "../messaging/inbound-normalizer.js";
+import { createUnifiedMessage } from "../types/unified-message.js";
 import { SessionRuntime, type SessionRuntimeDeps } from "./session-runtime.js";
-import { createUnifiedMessage } from "./types/unified-message.js";
 
 function makeDeps(overrides?: Partial<SessionRuntimeDeps>): SessionRuntimeDeps {
   const tracedNormalizeInbound = vi.fn((_session, msg) =>

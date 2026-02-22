@@ -21,7 +21,7 @@ import { CLI_ADAPTER_NAMES, type CliAdapterName } from "../interfaces/adapter-na
 import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter, BackendSession } from "../interfaces/backend-adapter.js";
 import { type MessageTracer, noopTracer, type TraceOutcome } from "../messaging/message-tracer.js";
-import type { Session } from "../session-repository.js";
+import type { Session } from "../session/session-repository.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 
 // -- Dependency contracts ----------------------------------------------------

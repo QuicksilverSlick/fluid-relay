@@ -15,8 +15,8 @@ import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
-import type { Session } from "../session-repository.js";
-import { toPresenceEntry } from "../session-repository.js";
+import type { Session } from "../session/session-repository.js";
+import { toPresenceEntry } from "../session/session-repository.js";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 

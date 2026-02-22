@@ -20,7 +20,7 @@ import type {
 } from "../types/cli-messages.js";
 import type { ResolvedConfig } from "../types/config.js";
 import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
-import type { Session } from "./session-repository.js";
+import type { Session } from "./session/session-repository.js";
 import type { UnifiedMessage } from "./types/unified-message.js";
 
 // ─── Dependency contracts ────────────────────────────────────────────────────

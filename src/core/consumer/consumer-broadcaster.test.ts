@@ -7,7 +7,7 @@ import {
   createTestSocket,
   noopLogger,
 } from "../../testing/cli-message-factories.js";
-import type { Session } from "../session-repository.js";
+import type { Session } from "../session/session-repository.js";
 import {
   BACKPRESSURE_THRESHOLD,
   type BroadcastCallback,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "../../interfaces/logger.js";
-import type { SessionRepository } from "../session-repository.js";
+import type { SessionRepository } from "../session/session-repository.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 
 function createService() {

@@ -1,6 +1,6 @@
 import type { Logger } from "../../interfaces/logger.js";
 import type { SessionStorage } from "../../interfaces/storage.js";
-import type { Session, SessionRepository } from "../session-repository.js";
+import type { Session, SessionRepository } from "../session/session-repository.js";
 
 export interface SessionPersistenceServiceOptions {
   store: SessionRepository;

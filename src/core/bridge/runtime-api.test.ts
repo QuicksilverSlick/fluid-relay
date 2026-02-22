@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "../../interfaces/logger.js";
 import type { PolicyCommand } from "../interfaces/runtime-commands.js";
-import type { Session, SessionRepository } from "../session-repository.js";
+import type { Session, SessionRepository } from "../session/session-repository.js";
 import { RuntimeApi } from "./runtime-api.js";
 import type { RuntimeManager } from "./runtime-manager.js";
 
