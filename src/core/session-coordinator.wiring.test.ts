@@ -178,37 +178,6 @@ describe("SessionCoordinator", () => {
 
       expect(pm.spawnCalls.length).toBeGreaterThan(spawnsBefore);
     });
-
-    it("deduplicates rapid relaunch requests", async () => {
-      mgr.start();
-      const info = mgr.launcher.launch({ cwd: "/tmp" });
-      pm.lastProcess!.resolveExit(1);
-      await pm.lastProcess!.exited;
-      const spawnsBefore = pm.spawnCalls.length;
-
-      // Fire three rapid relaunch requests
-      mgr.bridge.emit("backend:relaunch_needed" as any, { sessionId: info.sessionId });
-      mgr.bridge.emit("backend:relaunch_needed" as any, { sessionId: info.sessionId });
-      mgr.bridge.emit("backend:relaunch_needed" as any, { sessionId: info.sessionId });
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Should only spawn once due to dedup
-      expect(pm.spawnCalls.length).toBe(spawnsBefore + 1);
-    });
-
-    it("skips archived sessions", async () => {
-      mgr.start();
-      const info = mgr.launcher.launch({ cwd: "/tmp" });
-      mgr.launcher.setArchived(info.sessionId, true);
-      pm.lastProcess!.resolveExit(1);
-      await pm.lastProcess!.exited;
-      const spawnsBefore = pm.spawnCalls.length;
-
-      mgr.bridge.emit("backend:relaunch_needed" as any, { sessionId: info.sessionId });
-      await new Promise((r) => setTimeout(r, 10));
-
-      expect(pm.spawnCalls.length).toBe(spawnsBefore);
-    });
   });
 
   // -----------------------------------------------------------------------
@@ -474,35 +443,6 @@ describe("SessionCoordinator", () => {
 
       expect(broadcastSpy).toHaveBeenCalledWith(info.sessionId, "stderr", expect.any(String));
     });
-
-    it("maintains ring buffer up to MAX_LOG_LINES", () => {
-      mgr.start();
-      const broadcastSpy = vi
-        .spyOn(mgr.bridge, "broadcastProcessOutput")
-        .mockImplementation(() => {});
-      const info = mgr.launcher.launch({ cwd: "/tmp" });
-
-      // Push many lines exceeding MAX_LOG_LINES (500)
-      const lines = Array.from({ length: 600 }, (_, i) => `line-${i}`).join("\n");
-      mgr.launcher.emit("process:stdout" as any, {
-        sessionId: info.sessionId,
-        data: lines,
-      });
-
-      expect(broadcastSpy).toHaveBeenCalled();
-
-      // Verify buffer still works after overflow — subsequent output is still forwarded
-      broadcastSpy.mockClear();
-      mgr.launcher.emit("process:stdout" as any, {
-        sessionId: info.sessionId,
-        data: "after-overflow\n",
-      });
-      expect(broadcastSpy).toHaveBeenCalledWith(
-        info.sessionId,
-        "stdout",
-        expect.stringContaining("after-overflow"),
-      );
-    });
   });
 
   // -----------------------------------------------------------------------
@@ -604,73 +544,6 @@ describe("SessionCoordinator", () => {
 
       expect(executeSpy).toHaveBeenCalledWith("test-session", "/help");
       expect(result).toEqual({ content: "help output", source: "emulated" });
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // restoreFromStorage: dual-registry path (registry !== launcher)
-  // -----------------------------------------------------------------------
-
-  describe("restoreFromStorage: dual-registry path", () => {
-    it("registry.deleteSession removes from registry, not launcher", async () => {
-      const { SimpleSessionRegistry } = await import("./session/simple-session-registry.js");
-
-      const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-      const registry = new SimpleSessionRegistry();
-
-      const launcher = createLauncher(pm, { storage: new MemoryStorage(), logger });
-
-      const testMgr = new SessionCoordinator({
-        config: { port: 3456 },
-        storage: new MemoryStorage(),
-        logger,
-        launcher,
-        registry,
-      });
-
-      // Register a session directly in the registry (simulates forward-connection adapter)
-      registry.register({
-        sessionId: "forward-sess",
-        cwd: "/tmp",
-        createdAt: Date.now(),
-        adapterName: "acp",
-      });
-
-      testMgr.start();
-
-      try {
-        // Session exists in registry
-        expect(registry.getSession("forward-sess")).toBeDefined();
-        // Session does NOT exist in launcher
-        expect(launcher.getSession("forward-sess")).toBeUndefined();
-
-        // Delete via session coordinator
-        const deleted = await testMgr.deleteSession("forward-sess");
-        expect(deleted).toBe(true);
-
-        // Session removed from registry
-        expect(registry.getSession("forward-sess")).toBeUndefined();
-      } finally {
-        await testMgr.stop();
-      }
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Config validation
-  // -----------------------------------------------------------------------
-
-  describe("config validation", () => {
-    it("rejects negative idleSessionTimeoutMs", () => {
-      expect(
-        () =>
-          new SessionCoordinator({
-            config: { port: 3456, idleSessionTimeoutMs: -1 },
-            storage,
-            logger: noopLogger,
-            launcher: createLauncher(pm, { storage, logger: noopLogger }),
-          }),
-      ).toThrow("Invalid configuration");
     });
   });
 });

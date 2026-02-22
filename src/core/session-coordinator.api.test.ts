@@ -250,7 +250,6 @@ describe("SessionCoordinator.createSession", () => {
   });
 });
 
-
 describe("SessionCoordinator.deleteSession", () => {
   it("deletes session with a PID (claude)", async () => {
     const pm = new TestProcessManager();
@@ -312,6 +311,40 @@ describe("SessionCoordinator.deleteSession", () => {
     const deleted = await mgr.deleteSession("nonexistent-id");
 
     expect(deleted).toBe(false);
+
+    await mgr.stop();
+  });
+
+  it("deletes session from registry when registry !== launcher", async () => {
+    const { SimpleSessionRegistry } = await import("./session/simple-session-registry.js");
+
+    const pm = new TestProcessManager();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const registry = new SimpleSessionRegistry();
+    const launcher = createLauncher(pm, new MemoryStorage());
+
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage: new MemoryStorage(),
+      logger,
+      launcher,
+      registry,
+    });
+    await mgr.start();
+
+    registry.register({
+      sessionId: "forward-sess",
+      cwd: "/tmp",
+      createdAt: Date.now(),
+      adapterName: "acp",
+    });
+
+    expect(registry.getSession("forward-sess")).toBeDefined();
+    expect(launcher.getSession("forward-sess")).toBeUndefined();
+
+    const deleted = await mgr.deleteSession("forward-sess");
+    expect(deleted).toBe(true);
+    expect(registry.getSession("forward-sess")).toBeUndefined();
 
     await mgr.stop();
   });
