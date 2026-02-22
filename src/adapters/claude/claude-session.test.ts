@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { MessageTracerImpl, type TraceEvent } from "../../core/message-tracer.js";
+import { MessageTracerImpl, type TraceEvent } from "../../core/messaging/message-tracer.js";
 import type { UnifiedMessage } from "../../core/types/unified-message.js";
 import { createUnifiedMessage } from "../../core/types/unified-message.js";
 import { tick } from "../../testing/adapter-test-helpers.js";

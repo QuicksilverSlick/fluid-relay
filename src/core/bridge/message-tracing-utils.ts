@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { normalizeInbound } from "../inbound-normalizer.js";
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
-import type { MessageTracer } from "../message-tracer.js";
+import { normalizeInbound } from "../messaging/inbound-normalizer.js";
+import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 
 export function tracedNormalizeInbound(

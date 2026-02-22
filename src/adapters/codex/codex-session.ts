@@ -12,7 +12,7 @@ import {
   extractTraceContext,
   type MessageTracer,
   type TraceContext,
-} from "../../core/message-tracer.js";
+} from "../../core/messaging/message-tracer.js";
 import type { UnifiedMessage } from "../../core/types/unified-message.js";
 import { createUnifiedMessage } from "../../core/types/unified-message.js";
 import type { CodexLauncher } from "./codex-launcher.js";

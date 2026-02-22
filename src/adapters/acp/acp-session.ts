@@ -8,7 +8,7 @@
 
 import type { ChildProcess } from "node:child_process";
 import type { BackendSession } from "../../core/interfaces/backend-adapter.js";
-import { extractTraceContext, type MessageTracer } from "../../core/message-tracer.js";
+import { extractTraceContext, type MessageTracer } from "../../core/messaging/message-tracer.js";
 import { createUnifiedMessage, type UnifiedMessage } from "../../core/types/unified-message.js";
 import { translateToAcp } from "./inbound-translator.js";
 import type { JsonRpcMessage } from "./json-rpc.js";

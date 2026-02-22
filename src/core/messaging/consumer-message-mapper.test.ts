@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { UnifiedContent } from "../types/unified-message.js";
+import { createUnifiedMessage } from "../types/unified-message.js";
 import {
   mapAssistantMessage,
   mapAuthStatus,
@@ -10,8 +12,6 @@ import {
   mapToolProgress,
   mapToolUseSummary,
 } from "./consumer-message-mapper.js";
-import type { UnifiedContent } from "./types/unified-message.js";
-import { createUnifiedMessage } from "./types/unified-message.js";
 
 function makeAssistantMsg(
   content: UnifiedContent[],

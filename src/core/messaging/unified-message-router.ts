@@ -10,18 +10,25 @@
  * Exposes a single `route(session, msg)` entry point.
  */
 
-import type { GitInfoResolver } from "../interfaces/git-resolver.js";
+import type { GitInfoResolver } from "../../interfaces/git-resolver.js";
 import type {
   InitializeAccount,
   InitializeCommand,
   InitializeModel,
   PermissionRequest,
-} from "../types/cli-messages.js";
-import { CONSUMER_PROTOCOL_VERSION, type ConsumerMessage } from "../types/consumer-messages.js";
-import type { BridgeEventMap } from "../types/events.js";
-import type { SessionState } from "../types/session-state.js";
-import type { CapabilitiesPolicy } from "./capabilities-policy.js";
-import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
+} from "../../types/cli-messages.js";
+import { CONSUMER_PROTOCOL_VERSION, type ConsumerMessage } from "../../types/consumer-messages.js";
+import type { BridgeEventMap } from "../../types/events.js";
+import type { SessionState } from "../../types/session-state.js";
+import type { CapabilitiesPolicy } from "../capabilities-policy.js";
+import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import { applyGitInfo, type GitInfoTracker } from "../git-info-tracker.js";
+import type { MessageQueueHandler } from "../message-queue-handler.js";
+import type { Session } from "../session-repository.js";
+import { reduce as reduceState } from "../session-state-reducer.js";
+import { diffTeamState } from "../team-event-differ.js";
+import type { TeamState } from "../types/team-types.js";
+import type { UnifiedMessage } from "../types/unified-message.js";
 import {
   mapAssistantMessage,
   mapAuthStatus,
@@ -33,14 +40,7 @@ import {
   mapToolProgress,
   mapToolUseSummary,
 } from "./consumer-message-mapper.js";
-import { applyGitInfo, type GitInfoTracker } from "./git-info-tracker.js";
-import type { MessageQueueHandler } from "./message-queue-handler.js";
 import { extractTraceContext, type MessageTracer } from "./message-tracer.js";
-import type { Session } from "./session-repository.js";
-import { reduce as reduceState } from "./session-state-reducer.js";
-import { diffTeamState } from "./team-event-differ.js";
-import type { TeamState } from "./types/team-types.js";
-import type { UnifiedMessage } from "./types/unified-message.js";
 
 // ─── Dependency contracts ────────────────────────────────────────────────────
 

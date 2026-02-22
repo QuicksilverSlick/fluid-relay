@@ -60,7 +60,8 @@ import type { AdapterResolver } from "./interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "./interfaces/backend-adapter.js";
 import type { InboundCommand, PolicyCommand } from "./interfaces/runtime-commands.js";
 import { MessageQueueHandler } from "./message-queue-handler.js";
-import { type MessageTracer, noopTracer } from "./message-tracer.js";
+import { type MessageTracer, noopTracer } from "./messaging/message-tracer.js";
+import { UnifiedMessageRouter } from "./messaging/unified-message-router.js";
 import type { LifecycleState } from "./session-lifecycle.js";
 import { type Session, SessionRepository } from "./session-repository.js";
 import type { SessionRuntime } from "./session-runtime.js";
@@ -69,7 +70,6 @@ import type { SlashCommandService } from "./slash-command-service.js";
 import { TeamToolCorrelationBuffer } from "./team-tool-correlation.js";
 import { TypedEventEmitter } from "./typed-emitter.js";
 import type { UnifiedMessage } from "./types/unified-message.js";
-import { UnifiedMessageRouter } from "./unified-message-router.js";
 
 // ─── SessionBridge ───────────────────────────────────────────────────────────
 

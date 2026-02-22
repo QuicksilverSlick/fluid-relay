@@ -10,9 +10,9 @@
  * @module MessagePlane
  */
 
-import type { PermissionRequest } from "../types/cli-messages.js";
-import type { ConsumerMessage, ConsumerPermissionRequest } from "../types/consumer-messages.js";
-import type { UnifiedMessage } from "./types/unified-message.js";
+import type { PermissionRequest } from "../../types/cli-messages.js";
+import type { ConsumerMessage, ConsumerPermissionRequest } from "../../types/consumer-messages.js";
+import type { UnifiedMessage } from "../types/unified-message.js";
 
 /**
  * Map a UnifiedMessage of type "assistant" to a ConsumerMessage.

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockSession, createTestSocket } from "../testing/cli-message-factories.js";
-import { normalizeInbound } from "./inbound-normalizer.js";
+import { normalizeInbound } from "./messaging/inbound-normalizer.js";
 import { SessionRuntime, type SessionRuntimeDeps } from "./session-runtime.js";
 import { createUnifiedMessage } from "./types/unified-message.js";
 

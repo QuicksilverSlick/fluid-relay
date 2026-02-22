@@ -16,7 +16,7 @@ import type {
   BackendSession,
   ConnectOptions,
 } from "../../core/interfaces/backend-adapter.js";
-import type { MessageTracer } from "../../core/message-tracer.js";
+import type { MessageTracer } from "../../core/messaging/message-tracer.js";
 import { AcpSession } from "./acp-session.js";
 import { JsonRpcCodec } from "./json-rpc.js";
 import type { AcpInitializeResult, ErrorClassifier } from "./outbound-translator.js";

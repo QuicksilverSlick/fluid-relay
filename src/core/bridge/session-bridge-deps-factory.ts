@@ -14,11 +14,11 @@ import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "../interfaces/backend-adapter.js";
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import type { MessageQueueHandler } from "../message-queue-handler.js";
-import type { MessageTracer } from "../message-tracer.js";
+import type { MessageTracer } from "../messaging/message-tracer.js";
+import type { UnifiedMessageRouterDeps } from "../messaging/unified-message-router.js";
 import type { Session, SessionRepository } from "../session-repository.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
-import type { UnifiedMessageRouterDeps } from "../unified-message-router.js";
 
 type EmitBridgeEvent = (
   type: keyof BridgeEventMap,

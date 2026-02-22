@@ -12,7 +12,7 @@ import type {
   ConnectOptions,
 } from "../../core/interfaces/backend-adapter.js";
 import type { InvertedConnectionAdapter } from "../../core/interfaces/inverted-connection-adapter.js";
-import type { MessageTracer } from "../../core/message-tracer.js";
+import type { MessageTracer } from "../../core/messaging/message-tracer.js";
 import { ClaudeSession } from "./claude-session.js";
 import { SocketRegistry } from "./socket-registry.js";
 

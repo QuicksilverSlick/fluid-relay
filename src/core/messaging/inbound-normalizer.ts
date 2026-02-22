@@ -6,9 +6,9 @@
  * it operates only on core types (InboundMessage → UnifiedMessage).
  */
 
-import type { InboundMessage } from "../types/inbound-messages.js";
-import type { UnifiedContent, UnifiedMessage } from "./types/unified-message.js";
-import { createUnifiedMessage } from "./types/unified-message.js";
+import type { InboundMessage } from "../../types/inbound-messages.js";
+import type { UnifiedContent, UnifiedMessage } from "../types/unified-message.js";
+import { createUnifiedMessage } from "../types/unified-message.js";
 
 /**
  * Normalize an InboundMessage (from a consumer) into a UnifiedMessage.

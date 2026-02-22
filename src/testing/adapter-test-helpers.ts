@@ -19,7 +19,7 @@ import type {
   BackendSession,
   ConnectOptions,
 } from "../core/interfaces/backend-adapter.js";
-import type { MessageTracer } from "../core/message-tracer.js";
+import type { MessageTracer } from "../core/messaging/message-tracer.js";
 import { SessionBridge } from "../core/session-bridge.js";
 import type { UnifiedMessage } from "../core/types/unified-message.js";
 import { createUnifiedMessage } from "../core/types/unified-message.js";

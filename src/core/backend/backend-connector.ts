@@ -20,7 +20,7 @@ import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import { CLI_ADAPTER_NAMES, type CliAdapterName } from "../interfaces/adapter-names.js";
 import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter, BackendSession } from "../interfaces/backend-adapter.js";
-import { type MessageTracer, noopTracer, type TraceOutcome } from "../message-tracer.js";
+import { type MessageTracer, noopTracer, type TraceOutcome } from "../messaging/message-tracer.js";
 import type { Session } from "../session-repository.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 

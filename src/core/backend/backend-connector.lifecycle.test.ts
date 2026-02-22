@@ -13,7 +13,7 @@ import type {
   BackendSession,
   ConnectOptions,
 } from "../interfaces/backend-adapter.js";
-import { MessageTracerImpl, type TraceEvent } from "../message-tracer.js";
+import { MessageTracerImpl, type TraceEvent } from "../messaging/message-tracer.js";
 import type { Session } from "../session-repository.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { createUnifiedMessage } from "../types/unified-message.js";

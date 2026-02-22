@@ -19,7 +19,7 @@ import {
   MessageTracerImpl,
   noopTracer,
   type TraceLevel,
-} from "../core/message-tracer.js";
+} from "../core/messaging/message-tracer.js";
 import { SessionCoordinator } from "../core/session-coordinator.js";
 import { Daemon } from "../daemon/daemon.js";
 import { injectConsumerToken, loadConsumerHtml } from "../http/consumer-html.js";

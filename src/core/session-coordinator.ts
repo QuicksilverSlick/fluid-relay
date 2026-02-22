@@ -43,7 +43,7 @@ import type {
 } from "./interfaces/session-coordinator-coordination.js";
 import type { SessionLauncher } from "./interfaces/session-launcher.js";
 import type { SessionRegistry } from "./interfaces/session-registry.js";
-import type { MessageTracer } from "./message-tracer.js";
+import type { MessageTracer } from "./messaging/message-tracer.js";
 import { ReconnectPolicy } from "./reconnect-policy.js";
 import { SessionBridge } from "./session-bridge.js";
 import { SessionTransportHub } from "./session-transport-hub.js";
