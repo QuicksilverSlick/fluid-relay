@@ -4,7 +4,7 @@ import type { SessionState } from "../types/session-state.js";
 import { applyGitInfo, GitInfoTracker } from "./git-info-tracker.js";
 import type { Session } from "./session-repository.js";
 import { makeDefaultState } from "./session-repository.js";
-import { SlashCommandRegistry } from "./slash-command-registry.js";
+import { SlashCommandRegistry } from "./slash/slash-command-registry.js";
 import { TeamToolCorrelationBuffer } from "./team/team-tool-correlation.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SessionState } from "../types/session-state.js";
+import type { SessionState } from "../../types/session-state.js";
 import { SlashCommandExecutor } from "./slash-command-executor.js";
 import { SlashCommandRegistry } from "./slash-command-registry.js";
 

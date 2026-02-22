@@ -7,9 +7,9 @@ import {
   PassthroughHandler,
   SlashCommandChain,
   UnsupportedHandler,
-} from "../slash-command-chain.js";
-import { SlashCommandExecutor } from "../slash-command-executor.js";
-import { SlashCommandService } from "../slash-command-service.js";
+} from "../slash/slash-command-chain.js";
+import { SlashCommandExecutor } from "../slash/slash-command-executor.js";
+import { SlashCommandService } from "../slash/slash-command-service.js";
 
 type EmitEvent = (
   type: keyof BridgeEventMap,

@@ -8,7 +8,7 @@
  * @module MessagePlane
  */
 
-import type { SessionState } from "../types/session-state.js";
+import type { SessionState } from "../../types/session-state.js";
 import type { SlashCommandRegistry } from "./slash-command-registry.js";
 
 export interface SlashCommandResult {

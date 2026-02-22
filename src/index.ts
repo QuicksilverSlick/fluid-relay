@@ -58,8 +58,8 @@ export type { LifecycleState } from "./core/session-lifecycle.js";
 export { isLifecycleTransitionAllowed, LIFECYCLE_STATES } from "./core/session-lifecycle.js";
 export { SessionRuntime } from "./core/session-runtime.js";
 export { SimpleSessionRegistry } from "./core/simple-session-registry.js";
-export type { SlashCommandResult } from "./core/slash-command-executor.js";
-export { SlashCommandExecutor } from "./core/slash-command-executor.js";
+export type { SlashCommandResult } from "./core/slash/slash-command-executor.js";
+export { SlashCommandExecutor } from "./core/slash/slash-command-executor.js";
 export { TypedEventEmitter } from "./core/typed-emitter.js";
 // Core types
 export type {

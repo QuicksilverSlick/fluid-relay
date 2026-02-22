@@ -9,11 +9,11 @@ import {
   makeControlResponseUnifiedMsg,
   makeSessionInitMsg,
   tick,
-} from "../testing/adapter-test-helpers.js";
+} from "../../testing/adapter-test-helpers.js";
 import {
   authContext,
   createTestSocket as createMockSocket,
-} from "../testing/cli-message-factories.js";
+} from "../../testing/cli-message-factories.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

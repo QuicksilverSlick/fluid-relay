@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMockSession } from "../testing/cli-message-factories.js";
-import { noopTracer } from "./messaging/message-tracer.js";
+import { createMockSession } from "../../testing/cli-message-factories.js";
+import { noopTracer } from "../messaging/message-tracer.js";
 import { SlashCommandService } from "./slash-command-service.js";
 
 describe("SlashCommandService", () => {

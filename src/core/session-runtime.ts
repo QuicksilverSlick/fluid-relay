@@ -26,7 +26,7 @@ import type { MessageQueueHandler } from "./message-queue-handler.js";
 import type { LifecycleState } from "./session-lifecycle.js";
 import { isLifecycleTransitionAllowed } from "./session-lifecycle.js";
 import type { Session } from "./session-repository.js";
-import type { SlashCommandService } from "./slash-command-service.js";
+import type { SlashCommandService } from "./slash/slash-command-service.js";
 import type { UnifiedMessage } from "./types/unified-message.js";
 
 export type RuntimeTraceInfo = {

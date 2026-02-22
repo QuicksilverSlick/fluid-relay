@@ -8,9 +8,9 @@
  * @module MessagePlane
  */
 
-import type { InboundCommand } from "./interfaces/runtime-commands.js";
-import type { MessageTracer } from "./messaging/message-tracer.js";
-import type { Session } from "./session-repository.js";
+import type { InboundCommand } from "../interfaces/runtime-commands.js";
+import type { MessageTracer } from "../messaging/message-tracer.js";
+import type { Session } from "../session-repository.js";
 import type {
   CommandHandlerContext,
   LocalHandler,
