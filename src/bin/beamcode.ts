@@ -262,12 +262,22 @@ export function createShutdownHandler({
 }: ShutdownHandlerDeps): () => Promise<void> {
   let shuttingDown = false;
   let forceExitTimer: ReturnType<typeof setTimeout> | null = null;
+  let exited = false;
+
+  const exitOnce = (code: number) => {
+    if (exited) return;
+    exited = true;
+    if (forceExitTimer) {
+      clearTimeout(forceExitTimer);
+      forceExitTimer = null;
+    }
+    onExit(code);
+  };
 
   return async () => {
     if (shuttingDown) {
       logger.log("\n  Force exiting...");
-      if (forceExitTimer) clearTimeout(forceExitTimer);
-      onExit(1);
+      exitOnce(1);
       return;
     }
     shuttingDown = true;
@@ -275,29 +285,20 @@ export function createShutdownHandler({
 
     forceExitTimer = setTimeout(() => {
       logger.error("  Shutdown timed out, force exiting.");
-      onExit(1);
+      exitOnce(1);
     }, timeoutMs);
 
-    try {
-      await sessionCoordinator.stop();
-    } catch {
-      // best-effort
-    }
-    try {
-      await cloudflared.stop();
-    } catch {
-      // best-effort
-    }
-    try {
-      await daemon.stop();
-    } catch {
-      // best-effort
-    }
+    await Promise.allSettled([sessionCoordinator.stop(), cloudflared.stop(), daemon.stop()]);
 
-    httpServer.close(() => {
-      if (forceExitTimer) clearTimeout(forceExitTimer);
-      onExit(0);
+    await new Promise<void>((resolve) => {
+      try {
+        httpServer.close(() => resolve());
+      } catch {
+        resolve();
+      }
     });
+
+    exitOnce(0);
   };
 }
 

@@ -230,6 +230,52 @@ describe("beamcode entrypoint helpers", () => {
       expect(onExit).toHaveBeenCalledWith(0);
     });
 
+    it("starts all stoppers before awaiting completion", async () => {
+      let resolveSessionStop: (() => void) | undefined;
+      const sessionStopPromise = new Promise<void>((resolve) => {
+        resolveSessionStop = resolve;
+      });
+      const { deps, calls, onExit } = buildDeps({
+        sessionCoordinator: {
+          stop: vi.fn(() => {
+            calls.push("session");
+            return sessionStopPromise;
+          }),
+        },
+      });
+      const shutdown = createShutdownHandler(deps);
+      const shutdownPromise = shutdown();
+
+      await Promise.resolve();
+      expect(calls).toEqual(["session", "cloudflared", "daemon"]);
+
+      resolveSessionStop?.();
+      await shutdownPromise;
+      expect(onExit).toHaveBeenCalledWith(0);
+    });
+
+    it("awaits HTTP close callback before exiting", async () => {
+      let closeCallback: (() => void) | undefined;
+      const { deps, onExit } = buildDeps({
+        httpServer: {
+          close: vi.fn((cb: () => void) => {
+            closeCallback = cb;
+          }),
+        },
+      });
+      const shutdown = createShutdownHandler(deps);
+      const shutdownPromise = shutdown();
+
+      await vi.waitFor(() => {
+        expect(closeCallback).toBeDefined();
+      });
+      expect(onExit).not.toHaveBeenCalled();
+
+      closeCallback?.();
+      await shutdownPromise;
+      expect(onExit).toHaveBeenCalledWith(0);
+    });
+
     it("forces exit on second invocation", async () => {
       const { deps, onExit, logger } = buildDeps({
         sessionCoordinator: { stop: vi.fn(() => new Promise(() => {})) },
