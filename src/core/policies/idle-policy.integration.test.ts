@@ -130,4 +130,112 @@ describe("IdlePolicy", () => {
 
     expect(bridge.closeSession).not.toHaveBeenCalled();
   });
+
+  it("skips sessions with active backend connections", async () => {
+    const bridge = {
+      getAllSessions: vi.fn(() => [{ session_id: "s4" }]),
+      getSession: vi.fn(() => ({
+        id: "s4",
+        cliConnected: true,
+        consumerCount: 0,
+        pendingPermissions: [],
+        consumers: [],
+        messageHistoryLength: 0,
+        state: { session_id: "s4" },
+        lastStatus: null,
+        lastActivity: Date.now() - 200_000,
+      })),
+      applyPolicyCommand: vi.fn(),
+      closeSession: vi.fn(async () => {}),
+    } as any;
+
+    const reaper = new IdlePolicy({
+      bridge,
+      logger: { info: vi.fn(), warn: vi.fn() } as any,
+      idleSessionTimeoutMs: 100,
+      domainEvents: new DomainEventBus(),
+    });
+
+    reaper.start();
+    await vi.advanceTimersByTimeAsync(1100);
+    await Promise.resolve();
+
+    expect(bridge.closeSession).not.toHaveBeenCalled();
+    expect(bridge.applyPolicyCommand).not.toHaveBeenCalled();
+    reaper.stop();
+  });
+
+  it("logs close failures and continues reaping remaining idle sessions", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn() } as any;
+    const bridge = {
+      getAllSessions: vi.fn(() => [{ session_id: "s5-a" }, { session_id: "s5-b" }]),
+      getSession: vi.fn((id: string) => ({
+        id,
+        cliConnected: false,
+        consumerCount: 0,
+        pendingPermissions: [],
+        consumers: [],
+        messageHistoryLength: 0,
+        state: { session_id: id },
+        lastStatus: null,
+        lastActivity: Date.now() - 200_000,
+      })),
+      applyPolicyCommand: vi.fn(),
+      closeSession: vi.fn(async (sessionId: string) => {
+        if (sessionId === "s5-a") throw new Error("close failed");
+      }),
+    } as any;
+
+    const reaper = new IdlePolicy({
+      bridge,
+      logger,
+      idleSessionTimeoutMs: 100,
+      domainEvents: new DomainEventBus(),
+    });
+
+    reaper.start();
+    await vi.advanceTimersByTimeAsync(1100);
+    await Promise.resolve();
+
+    expect(bridge.closeSession).toHaveBeenCalledWith("s5-a");
+    expect(bridge.closeSession).toHaveBeenCalledWith("s5-b");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to close idle session s5-a"),
+      expect.objectContaining({ error: expect.any(Error) }),
+    );
+    reaper.stop();
+  });
+
+  it("does not start when idleSessionTimeoutMs is 0", async () => {
+    const bridge = {
+      getAllSessions: vi.fn(() => [{ session_id: "s6" }]),
+      getSession: vi.fn(() => ({
+        id: "s6",
+        cliConnected: false,
+        consumerCount: 0,
+        pendingPermissions: [],
+        consumers: [],
+        messageHistoryLength: 0,
+        state: { session_id: "s6" },
+        lastStatus: null,
+        lastActivity: Date.now() - 200_000,
+      })),
+      applyPolicyCommand: vi.fn(),
+      closeSession: vi.fn(async () => {}),
+    } as any;
+
+    const reaper = new IdlePolicy({
+      bridge,
+      logger: { info: vi.fn(), warn: vi.fn() } as any,
+      idleSessionTimeoutMs: 0,
+      domainEvents: new DomainEventBus(),
+    });
+
+    reaper.start();
+    await vi.advanceTimersByTimeAsync(5000);
+    await Promise.resolve();
+
+    expect(bridge.closeSession).not.toHaveBeenCalled();
+    expect(bridge.applyPolicyCommand).not.toHaveBeenCalled();
+  });
 });
