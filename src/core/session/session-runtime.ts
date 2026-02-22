@@ -547,6 +547,7 @@ export class SessionRuntime {
   }
 
   sendSetModel(model: string): void {
+    if (!this.session.backendSession) return;
     this.sendControlRequest({ type: "set_model", model });
     // Optimistically update session state — the backend never sends a
     // configuration_change back, so we must reflect the change ourselves.

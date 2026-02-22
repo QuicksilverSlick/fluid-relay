@@ -501,6 +501,19 @@ describe("SessionRuntime", () => {
     );
   });
 
+  it("sendSetModel does not update state or broadcast when backendSession is null", () => {
+    const session = createMockSession({ id: "s1" });
+    session.backendSession = null;
+    session.state = { ...session.state, model: "claude-sonnet-4-6" };
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.sendSetModel("claude-haiku-4-5");
+
+    expect(session.state.model).toBe("claude-sonnet-4-6");
+    expect(deps.broadcaster.broadcast).not.toHaveBeenCalled();
+  });
+
   it("delegates programmatic slash execution to slash service", async () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
