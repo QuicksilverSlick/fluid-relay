@@ -28,7 +28,7 @@ import { resolveConfig } from "../types/config.js";
 import type { BridgeEventMap } from "../types/events.js";
 import type { SessionSnapshot, SessionState } from "../types/session-state.js";
 import { noopLogger } from "../utils/noop-logger.js";
-import { BackendConnector } from "./backend-connector.js";
+import { BackendConnector } from "./backend/backend-connector.js";
 import { BackendApi } from "./bridge/backend-api.js";
 import { forwardBridgeEventWithLifecycle } from "./bridge/bridge-event-forwarder.js";
 import {

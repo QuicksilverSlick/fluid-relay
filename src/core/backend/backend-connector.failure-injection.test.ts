@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FailureInjectionBackendAdapter } from "../testing/failure-injection-adapter.js";
+import { FailureInjectionBackendAdapter } from "../../testing/failure-injection-adapter.js";
 import { BackendConnector } from "./backend-connector.js";
 
 function createSession(id: string) {

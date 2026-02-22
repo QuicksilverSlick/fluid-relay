@@ -1,6 +1,6 @@
 // ─── Class exports ───────────────────────────────────────────────────────────
 
-export { BackendConnector } from "./backend-connector.js";
+export { BackendConnector } from "./backend/backend-connector.js";
 export { CapabilitiesPolicy } from "./capabilities-policy.js";
 export { CliGateway } from "./cli-gateway.js";
 export { ConsumerGateway } from "./consumer/consumer-gateway.js";

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AdapterResolver } from "../adapters/adapter-resolver.js";
+import type { AdapterResolver } from "../../adapters/adapter-resolver.js";
+import type { BackendAdapter, BackendSession } from "../interfaces/backend-adapter.js";
 import { BackendConnector } from "./backend-connector.js";
-import type { BackendAdapter, BackendSession } from "./interfaces/backend-adapter.js";
 
 function mockAdapter(name: string): BackendAdapter {
   return {

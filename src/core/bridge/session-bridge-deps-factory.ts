@@ -4,7 +4,7 @@ import type { MetricsCollector } from "../../interfaces/metrics.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { InitializeCommand } from "../../types/cli-messages.js";
 import type { BridgeEventMap } from "../../types/events.js";
-import type { BackendConnectorDeps } from "../backend-connector.js";
+import type { BackendConnectorDeps } from "../backend/backend-connector.js";
 import type { CapabilitiesPolicy } from "../capabilities-policy.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { ConsumerGatekeeper } from "../consumer/consumer-gatekeeper.js";

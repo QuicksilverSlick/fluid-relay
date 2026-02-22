@@ -7,18 +7,18 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CLIMessage } from "../types/cli-messages.js";
-import type { BackendConnectorDeps } from "./backend-connector.js";
-import { BackendConnector } from "./backend-connector.js";
+import type { CLIMessage } from "../../types/cli-messages.js";
 import type {
   BackendAdapter,
   BackendSession,
   ConnectOptions,
-} from "./interfaces/backend-adapter.js";
-import { MessageTracerImpl, type TraceEvent } from "./message-tracer.js";
-import type { Session } from "./session-repository.js";
-import type { UnifiedMessage } from "./types/unified-message.js";
-import { createUnifiedMessage } from "./types/unified-message.js";
+} from "../interfaces/backend-adapter.js";
+import { MessageTracerImpl, type TraceEvent } from "../message-tracer.js";
+import type { Session } from "../session-repository.js";
+import type { UnifiedMessage } from "../types/unified-message.js";
+import { createUnifiedMessage } from "../types/unified-message.js";
+import type { BackendConnectorDeps } from "./backend-connector.js";
+import { BackendConnector } from "./backend-connector.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
