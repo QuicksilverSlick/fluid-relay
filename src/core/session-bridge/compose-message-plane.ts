@@ -81,7 +81,10 @@ export function composeMessagePlane({
   const queueHandler = new MessageQueueHandler(
     broadcaster,
     (sessionId, content, opts) => sendUserMessage(sessionId, content, opts),
-    createQueueStateAccessors((session) => runtime(session)),
+    createQueueStateAccessors(
+      (session) => runtime(session),
+      (session) => persistenceService.persistSync(session),
+    ),
   );
   const lifecycleService = new SessionLifecycleService({
     store,

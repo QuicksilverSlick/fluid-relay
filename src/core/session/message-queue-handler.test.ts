@@ -73,6 +73,7 @@ describe("MessageQueueHandler", () => {
       expect(queued).toEqual(expect.objectContaining({ content: "queued text" }));
       expect(session.queuedMessage).toBeNull();
 
+      queued = null;
       status = null;
       handler.handleQueueMessage(session, { type: "queue_message", content: "immediate" }, ws);
       expect(sendUserMessage).toHaveBeenCalledWith("sess-1", "immediate", { images: undefined });
@@ -157,6 +158,25 @@ describe("MessageQueueHandler", () => {
 
       // Original message should be unchanged
       expect(session.queuedMessage!.content).toBe("first");
+    });
+
+    it("rejects when a message is already queued even if status is idle", () => {
+      const { handler, sendUserMessage, session, ws } = setup();
+      session.lastStatus = "idle";
+      session.queuedMessage = {
+        consumerId: "user-1",
+        displayName: "Alice",
+        content: "existing",
+        queuedAt: Date.now(),
+      };
+
+      handler.handleQueueMessage(session, { type: "queue_message", content: "new" }, ws);
+
+      expect(sendUserMessage).not.toHaveBeenCalled();
+      const error = findMessage(ws, "error");
+      expect(error).toBeDefined();
+      expect(error.message).toContain("already queued");
+      expect(session.queuedMessage.content).toBe("existing");
     });
 
     it("is a silent no-op when ws has no identity", () => {

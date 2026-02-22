@@ -60,14 +60,17 @@ export function createCapabilitiesPolicyStateAccessors(
 
 export function createQueueStateAccessors(
   runtime: (session: Session) => SessionRuntime,
+  onQueuedMessageSet?: (session: Session) => void,
 ): QueueStateAccessors {
   return {
     getLastStatus: (session: Session) => runtime(session).getLastStatus(),
     setLastStatus: (session: Session, status: Session["lastStatus"]) =>
       runtime(session).setLastStatus(status),
     getQueuedMessage: (session: Session) => runtime(session).getQueuedMessage(),
-    setQueuedMessage: (session: Session, queued: Session["queuedMessage"]) =>
-      runtime(session).setQueuedMessage(queued),
+    setQueuedMessage: (session: Session, queued: Session["queuedMessage"]) => {
+      runtime(session).setQueuedMessage(queued);
+      onQueuedMessageSet?.(session);
+    },
     getConsumerIdentity: (session: Session, ws: WebSocketLike) =>
       runtime(session).getConsumerIdentity(ws),
   };

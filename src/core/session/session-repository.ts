@@ -191,6 +191,7 @@ export class SessionRepository {
       pendingPermissions?: Map<string, PermissionRequest>;
       messageHistory?: ConsumerMessage[];
       pendingMessages?: UnifiedMessage[];
+      queuedMessage?: QueuedMessage | null;
     },
   ): Session {
     return {
@@ -204,7 +205,7 @@ export class SessionRepository {
       pendingPermissions: overrides?.pendingPermissions ?? new Map(),
       messageHistory: overrides?.messageHistory ?? [],
       pendingMessages: overrides?.pendingMessages ?? [],
-      queuedMessage: null,
+      queuedMessage: overrides?.queuedMessage ?? null,
       lastStatus: null,
       lastActivity: Date.now(),
       pendingInitialize: null,
@@ -226,6 +227,21 @@ export class SessionRepository {
       messageHistory: session.messageHistory,
       pendingMessages: session.pendingMessages,
       pendingPermissions: Array.from(session.pendingPermissions.entries()),
+      queuedMessage: session.queuedMessage,
+      adapterName: session.adapterName,
+    });
+  }
+
+  /** Persist a session snapshot to disk synchronously (critical state writes). */
+  persistSync(session: Session): void {
+    if (!this.storage) return;
+    this.storage.saveSync({
+      id: session.id,
+      state: session.state,
+      messageHistory: session.messageHistory,
+      pendingMessages: session.pendingMessages,
+      pendingPermissions: Array.from(session.pendingPermissions.entries()),
+      queuedMessage: session.queuedMessage,
       adapterName: session.adapterName,
     });
   }
@@ -243,6 +259,7 @@ export class SessionRepository {
         pendingPermissions: new Map(p.pendingPermissions || []),
         messageHistory: p.messageHistory || [],
         pendingMessages: (p.pendingMessages || []) as UnifiedMessage[],
+        queuedMessage: (p.queuedMessage ?? null) as QueuedMessage | null,
       });
 
       this.sessions.set(p.id, session);

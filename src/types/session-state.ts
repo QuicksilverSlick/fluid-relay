@@ -121,6 +121,14 @@ export interface PersistedSession {
   /** UnifiedMessage[] after schema v2; string[] (NDJSON) in legacy v1 data. */
   pendingMessages: unknown[];
   pendingPermissions: [string, PermissionRequest][];
+  /** Single-slot queued user message waiting for idle dispatch. */
+  queuedMessage?: {
+    consumerId: string;
+    displayName: string;
+    content: string;
+    images?: { media_type: string; data: string }[];
+    queuedAt: number;
+  } | null;
   archived?: boolean;
   adapterName?: string;
   schemaVersion?: number;

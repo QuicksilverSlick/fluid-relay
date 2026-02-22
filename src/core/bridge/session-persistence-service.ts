@@ -28,6 +28,10 @@ export class SessionPersistenceService {
     this.store.persist(session);
   }
 
+  persistSync(session: Session): void {
+    this.store.persistSync(session);
+  }
+
   getStorage(): SessionStorage | null {
     return this.store.getStorage();
   }
