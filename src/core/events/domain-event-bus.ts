@@ -8,7 +8,7 @@
  * @module SessionControl
  */
 
-import type { BridgeEventMap, LauncherEventMap } from "../types/events.js";
+import type { BridgeEventMap, LauncherEventMap } from "../../types/events.js";
 import type {
   DomainBridgeEventType,
   DomainEvent,
@@ -16,7 +16,7 @@ import type {
   DomainEventPayload,
   DomainEventSource,
   DomainEventType,
-} from "./interfaces/domain-events.js";
+} from "../interfaces/domain-events.js";
 import { TypedEventEmitter } from "./typed-emitter.js";
 
 export class DomainEventBus extends TypedEventEmitter<DomainEventMap> {

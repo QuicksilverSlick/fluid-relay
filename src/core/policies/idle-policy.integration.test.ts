@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DomainEventBus } from "../domain-event-bus.js";
+import { DomainEventBus } from "../events/domain-event-bus.js";
 import { IdlePolicy } from "./idle-policy.js";
 
 describe("IdlePolicy", () => {

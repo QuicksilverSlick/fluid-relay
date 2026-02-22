@@ -26,7 +26,8 @@ export { CURRENT_SCHEMA_VERSION, migrateSession } from "./adapters/state-migrato
 export type { StructuredLoggerOptions } from "./adapters/structured-logger.js";
 export { LogLevel, StructuredLogger } from "./adapters/structured-logger.js";
 export { CapabilitiesPolicy } from "./core/capabilities-policy.js";
-export { DomainEventBus } from "./core/domain-event-bus.js";
+export { DomainEventBus } from "./core/events/domain-event-bus.js";
+export { TypedEventEmitter } from "./core/events/typed-emitter.js";
 export type {
   BackendAdapter,
   BackendCapabilities,
@@ -63,7 +64,6 @@ export { SessionCoordinator } from "./core/session-coordinator.js";
 export { SimpleSessionRegistry } from "./core/simple-session-registry.js";
 export type { SlashCommandResult } from "./core/slash/slash-command-executor.js";
 export { SlashCommandExecutor } from "./core/slash/slash-command-executor.js";
-export { TypedEventEmitter } from "./core/typed-emitter.js";
 // Core types
 export type {
   CoreSessionState,

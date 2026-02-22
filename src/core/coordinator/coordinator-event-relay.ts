@@ -9,7 +9,7 @@
  */
 
 import type { BridgeEventMap, LauncherEventMap } from "../../types/events.js";
-import type { DomainEventBus } from "../domain-event-bus.js";
+import type { DomainEventBus } from "../events/domain-event-bus.js";
 import type { DomainEventMap } from "../interfaces/domain-events.js";
 
 /**

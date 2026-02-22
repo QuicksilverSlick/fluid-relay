@@ -1,6 +1,6 @@
 import type { LauncherEventMap } from "../../types/events.js";
 import type { LaunchOptions, SessionInfo } from "../../types/session-state.js";
-import type { TypedEventEmitter } from "../typed-emitter.js";
+import type { TypedEventEmitter } from "../events/typed-emitter.js";
 import type { SessionRegistry } from "./session-registry.js";
 
 // Re-export for convenience

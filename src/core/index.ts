@@ -4,7 +4,8 @@ export { BackendConnector } from "./backend/backend-connector.js";
 export { CapabilitiesPolicy } from "./capabilities-policy.js";
 export { CliGateway } from "./cli-gateway.js";
 export { ConsumerGateway } from "./consumer/consumer-gateway.js";
-export { DomainEventBus } from "./domain-event-bus.js";
+export { DomainEventBus } from "./events/domain-event-bus.js";
+export { TypedEventEmitter } from "./events/typed-emitter.js";
 // ─── Interface / type re-exports ─────────────────────────────────────────────
 export type {
   BackendAdapter,
@@ -40,7 +41,6 @@ export { SessionRepository } from "./session/session-repository.js";
 export { SessionRuntime } from "./session/session-runtime.js";
 export { SessionBridge } from "./session-bridge.js";
 export { SessionCoordinator, type SessionCoordinatorOptions } from "./session-coordinator.js";
-export { TypedEventEmitter } from "./typed-emitter.js";
 export type {
   CoreSessionState,
   DevToolSessionState,

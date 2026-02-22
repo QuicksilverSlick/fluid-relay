@@ -55,6 +55,7 @@ import { CapabilitiesPolicy } from "./capabilities-policy.js";
 import { ConsumerBroadcaster, MAX_CONSUMER_MESSAGE_SIZE } from "./consumer/consumer-broadcaster.js";
 import { ConsumerGatekeeper, type RateLimiterFactory } from "./consumer/consumer-gatekeeper.js";
 import { ConsumerGateway } from "./consumer/consumer-gateway.js";
+import { TypedEventEmitter } from "./events/typed-emitter.js";
 import { GitInfoTracker } from "./git-info-tracker.js";
 import type { AdapterResolver } from "./interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "./interfaces/backend-adapter.js";
@@ -68,7 +69,6 @@ import type { SessionRuntime } from "./session/session-runtime.js";
 import { SlashCommandRegistry } from "./slash/slash-command-registry.js";
 import type { SlashCommandService } from "./slash/slash-command-service.js";
 import { TeamToolCorrelationBuffer } from "./team/team-tool-correlation.js";
-import { TypedEventEmitter } from "./typed-emitter.js";
 import type { UnifiedMessage } from "./types/unified-message.js";
 
 // ─── SessionBridge ───────────────────────────────────────────────────────────

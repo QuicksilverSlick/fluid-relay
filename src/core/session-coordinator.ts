@@ -31,7 +31,8 @@ import { BackendRecoveryService } from "./coordinator/backend-recovery-service.j
 import { CoordinatorEventRelay } from "./coordinator/coordinator-event-relay.js";
 import { ProcessLogService } from "./coordinator/process-log-service.js";
 import { StartupRestoreService } from "./coordinator/startup-restore-service.js";
-import { DomainEventBus } from "./domain-event-bus.js";
+import { DomainEventBus } from "./events/domain-event-bus.js";
+import { TypedEventEmitter } from "./events/typed-emitter.js";
 import type { CliAdapterName } from "./interfaces/adapter-names.js";
 import type { AdapterResolver } from "./interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "./interfaces/backend-adapter.js";
@@ -47,7 +48,6 @@ import { IdlePolicy } from "./policies/idle-policy.js";
 import { ReconnectPolicy } from "./policies/reconnect-policy.js";
 import { SessionTransportHub } from "./session/session-transport-hub.js";
 import { SessionBridge } from "./session-bridge.js";
-import { TypedEventEmitter } from "./typed-emitter.js";
 
 /**
  * Facade wiring SessionBridge + ClaudeLauncher together.
