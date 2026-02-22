@@ -78,4 +78,83 @@ describe("composeConsumerPlane", () => {
       message: { type: "user_message", content: "hello" },
     });
   });
+
+  it("removes failing consumer sockets through runtime accessors", () => {
+    const store = new SessionRepository(null as SessionStorage | null, {
+      createCorrelationBuffer: () => new TeamToolCorrelationBuffer(),
+      createRegistry: () => new SlashCommandRegistry(),
+    });
+    const session = store.getOrCreate("s-consumer-fail");
+    const emit = vi.fn();
+
+    const failingSocket = {
+      send: vi.fn(() => {
+        throw new Error("send failed");
+      }),
+      close: vi.fn(),
+      bufferedAmount: 0,
+    };
+    session.consumerSockets.set(failingSocket as any, {
+      userId: "u-fail",
+      displayName: "Failing Socket",
+      role: "participant",
+    });
+
+    const runtime = {
+      allocateAnonymousIdentityIndex: vi.fn(() => 0),
+      addConsumer: vi.fn((socket, identity) => session.consumerSockets.set(socket, identity)),
+      removeConsumer: vi.fn((socket) => {
+        const identity = session.consumerSockets.get(socket);
+        session.consumerSockets.delete(socket);
+        return identity;
+      }),
+      getConsumerSockets: vi.fn(() => session.consumerSockets),
+      getConsumerIdentity: vi.fn((socket) => session.consumerSockets.get(socket)),
+      getConsumerCount: vi.fn(() => session.consumerSockets.size),
+      getState: vi.fn(() => session.state),
+      getMessageHistory: vi.fn(() => []),
+      getPendingPermissions: vi.fn(() => []),
+      getQueuedMessage: vi.fn(() => null),
+      isBackendConnected: vi.fn(() => true),
+      checkRateLimit: vi.fn(() => true),
+    };
+
+    const plane = composeConsumerPlane({
+      store,
+      logger: noopLogger as Logger,
+      tracer: noopTracer,
+      config: {
+        port: 9414,
+        maxMessageHistoryLength: 300,
+        authTimeoutMs: 10000,
+        allowOrigins: [],
+        blockedEnvVars: [],
+        showRawErrors: false,
+        trace: false,
+        traceDir: ".",
+        traceLevel: "smart",
+        traceAllowSensitive: false,
+        maxInterruptsPerSecond: 5,
+      },
+      metrics: null,
+      gitResolver: null,
+      authenticator: undefined,
+      rateLimiterFactory: undefined,
+      runtime: () => runtime as any,
+      routeConsumerMessage: vi.fn(),
+      emit: emit as any,
+    });
+
+    plane.broadcaster.broadcast(session, {
+      type: "error",
+      message: "broadcast failure path",
+    });
+
+    expect(runtime.removeConsumer).toHaveBeenCalledWith(failingSocket);
+    expect(session.consumerSockets.has(failingSocket as any)).toBe(false);
+    expect(emit).toHaveBeenCalledWith("message:outbound", {
+      sessionId: "s-consumer-fail",
+      message: { type: "error", message: "broadcast failure path" },
+    });
+  });
 });
