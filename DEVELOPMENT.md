@@ -261,7 +261,7 @@ A `-fieldName` entry in the `diff` array means the field was **silently dropped*
 | `src/e2e/helpers.ts` | `attachTrace()`, `dumpTraceOnFailure()`, `getTrace()` |
 | `src/e2e/session-coordinator-setup.ts` | `setupRealSession()` — coordinator with trace attached |
 | `src/e2e/prereqs.ts` | Binary/auth detection, auto-skip logic |
-| `src/e2e/shared-real-e2e-tests.ts` | Shared parameterised test factory (`registerSharedSmokeTests`, `registerSharedFullTests`) |
+| `src/e2e/shared-e2e-tests.ts` | Shared parameterised test factory (`registerSharedSmokeTests`, `registerSharedFullTests`) |
 | `src/core/messaging/message-tracer.ts` | `MessageTracerImpl` for T1–T4 boundary tracing |
 
 ### Shared Test Helpers
