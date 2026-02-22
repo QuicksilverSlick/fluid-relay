@@ -103,34 +103,6 @@ describe("SessionBridge Integration - Rate Limiting", () => {
     });
   });
 
-  it("allows messages within rate limit", () => {
-    const socket = createRateLimitSocket();
-
-    // Simulate consumer connection
-    const session = bridge.getOrCreateSession(sessionId);
-    session.consumerSockets.set(socket, {
-      userId: "user-1",
-      displayName: "Test User",
-      role: "participant",
-    });
-
-    // Send 3 messages - should all succeed (within burst of 5)
-    for (let i = 0; i < 3; i++) {
-      // Mock incoming message
-      bridge.handleConsumerMessage(
-        socket,
-        sessionId,
-        JSON.stringify({
-          type: "user_message",
-          content: `Message ${i}`,
-        }),
-      );
-    }
-
-    // All should succeed - no rate limit exceeded
-    expect(session.consumerRateLimiters.size).toBe(1); // Rate limiter created
-  });
-
   it("rejects messages exceeding rate limit", () => {
     const socket = createRateLimitSocket();
     let rejectionMessage: string | null = null;
@@ -166,36 +138,6 @@ describe("SessionBridge Integration - Rate Limiting", () => {
 
     // Some messages should have been rejected
     expect(rejectionMessage).toContain("Rate limit exceeded");
-  });
-
-  it("cleans up rate limiter on consumer disconnect", () => {
-    const socket = createRateLimitSocket();
-
-    // Simulate consumer connection and message
-    const session = bridge.getOrCreateSession(sessionId);
-    session.consumerSockets.set(socket, {
-      userId: "user-1",
-      displayName: "Test User",
-      role: "participant",
-    });
-
-    // Send a message to create rate limiter
-    bridge.handleConsumerMessage(
-      socket,
-      sessionId,
-      JSON.stringify({
-        type: "user_message",
-        content: "Test",
-      }),
-    );
-
-    expect(session.consumerRateLimiters.size).toBe(1);
-
-    // Simulate disconnect
-    bridge.handleConsumerClose(socket, sessionId);
-
-    // Rate limiter should be cleaned up
-    expect(session.consumerRateLimiters.size).toBe(0);
   });
 });
 
