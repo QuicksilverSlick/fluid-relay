@@ -175,6 +175,16 @@ describe("createBeamcodeServer", () => {
     expect(res.headers.get("location")).toBe("/?session=new-session");
   });
 
+  it("setActiveSessionId can clear redirect target", async () => {
+    await startServer({ activeSessionId: "old-session" });
+    server.setActiveSessionId("");
+
+    const res = await fetch(`${baseUrl}/`, { redirect: "manual" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+    expect(handleConsumerHtml).toHaveBeenCalled();
+  });
+
   it("throws when sessionCoordinator is not provided", () => {
     expect(() =>
       createBeamcodeServer({
