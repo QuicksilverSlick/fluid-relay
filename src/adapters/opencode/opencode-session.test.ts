@@ -307,6 +307,57 @@ describe("OpencodeSession", () => {
     expect(result.value.metadata.delta).toBe("Hello");
   });
 
+  it("reasoning part is tracked and excluded from assistant text reconstruction", async () => {
+    const iter = session.messages[Symbol.asyncIterator]();
+
+    // Push a reasoning part — triggers the reasoning tracking branch (metadata.reasoning === true)
+    sub.push({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          type: "reasoning",
+          id: "part-r1",
+          messageID: "m-reasoning",
+          sessionID: "opc-session-abc",
+          text: "Let me think...",
+          time: { created: 0, updated: 0 },
+        },
+        delta: "Let me think...",
+      },
+    });
+
+    const streamResult = await iter.next();
+    expect(streamResult.done).toBe(false);
+    expect(streamResult.value.type).toBe("stream_event");
+    expect(streamResult.value.metadata.reasoning).toBe(true);
+
+    // Now push the final assistant message — it should NOT include the reasoning text
+    sub.push({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "m-reasoning",
+          sessionID: "opc-session-abc",
+          role: "assistant",
+          time: { created: 5000, completed: 6000 },
+          parentID: "m-parent",
+          modelID: "claude-3-5-sonnet",
+          providerID: "anthropic",
+          agent: "default",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0.001,
+          tokens: { input: 1, output: 2, reasoning: 10, cache: { read: 0, write: 0 } },
+          finish: "end_turn",
+        },
+      },
+    });
+
+    const assistantResult = await iter.next();
+    expect(assistantResult.value.type).toBe("assistant");
+    // Reasoning part was NOT buffered as text, so content is empty (no text reconstruction)
+    expect(assistantResult.value.content).toHaveLength(0);
+  });
+
   it("messages yields stream_event for message.part.delta text chunks", async () => {
     const iter = session.messages[Symbol.asyncIterator]();
 

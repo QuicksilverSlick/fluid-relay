@@ -39,4 +39,37 @@ describe("IdlePolicy", () => {
     expect(bridge.closeSession).toHaveBeenCalledWith("s1");
     policy.stop();
   });
+
+  it("stop() clears eventSweepTimer if pending", async () => {
+    vi.useFakeTimers();
+    const domainEvents = new DomainEventBus();
+    const bridge = {
+      getAllSessions: vi.fn(() => []),
+      getSession: vi.fn(() => null),
+      closeSession: vi.fn(async () => undefined),
+      applyPolicyCommand: vi.fn(),
+    } as any;
+    const logger = { info: vi.fn(), warn: vi.fn() } as any;
+
+    const policy = new IdlePolicy({
+      bridge,
+      logger,
+      idleSessionTimeoutMs: 10_000,
+      domainEvents,
+    });
+
+    policy.start();
+
+    // Trigger a domain event to schedule eventSweepTimer (via requestEventSweep)
+    domainEvents.emit("consumer:disconnected", { payload: {} } as any);
+
+    // stop() before the eventSweepTimer fires — should clear it without crashing
+    policy.stop();
+
+    // Advance time — no sweep should run (policy is stopped)
+    await vi.advanceTimersByTimeAsync(100);
+
+    // Verify no sessions were processed (bridge not called with sessions)
+    expect(bridge.closeSession).not.toHaveBeenCalled();
+  });
 });

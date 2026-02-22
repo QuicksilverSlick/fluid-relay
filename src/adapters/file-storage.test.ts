@@ -187,6 +187,18 @@ describe("FileStorage", () => {
     it("does not throw when removing non-existent session", () => {
       expect(() => storage.remove(VALID_UUID)).not.toThrow();
     });
+
+    it("cancels pending debounce timer when removing a session mid-debounce", async () => {
+      // Start a debounced save, then immediately remove — the save should not happen
+      storage.save(makeSession(VALID_UUID));
+      storage.remove(VALID_UUID);
+
+      // Wait past the debounce period
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Session should not have been written (timer was cancelled)
+      expect(storage.load(VALID_UUID)).toBeNull();
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -283,6 +295,12 @@ describe("FileStorage", () => {
   // -----------------------------------------------------------------------
   // Launcher state
   // -----------------------------------------------------------------------
+
+  describe("directory getter", () => {
+    it("returns the storage directory", () => {
+      expect(storage.directory).toBe(dir);
+    });
+  });
 
   describe("launcher state", () => {
     it("saves and loads launcher state", () => {

@@ -87,4 +87,27 @@ describe("parseSseStream", () => {
     }
     expect(events).toHaveLength(0);
   });
+
+  it("parses data field without space after colon (data:value)", async () => {
+    const stream = textStream("data:no-space-after-colon\n\n");
+    const events: SseEvent[] = [];
+    for await (const event of parseSseStream(stream)) {
+      events.push(event);
+    }
+    expect(events).toHaveLength(1);
+    expect(events[0].data).toBe("no-space-after-colon");
+  });
+
+  it("yields partial data at stream end (single newline, no closing double newline)", async () => {
+    // Data line with one trailing \n but no \n\n event separator.
+    // The line is processed into dataLines, and when the stream ends the
+    // finalizer block (line 43-44 of sse-parser.ts) yields it.
+    const stream = textStream("data: unterminated\n");
+    const events: SseEvent[] = [];
+    for await (const event of parseSseStream(stream)) {
+      events.push(event);
+    }
+    expect(events).toHaveLength(1);
+    expect(events[0].data).toBe("unterminated");
+  });
 });

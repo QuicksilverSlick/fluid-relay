@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonState } from "./state-file.js";
 import { readState, updateHeartbeat, writeState } from "./state-file.js";
 
@@ -71,5 +71,20 @@ describe("state-file", () => {
 
     // No file should have been created
     await expect(stat(missingPath)).rejects.toThrow();
+  });
+
+  it("readState returns null and logs for corrupt JSON", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(statePath, "not valid json!!!!", "utf-8");
+
+    const logger = { error: vi.fn(), warn: vi.fn() } as any;
+    const result = await readState(statePath, logger);
+
+    expect(result).toBeNull();
+    expect(logger.error).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to read state file",
+      expect.objectContaining({ statePath }),
+    );
   });
 });
