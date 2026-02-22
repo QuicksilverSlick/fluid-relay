@@ -191,24 +191,24 @@ The core is built around a **per-session runtime actor** (`SessionRuntime`) that
     │                  │
     ▼                  ▼
 ┌────────┐  ┌──────────────────────────────────────────────────────────┐
-│Domain  │  │               SessionBridge (~500L)                       │
-│EventBus│  │                                                           │
-└────────┘  │  Wires four bounded contexts, delegates to extracted      │
-            │  services in src/core/bridge/ (12 focused modules)        │
+│Domain  │  │               SessionBridge (~500L)                      │
+│EventBus│  │                                                          │
+└────────┘  │  Wires four bounded contexts, delegates to extracted     │
+            │  services in src/core/bridge/ (12 focused modules)       │
             └───┬──────────┬──────────┬──────────┬─────────────────────┘
                 │          │          │          │
                 ▼          ▼          ▼          ▼
           ┌────────┐┌─────────┐┌─────────┐┌──────────────┐
           │Session ││Consumer ││ Backend ││   Runtime    │
-          │Reposit.││ Gateway ││Connector││   Manager   │
-          └────────┘└─────────┘└─────────┘└──────┬───────┘
-                         │          │             │
-                         ▼          ▼             ▼
-                    ┌──────────────────────────┐
-                    │    SessionRuntime        │
-                    │    (one per session)     │
-                    │    SOLE STATE OWNER      │
-                    └──────────────────────────┘
+          │Reposit.││ Gateway ││Connector││   Manager    │
+          └────────┘└─────────┘└─────────┘└────┬─────────┘
+                         │          │          │
+                         ▼          ▼          ▼
+                      ┌──────────────────────────┐
+                      │    SessionRuntime        │
+                      │    (one per session)     │
+                      │    SOLE STATE OWNER      │
+                      └──────────────────────────┘
 ```
 
 ---
