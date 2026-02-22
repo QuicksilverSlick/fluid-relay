@@ -233,6 +233,7 @@ interface TraceState {
   lastEventTime: bigint;
   lastLayer: TraceEvent["layer"];
   lastDirection: TraceEvent["direction"];
+  sessionId?: string;
   hasError: boolean;
 }
 
@@ -290,6 +291,9 @@ export class MessageTracerImpl implements MessageTracer {
   private readonly sessionSeqs = new Map<string, SessionSeq>();
   private readonly staleTraces = new Set<string>();
   private readonly errorTraces = new Set<string>();
+  private readonly staleTraceSessions = new Map<string, string>();
+  private readonly errorTraceSessions = new Map<string, string>();
+  private readonly completedTraceSessions: Array<string | undefined> = [];
   private readonly completedTraces: number[] = []; // round-trip ms values
   private staleTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -357,11 +361,15 @@ export class MessageTracerImpl implements MessageTracer {
     opts?: TraceErrorOpts,
   ): void {
     const traceId = opts?.traceId ?? this.generateTraceId();
+    const sessionId = this.resolveSessionId(traceId, opts?.sessionId);
     this.errorTraces.add(traceId);
+    if (sessionId) this.errorTraceSessions.set(traceId, sessionId);
     // Evict oldest error entries to bound memory
     if (this.errorTraces.size > MessageTracerImpl.MAX_ERRORS) {
       const it = this.errorTraces.values();
-      this.errorTraces.delete(it.next().value!);
+      const oldest = it.next().value!;
+      this.errorTraces.delete(oldest);
+      this.errorTraceSessions.delete(oldest);
     }
     this.emit({
       layer,
@@ -370,7 +378,7 @@ export class MessageTracerImpl implements MessageTracer {
       body: undefined,
       traceId,
       parentTraceId: opts?.parentTraceId,
-      sessionId: opts?.sessionId,
+      sessionId,
       error: errorStr,
       zodErrors: opts?.zodErrors,
       action: opts?.action,
@@ -381,22 +389,39 @@ export class MessageTracerImpl implements MessageTracer {
     });
   }
 
-  summary(_sessionId: string): TraceSummary {
-    // TODO: per-session tracking (currently global)
-    // Count unique error traces: those in errorTraces set plus any open traces
-    // with hasError that aren't already in errorTraces
-    const errorSet = new Set(this.errorTraces);
+  summary(sessionId: string): TraceSummary {
+    // Count unique error traces for this session: those in errorTraces plus
+    // open traces marked with hasError.
+    const errorSet = new Set<string>();
+    for (const traceId of this.errorTraces) {
+      if (this.errorTraceSessions.get(traceId) === sessionId) {
+        errorSet.add(traceId);
+      }
+    }
+    let open = 0;
     for (const [traceId, state] of this.openTraces) {
+      if (state.sessionId !== sessionId) continue;
+      open += 1;
       if (state.hasError) errorSet.add(traceId);
     }
 
-    const stale = this.staleTraces.size;
-    const complete = this.completedTraces.length;
-    const avgRoundTripMs =
-      complete > 0 ? Math.round(this.completedTraces.reduce((a, b) => a + b, 0) / complete) : 0;
+    let stale = 0;
+    for (const traceId of this.staleTraces) {
+      if (this.staleTraceSessions.get(traceId) === sessionId) stale += 1;
+    }
+
+    let complete = 0;
+    let completeLatencyTotal = 0;
+    for (let i = 0; i < this.completedTraces.length; i += 1) {
+      if (this.completedTraceSessions[i] !== sessionId) continue;
+      complete += 1;
+      completeLatencyTotal += this.completedTraces[i];
+    }
+
+    const avgRoundTripMs = complete > 0 ? Math.round(completeLatencyTotal / complete) : 0;
 
     return {
-      totalTraces: this.openTraces.size + complete + stale,
+      totalTraces: open + complete + stale,
       complete,
       stale,
       errors: errorSet.size,
@@ -489,6 +514,7 @@ export class MessageTracerImpl implements MessageTracer {
         lastEventTime: nowBigint,
         lastLayer: params.layer,
         lastDirection: params.direction,
+        sessionId: params.sessionId,
         hasError: !!params.error,
       };
       this.openTraces.set(params.traceId, state);
@@ -496,6 +522,7 @@ export class MessageTracerImpl implements MessageTracer {
       state.lastEventTime = nowBigint;
       state.lastLayer = params.layer;
       state.lastDirection = params.direction;
+      if (!state.sessionId && params.sessionId) state.sessionId = params.sessionId;
       if (params.error) state.hasError = true;
     }
 
@@ -576,12 +603,12 @@ export class MessageTracerImpl implements MessageTracer {
     ) {
       this.openTraces.delete(params.traceId);
       this.completedTraces.push(elapsedMs);
+      this.completedTraceSessions.push(state.sessionId);
       // Evict oldest entries to bound memory
       if (this.completedTraces.length > MessageTracerImpl.MAX_COMPLETED) {
-        this.completedTraces.splice(
-          0,
-          this.completedTraces.length - MessageTracerImpl.MAX_COMPLETED,
-        );
+        const overflow = this.completedTraces.length - MessageTracerImpl.MAX_COMPLETED;
+        this.completedTraces.splice(0, overflow);
+        this.completedTraceSessions.splice(0, overflow);
       }
     }
   }
@@ -607,6 +634,7 @@ export class MessageTracerImpl implements MessageTracer {
     for (const [traceId, state] of this.openTraces) {
       if (nowBigint - state.lastEventTime > thresholdNs) {
         this.staleTraces.add(traceId);
+        if (state.sessionId) this.staleTraceSessions.set(traceId, state.sessionId);
         this.openTraces.delete(traceId);
         this.writeLine(
           JSON.stringify({
@@ -625,7 +653,14 @@ export class MessageTracerImpl implements MessageTracer {
     // Evict oldest stale entries to bound memory
     while (this.staleTraces.size > MessageTracerImpl.MAX_STALE) {
       const it = this.staleTraces.values();
-      this.staleTraces.delete(it.next().value!);
+      const oldest = it.next().value!;
+      this.staleTraces.delete(oldest);
+      this.staleTraceSessions.delete(oldest);
     }
+  }
+
+  private resolveSessionId(traceId: string, optsSessionId?: string): string | undefined {
+    if (optsSessionId) return optsSessionId;
+    return this.openTraces.get(traceId)?.sessionId;
   }
 }
