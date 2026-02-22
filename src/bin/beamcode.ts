@@ -28,6 +28,7 @@ import { CloudflaredManager } from "../relay/cloudflared-manager.js";
 import { ApiKeyAuthenticator } from "../server/api-key-authenticator.js";
 import { OriginValidator } from "../server/origin-validator.js";
 import { resolvePackageVersion } from "../utils/resolve-package-version.js";
+import { pickMostRecentSessionId, reconcileActiveSessionId } from "./active-session-id.js";
 
 const version = resolvePackageVersion(import.meta.url, [
   "../../package.json",
@@ -367,9 +368,11 @@ async function main(): Promise<void> {
     tracer,
   });
 
+  let activeSessionId = "";
+
   const httpServer = createBeamcodeServer({
     sessionCoordinator,
-    activeSessionId: "",
+    activeSessionId,
     apiKey: consumerToken,
     healthContext: { version, metrics },
     prometheusCollector,
@@ -396,11 +399,32 @@ async function main(): Promise<void> {
     originValidator: new OriginValidator(),
   });
   sessionCoordinator.setServer(wsServer);
+
+  const setActiveSessionId = (nextSessionId: string) => {
+    activeSessionId = nextSessionId;
+    httpServer.setActiveSessionId(nextSessionId);
+  };
+
+  const syncActiveSessionId = () => {
+    const sessions = sessionCoordinator.registry.listSessions();
+    setActiveSessionId(reconcileActiveSessionId(activeSessionId, sessions));
+  };
+
+  // Keep root redirect target synchronized with coordinator lifecycle events.
+  sessionCoordinator.on("process:spawned", ({ sessionId }) => {
+    setActiveSessionId(sessionId);
+  });
+  sessionCoordinator.on("backend:connected", ({ sessionId }) => {
+    setActiveSessionId(sessionId);
+  });
+  sessionCoordinator.on("session:closed", () => {
+    syncActiveSessionId();
+  });
+
   await sessionCoordinator.start();
+  setActiveSessionId(pickMostRecentSessionId(sessionCoordinator.registry.listSessions()));
 
   // 7. Auto-launch a session AFTER WS is ready so the CLI can connect
-  let activeSessionId = "";
-
   if (!config.noAutoLaunch) {
     try {
       const session = await sessionCoordinator.createSession({
@@ -408,7 +432,7 @@ async function main(): Promise<void> {
         model: config.model,
         adapterName: adapterResolver.defaultName,
       });
-      activeSessionId = session.sessionId;
+      setActiveSessionId(session.sessionId);
     } catch (err) {
       console.error(
         `Error: Failed to start ${adapter.name} backend: ${err instanceof Error ? err.message : err}`,
@@ -418,8 +442,6 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   }
-
-  httpServer.setActiveSessionId(activeSessionId);
 
   // 8. Print startup banner
   const localUrl = `http://localhost:${config.port}`;
