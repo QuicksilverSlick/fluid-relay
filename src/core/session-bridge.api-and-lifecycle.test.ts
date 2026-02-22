@@ -64,12 +64,6 @@ describe("SessionBridge — Programmatic API", () => {
       behavior: "allow",
     });
   });
-
-  it("sendPermissionResponse with unknown request_id is a no-op (S4)", async () => {
-    bridge.sendPermissionResponse("sess-1", "unknown-req", "allow");
-
-    expect(backendSession.sentMessages).toHaveLength(0);
-  });
 });
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────

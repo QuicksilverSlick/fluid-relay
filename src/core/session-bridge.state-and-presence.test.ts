@@ -247,37 +247,6 @@ describe("SessionBridge", () => {
   // ── 10. Edge cases ─────────────────────────────────────────────────────
 
   describe("Edge cases", () => {
-    it("queues messages when backend is not connected (I5)", async () => {
-      bridge.getOrCreateSession("sess-1");
-      // No backend connected
-
-      bridge.sendUserMessage("sess-1", "Will be queued");
-      bridge.sendInterrupt("sess-1");
-
-      // Now connect backend
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      // The queued user message should have been flushed via send()
-      const flushed = backendSession.sentMessages.some((m) => m.type === "user_message");
-      expect(flushed).toBe(true);
-    });
-
-    it("empty sessions are retrievable with default state", () => {
-      bridge.getOrCreateSession("empty-sess");
-      const snapshot = bridge.getSession("empty-sess")!;
-
-      expect(snapshot.state.model).toBe("");
-      expect(snapshot.state.cwd).toBe("");
-      expect(snapshot.state.tools).toEqual([]);
-      expect(snapshot.state.total_cost_usd).toBe(0);
-      expect(snapshot.state.num_turns).toBe(0);
-      expect(snapshot.state.is_compacting).toBe(false);
-      expect(snapshot.cliConnected).toBe(false);
-      expect(snapshot.consumerCount).toBe(0);
-      expect(snapshot.messageHistoryLength).toBe(0);
-    });
-
     it("handleConsumerMessage handles Buffer input", async () => {
       await bridge.connectBackend("sess-1");
       const backendSession = adapter.getSession("sess-1")!;

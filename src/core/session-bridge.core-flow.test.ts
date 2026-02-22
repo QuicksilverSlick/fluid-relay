@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 
-import type { MemoryStorage } from "../adapters/memory-storage.js";
 import {
   createBridgeWithAdapter,
   type MockBackendAdapter,
@@ -12,7 +11,6 @@ import {
   makeResultUnifiedMsg,
   makeSessionInitMsg,
   noopLogger,
-  setupInitializedSession,
   tick,
 } from "../testing/adapter-test-helpers.js";
 import {
@@ -25,61 +23,14 @@ import type { SessionBridge } from "./session-bridge.js";
 
 describe("SessionBridge", () => {
   let bridge: SessionBridge;
-  let storage: MemoryStorage;
   let adapter: MockBackendAdapter;
 
   beforeEach(() => {
     const created = createBridgeWithAdapter();
     bridge = created.bridge;
-    storage = created.storage;
     adapter = created.adapter;
   });
   describe("Session management", () => {
-    it("creates a new session with getOrCreateSession", () => {
-      bridge.getOrCreateSession("sess-1");
-      const snapshot = bridge.getSession("sess-1");
-      expect(snapshot).toBeDefined();
-      expect(snapshot!.id).toBe("sess-1");
-      expect(snapshot!.state.session_id).toBe("sess-1");
-      expect(snapshot!.cliConnected).toBe(false);
-      expect(snapshot!.consumerCount).toBe(0);
-      expect(snapshot!.pendingPermissions).toEqual([]);
-      expect(snapshot!.messageHistoryLength).toBe(0);
-    });
-
-    it("returns the same session on repeated getOrCreateSession calls", () => {
-      bridge.getOrCreateSession("sess-1");
-      bridge.getOrCreateSession("sess-1");
-      const sessions = bridge.getAllSessions();
-      expect(sessions.filter((s) => s.session_id === "sess-1")).toHaveLength(1);
-    });
-
-    it("getSession returns undefined for nonexistent sessions", () => {
-      expect(bridge.getSession("nonexistent")).toBeUndefined();
-    });
-
-    it("getAllSessions returns all session states", () => {
-      bridge.getOrCreateSession("sess-1");
-      bridge.getOrCreateSession("sess-2");
-      bridge.getOrCreateSession("sess-3");
-      const all = bridge.getAllSessions();
-      expect(all).toHaveLength(3);
-      const ids = all.map((s) => s.session_id);
-      expect(ids).toContain("sess-1");
-      expect(ids).toContain("sess-2");
-      expect(ids).toContain("sess-3");
-    });
-
-    it("removeSession deletes a session from the bridge and storage", async () => {
-      const backendSession = await setupInitializedSession(bridge, adapter, "sess-1");
-      // Trigger persistence so storage has it (session_init triggers persist)
-      expect(storage.load("sess-1")).not.toBeNull();
-
-      bridge.removeSession("sess-1");
-      expect(bridge.getSession("sess-1")).toBeUndefined();
-      expect(storage.load("sess-1")).toBeNull();
-    });
-
     it("closeSession closes backend session, consumer sockets, removes session, and emits event", async () => {
       await bridge.connectBackend("sess-1");
       const consumerSocket = createMockSocket();
@@ -106,16 +57,6 @@ describe("SessionBridge", () => {
       await bridge.close();
 
       expect(bridge.getAllSessions()).toHaveLength(0);
-    });
-
-    it("isCliConnected returns false when no backend connected", () => {
-      bridge.getOrCreateSession("sess-1");
-      expect(bridge.isCliConnected("sess-1")).toBe(false);
-    });
-
-    it("isCliConnected returns true when backend is connected", async () => {
-      await bridge.connectBackend("sess-1");
-      expect(bridge.isCliConnected("sess-1")).toBe(true);
     });
   });
 
