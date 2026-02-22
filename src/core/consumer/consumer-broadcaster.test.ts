@@ -375,5 +375,32 @@ describe("ConsumerBroadcaster", () => {
 
       expect(ws.send).toHaveBeenCalled();
     });
+
+    it("broadcast() handles non-Error thrown from send (String(err) fallback)", () => {
+      const ws = createTestSocket();
+      ws.send.mockImplementation(() => {
+        throw "raw string error"; // non-Error
+      });
+      const session = sessionWithConsumers({ ws, id: identity() });
+      // Should not throw — non-Error is stringified in warning log
+      expect(() => broadcaster.broadcast(session, { type: "status_change", status: "idle" })).not.toThrow();
+    });
+
+    it("broadcastToParticipants() handles non-Error thrown from send", () => {
+      const ws = createTestSocket();
+      ws.send.mockImplementation(() => {
+        throw 42; // non-Error
+      });
+      const session = sessionWithConsumers({ ws, id: identity("participant") });
+      expect(() => broadcaster.broadcastToParticipants(session, { type: "status_change", status: "idle" })).not.toThrow();
+    });
+
+    it("sendTo() handles non-Error thrown from send", () => {
+      const ws = createTestSocket();
+      ws.send.mockImplementation(() => {
+        throw { message: "object error" }; // non-Error object
+      });
+      expect(() => broadcaster.sendTo(ws, { type: "status_change", status: "idle" })).not.toThrow();
+    });
   });
 });

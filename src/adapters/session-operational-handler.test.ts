@@ -614,6 +614,66 @@ describe("SessionOperationalHandler", () => {
       expect(response.message).toBe("Permission denied");
     });
 
+    it("closeSession uses String(err) when non-Error is thrown", async () => {
+      const bridge = {
+        getSession: () => ({ id: "session-1" }),
+        closeSession: () => {
+          // eslint-disable-next-line @typescript-eslint/no-throw-literal
+          throw "plain string error";
+        },
+      } as any;
+      const handler = new SessionOperationalHandler(bridge);
+
+      const response = (await handler.handle({
+        type: "close_session",
+        sessionId: "session-1",
+      })) as any;
+
+      expect(response.success).toBe(false);
+      expect(response.message).toBe("plain string error");
+    });
+
+    it("archiveSession uses String(err) when non-Error is thrown", async () => {
+      const bridge = {
+        getSession: () => ({ id: "session-1" }),
+        storage: {
+          setArchived: () => {
+            // eslint-disable-next-line @typescript-eslint/no-throw-literal
+            throw 42;
+          },
+        },
+      } as any;
+      const handler = new SessionOperationalHandler(bridge);
+
+      const response = (await handler.handle({
+        type: "archive_session",
+        sessionId: "session-1",
+      })) as any;
+
+      expect(response.success).toBe(false);
+      expect(response.message).toBe("42");
+    });
+
+    it("unarchiveSession uses String(err) when non-Error is thrown", async () => {
+      const bridge = {
+        storage: {
+          setArchived: () => {
+            // eslint-disable-next-line @typescript-eslint/no-throw-literal
+            throw "access denied";
+          },
+        },
+      } as any;
+      const handler = new SessionOperationalHandler(bridge);
+
+      const response = (await handler.handle({
+        type: "unarchive_session",
+        sessionId: "session-1",
+      })) as any;
+
+      expect(response.success).toBe(false);
+      expect(response.message).toBe("access denied");
+    });
+
     it("listSessions with createdAt undefined handles gracefully", async () => {
       const bridge = {
         getAllSessions: () => [

@@ -235,6 +235,27 @@ describe("AdapterNativeHandler", () => {
       expect.objectContaining({ command: "/compact", error: "adapter exploded" }),
     );
   });
+
+  it("handles non-Error thrown from adapter executor (String(err) branch)", async () => {
+    const session = createMockSession();
+    const ws = createTestSocket();
+    session.consumerSockets.set(ws, {
+      userId: "u1",
+      displayName: "Alice",
+      role: "participant",
+    });
+    session.adapterSlashExecutor = {
+      handles: vi.fn().mockReturnValue(true),
+      execute: vi.fn().mockRejectedValue("plain string error"),
+      supportedCommands: vi.fn().mockReturnValue(["/compact"]),
+    };
+    const broadcaster = new ConsumerBroadcaster(noopLogger);
+    const handler = new AdapterNativeHandler({ broadcaster, emitEvent: vi.fn() });
+    handler.execute(slashCtx(session, "/compact", "r1"));
+    await flushPromises();
+    const msg = findMessage(ws, "slash_command_error");
+    expect(msg.error).toBe("plain string error");
+  });
 });
 
 // ─── PassthroughHandler ───────────────────────────────────────────────────────
