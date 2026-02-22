@@ -11,19 +11,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 
-import { MemoryStorage } from "../adapters/memory-storage.js";
-import type { AuthContext } from "../interfaces/auth.js";
-import type { WebSocketLike } from "../interfaces/transport.js";
-import { tick } from "../testing/adapter-test-helpers.js";
+import { MemoryStorage } from "../../adapters/memory-storage.js";
+import type { AuthContext } from "../../interfaces/auth.js";
+import type { WebSocketLike } from "../../interfaces/transport.js";
+import { tick } from "../../testing/adapter-test-helpers.js";
 import type {
   BackendAdapter,
   BackendCapabilities,
   BackendSession,
   ConnectOptions,
-} from "./interfaces/backend-adapter.js";
-import { SessionBridge } from "./session-bridge.js";
-import type { UnifiedMessage } from "./types/unified-message.js";
-import { createUnifiedMessage } from "./types/unified-message.js";
+} from "../interfaces/backend-adapter.js";
+import { SessionBridge } from "../session-bridge.js";
+import type { UnifiedMessage } from "../types/unified-message.js";
+import { createUnifiedMessage } from "../types/unified-message.js";
 
 // ---------------------------------------------------------------------------
 // Mock infrastructure (same pattern as session-bridge-adapter.test.ts)
