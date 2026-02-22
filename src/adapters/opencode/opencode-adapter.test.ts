@@ -469,28 +469,60 @@ describe("OpencodeAdapter", () => {
     expect(result.value.metadata.error_message).toBe("connection lost after retries");
   });
 
-  it("notifies sessions with session.error when SSE retries are exhausted", async () => {
-    const session = await adapter.connect({ sessionId: "beamcode-1" });
-    const iter = session.messages[Symbol.asyncIterator]();
+  // ─── SSE retry loop internals (lines 223, 233-234) ─────────────────────────
+  //
+  // Instead of relying on real timers (which would take 7+ seconds), we call
+  // runSseLoopWithRetry directly with fake timers so we can advance past the
+  // exponential backoff delays deterministically.
 
-    // Make the SSE stream fail on every attempt (> SSE_MAX_RETRIES = 3 times)
-    connectSseSpy.mockRejectedValue(new Error("SSE connection refused"));
+  it("runSseLoopWithRetry resets failure counter on normal stream end (line 223) and notifies when retries exhausted (lines 233-234)", async () => {
+    vi.useFakeTimers();
 
-    // Allow time for retry loop to exhaust (uses exponential backoff; speed
-    // it up with fake timers is complex in integration — give real time)
-    await new Promise((r) => setTimeout(r, 500));
+    try {
+      // Build a minimal adapter with a manually controlled httpClient
+      const testAdapter = new OpencodeAdapter({
+        processManager: createMockProcessManager(),
+        port: 5555,
+        hostname: "127.0.0.1",
+        directory: "/test/dir",
+      });
 
-    // The session should have received a session.error broadcast
-    const result = await Promise.race([
-      iter.next(),
-      new Promise<{ done: boolean; value: { type: string } }>((resolve) =>
-        setTimeout(() => resolve({ done: false, value: { type: "timeout" } }), 200),
-      ),
-    ]);
+      let callCount = 0;
+      const mockConnectSse = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          // First call: stream closes immediately → runSseLoop ends normally → line 223
+          const stream = new ReadableStream<Uint8Array>({ start(c) { c.close(); } });
+          return Promise.resolve(stream);
+        }
+        // Subsequent calls: fail → triggers retry backoff → eventually exhausts
+        return Promise.reject(new Error("SSE connection refused"));
+      });
 
-    // Either a session.error was pushed or we timed out (both indicate retries exhausted)
-    if (!result.done) {
-      expect(["error_message", "session_init", "timeout"]).toContain(result.value.type);
+      (testAdapter as any).httpClient = { connectSse: mockConnectSse };
+
+      const notifySpy = vi.spyOn(testAdapter as any, "notifyAllSessions");
+      const abortController = new AbortController();
+
+      // Start the retry loop directly (no connect() needed)
+      const loopPromise = (testAdapter as any).runSseLoopWithRetry(
+        abortController.signal,
+      ) as Promise<void>;
+
+      // Advance past all exponential backoff delays:
+      //   call 1 → normal end (line 223) → 0ms delay
+      //   call 2 → fail → 1000ms delay
+      //   call 3 → fail → 2000ms delay
+      //   call 4 → fail → 4000ms delay
+      //   call 5 → fail → consecutiveFailures=4 > MAX_RETRIES=3 → lines 233-234
+      await vi.advanceTimersByTimeAsync(1000 + 2000 + 4000 + 500);
+
+      await loopPromise;
+
+      expect(notifySpy).toHaveBeenCalledWith("SSE connection lost after retries exhausted");
+      expect(callCount).toBeGreaterThanOrEqual(5);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
