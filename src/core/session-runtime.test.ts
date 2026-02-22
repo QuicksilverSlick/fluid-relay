@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockSession, createTestSocket } from "../testing/cli-message-factories.js";
+import { normalizeInbound } from "./inbound-normalizer.js";
 import { SessionRuntime, type SessionRuntimeDeps } from "./session-runtime.js";
 import { createUnifiedMessage } from "./types/unified-message.js";
 
@@ -204,6 +205,98 @@ describe("SessionRuntime", () => {
 
     expect(deps.warnUnknownPermission).toHaveBeenCalledWith("s1", "missing");
     expect(deps.emitPermissionResolved).not.toHaveBeenCalled();
+  });
+
+  it("sends deny permission response to backend when pending request exists", () => {
+    const send = vi.fn();
+    const session = createMockSession({ id: "s1", backendSession: { send } as any });
+    session.pendingPermissions.set("perm-1", {
+      request_id: "perm-1",
+      options: [],
+      expires_at: Date.now() + 1000,
+      tool_name: "Bash",
+      tool_use_id: "tu-1",
+      safety_risk: null,
+    } as any);
+    const deps = makeDeps({
+      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
+    });
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.sendPermissionResponse("perm-1", "deny");
+
+    expect(deps.emitPermissionResolved).toHaveBeenCalledWith("s1", "perm-1", "deny");
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "permission_response",
+        metadata: expect.objectContaining({ request_id: "perm-1", behavior: "deny" }),
+      }),
+    );
+    expect(session.pendingPermissions.has("perm-1")).toBe(false);
+  });
+
+  it("includes updated_permissions in permission response metadata", () => {
+    const send = vi.fn();
+    const session = createMockSession({ id: "s1", backendSession: { send } as any });
+    session.pendingPermissions.set("perm-2", {
+      request_id: "perm-2",
+      options: [],
+      expires_at: Date.now() + 1000,
+      tool_name: "Bash",
+      tool_use_id: "tu-2",
+      safety_risk: null,
+    } as any);
+    const deps = makeDeps({
+      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
+    });
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.sendPermissionResponse("perm-2", "allow", {
+      updatedPermissions: [{ type: "setMode", mode: "plan", destination: "session" }],
+    });
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "permission_response",
+        metadata: expect.objectContaining({
+          updated_permissions: [{ type: "setMode", mode: "plan", destination: "session" }],
+        }),
+      }),
+    );
+  });
+
+  it("normalizes and sends control requests for interrupt/model/mode", () => {
+    const send = vi.fn();
+    const session = createMockSession({ id: "s1", backendSession: { send } as any });
+    const deps = makeDeps({
+      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
+    });
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.sendInterrupt();
+    runtime.sendSetModel("claude-opus");
+    runtime.sendSetPermissionMode("plan");
+
+    expect(send).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        type: "interrupt",
+      }),
+    );
+    expect(send).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: "configuration_change",
+        metadata: expect.objectContaining({ subtype: "set_model", model: "claude-opus" }),
+      }),
+    );
+    expect(send).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        type: "configuration_change",
+        metadata: expect.objectContaining({ subtype: "set_permission_mode", mode: "plan" }),
+      }),
+    );
   });
 
   it("delegates programmatic slash execution to slash service", async () => {

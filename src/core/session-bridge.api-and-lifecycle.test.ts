@@ -70,16 +70,6 @@ describe("SessionBridge — Programmatic API", () => {
 
     expect(backendSession.sentMessages).toHaveLength(0);
   });
-
-  it("sendSetModel sends configuration_change unified message to backend", async () => {
-    bridge.sendSetModel("sess-1", "claude-opus-4-20250514");
-
-    expect(backendSession.sentMessages).toHaveLength(1);
-    const msg = backendSession.sentMessages[0];
-    expect(msg.type).toBe("configuration_change");
-    expect(msg.metadata.subtype).toBe("set_model");
-    expect(msg.metadata.model).toBe("claude-opus-4-20250514");
-  });
 });
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────

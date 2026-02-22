@@ -263,37 +263,6 @@ describe("SessionBridge", () => {
       expect(flushed).toBe(true);
     });
 
-    it("unknown permission request_ids produce no backend message (S4)", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-      backendSession.sentMessages.length = 0;
-
-      // No permission was requested, try to respond anyway
-      bridge.sendPermissionResponse("sess-1", "unknown-request-id", "allow");
-
-      expect(backendSession.sentMessages).toHaveLength(0);
-    });
-
-    it("permission response with updatedPermissions includes them", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      backendSession.pushMessage(makePermissionRequestUnifiedMsg());
-      await tick();
-      backendSession.sentMessages.length = 0;
-
-      bridge.sendPermissionResponse("sess-1", "perm-req-1", "allow", {
-        updatedPermissions: [{ type: "setMode", mode: "plan", destination: "session" }],
-      });
-
-      // In the adapter path, updatedPermissions are included in the unified message
-      const permMsg = backendSession.sentMessages.find((m) => m.type === "permission_response");
-      expect(permMsg).toBeDefined();
-      expect(permMsg!.metadata.updated_permissions).toEqual([
-        { type: "setMode", mode: "plan", destination: "session" },
-      ]);
-    });
-
     it("empty sessions are retrievable with default state", () => {
       bridge.getOrCreateSession("empty-sess");
       const snapshot = bridge.getSession("empty-sess")!;
@@ -398,22 +367,6 @@ describe("SessionBridge", () => {
       const userMsg = backendSession.sentMessages.find((m) => m.type === "user_message");
       expect(userMsg).toBeDefined();
       expect(userMsg!.metadata.session_id).toBe("cli-real-id");
-    });
-
-    it("deny permission response is sent to backend", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      backendSession.pushMessage(makePermissionRequestUnifiedMsg());
-      await tick();
-      backendSession.sentMessages.length = 0;
-
-      bridge.sendPermissionResponse("sess-1", "perm-req-1", "deny");
-
-      const permMsg = backendSession.sentMessages.find((m) => m.type === "permission_response");
-      expect(permMsg).toBeDefined();
-      expect(permMsg!.metadata.behavior).toBe("deny");
-      expect(permMsg!.metadata.request_id).toBe("perm-req-1");
     });
   });
 
