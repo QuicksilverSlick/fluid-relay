@@ -63,11 +63,16 @@ describe("createBeamcodeServer", () => {
     }
   });
 
-  async function startServer(opts?: { apiKey?: string; activeSessionId?: string }) {
+  async function startServer(opts?: {
+    apiKey?: string;
+    apiKeyValidator?: (token: string) => boolean;
+    activeSessionId?: string;
+  }) {
     server = createBeamcodeServer({
       sessionCoordinator: sc,
       activeSessionId: opts?.activeSessionId ?? "sess-1",
       apiKey: opts?.apiKey,
+      apiKeyValidator: opts?.apiKeyValidator,
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     baseUrl = getBaseUrl(server);
@@ -121,6 +126,16 @@ describe("createBeamcodeServer", () => {
     const res = await fetch(`${baseUrl}/api/sessions`);
     expect(res.status).toBe(200);
     expect(handleApiSessions).toHaveBeenCalled();
+  });
+
+  it("supports validator-based auth for /api/*", async () => {
+    await startServer({
+      apiKeyValidator: (token) => token === "validator-secret",
+    });
+    const res = await fetch(`${baseUrl}/api/sessions`, {
+      headers: { Authorization: "Bearer validator-secret" },
+    });
+    expect(res.status).toBe(200);
   });
 
   // ---- Redirect bare / ----

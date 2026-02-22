@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -24,11 +23,12 @@ import {
 } from "../core/messaging/message-tracer.js";
 import { SessionCoordinator } from "../core/session-coordinator.js";
 import { Daemon } from "../daemon/daemon.js";
-import { injectConsumerToken, loadConsumerHtml } from "../http/consumer-html.js";
+import { injectConsumerAuthTokens, loadConsumerHtml } from "../http/consumer-html.js";
 import { createBeamcodeServer } from "../http/server.js";
 import { CloudflaredManager } from "../relay/cloudflared-manager.js";
 import { ApiKeyAuthenticator } from "../server/api-key-authenticator.js";
 import { OriginValidator } from "../server/origin-validator.js";
+import { RotatingTokenAuthority } from "../server/rotating-token-authority.js";
 import { resolvePackageVersion } from "../utils/resolve-package-version.js";
 import { pickMostRecentSessionId, reconcileActiveSessionId } from "./active-session-id.js";
 
@@ -37,6 +37,11 @@ const version = resolvePackageVersion(import.meta.url, [
   "../../../package.json",
   "../package.json",
 ]);
+
+const API_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+const API_TOKEN_ROTATE_MS = 60 * 60 * 1000;
+const CONSUMER_WS_TOKEN_TTL_MS = 60 * 60 * 1000;
+const CONSUMER_WS_TOKEN_ROTATE_MS = 15 * 60 * 1000;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -246,6 +251,7 @@ export interface ShutdownHandlerDeps {
   cloudflared: ServiceStopper;
   daemon: ServiceStopper;
   httpServer: ClosableServer;
+  onBeforeStop?: () => void | Promise<void>;
   timeoutMs?: number;
   onExit?: (code: number) => void;
   logger?: Pick<typeof console, "log" | "error">;
@@ -256,6 +262,7 @@ export function createShutdownHandler({
   cloudflared,
   daemon,
   httpServer,
+  onBeforeStop,
   timeoutMs = 10_000,
   onExit = (code: number) => process.exit(code),
   logger = console,
@@ -282,6 +289,16 @@ export function createShutdownHandler({
     }
     shuttingDown = true;
     logger.log("\n  Shutting down...");
+
+    if (onBeforeStop) {
+      try {
+        await onBeforeStop();
+      } catch (err) {
+        logger.error(
+          `  Pre-shutdown hook failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     forceExitTimer = setTimeout(() => {
       logger.error("  Shutdown timed out, force exiting.");
@@ -408,13 +425,30 @@ export async function runBeamcode(argv: string[] = process.argv): Promise<void> 
     logger,
   });
 
-  // 4. Generate a single consumer token used for both HTTP API auth and WS auth.
-  // The token is embedded in the HTML page so the browser can authenticate
-  // API requests (e.g. creating sessions). When a tunnel is active, the same
-  // token also guards WebSocket connections, since tunnel-forwarded requests
-  // bypass bind-address and origin checks.
-  const consumerToken = randomBytes(24).toString("base64url");
-  injectConsumerToken(consumerToken);
+  // 4. Generate scoped tokens:
+  // - apiToken: authenticates HTTP API requests
+  // - consumerWsToken: authenticates consumer WebSocket connections
+  // Both are injected into consumer HTML under distinct meta tags.
+  const apiTokens = new RotatingTokenAuthority({ ttlMs: API_TOKEN_TTL_MS, maxActiveTokens: 16 });
+  const consumerWsTokens = new RotatingTokenAuthority({
+    ttlMs: CONSUMER_WS_TOKEN_TTL_MS,
+    maxActiveTokens: 16,
+  });
+  let apiToken = apiTokens.rotate().token;
+  let consumerWsToken = consumerWsTokens.rotate().token;
+  injectConsumerAuthTokens({ apiToken, consumerToken: consumerWsToken });
+
+  const apiTokenTimer = setInterval(() => {
+    apiToken = apiTokens.rotate().token;
+    injectConsumerAuthTokens({ apiToken });
+  }, API_TOKEN_ROTATE_MS);
+  apiTokenTimer.unref();
+
+  const consumerWsTokenTimer = setInterval(() => {
+    consumerWsToken = consumerWsTokens.rotate().token;
+    injectConsumerAuthTokens({ consumerToken: consumerWsToken });
+  }, CONSUMER_WS_TOKEN_ROTATE_MS);
+  consumerWsTokenTimer.unref();
 
   // ── Prometheus opt-in (may reassign metrics) ──
   let prometheusCollector: PrometheusMetricsCollector | undefined;
@@ -439,7 +473,9 @@ export async function runBeamcode(argv: string[] = process.argv): Promise<void> 
   // When a tunnel is active, enforce token auth on consumer WebSocket connections.
   // Tunnel-forwarded requests bypass bind-address and origin checks, so the only
   // protection would be UUID unpredictability without this authenticator.
-  const authenticator = tunnelUrl ? new ApiKeyAuthenticator(consumerToken) : undefined;
+  const authenticator = tunnelUrl
+    ? new ApiKeyAuthenticator((token) => consumerWsTokens.validate(token))
+    : undefined;
 
   const sessionCoordinator = new SessionCoordinator({
     config: providerConfig,
@@ -465,7 +501,7 @@ export async function runBeamcode(argv: string[] = process.argv): Promise<void> 
   const httpServer = createBeamcodeServer({
     sessionCoordinator,
     activeSessionId,
-    apiKey: consumerToken,
+    apiKeyValidator: (token) => apiTokens.validate(token),
     healthContext: {
       version,
       metrics,
@@ -547,6 +583,7 @@ export async function runBeamcode(argv: string[] = process.argv): Promise<void> 
   const localUrl = `http://localhost:${config.port}`;
   const tunnelSessionUrl =
     tunnelUrl && activeSessionId ? `${tunnelUrl}/?session=${activeSessionId}` : null;
+  const tokenRotationInfo = `API key rotates every ${Math.floor(API_TOKEN_ROTATE_MS / 60_000)}m (ttl ${Math.floor(API_TOKEN_TTL_MS / 60_000)}m); WS token rotates every ${Math.floor(CONSUMER_WS_TOKEN_ROTATE_MS / 60_000)}m (ttl ${Math.floor(CONSUMER_WS_TOKEN_TTL_MS / 60_000)}m)`;
   console.log(`
   BeamCode v${version}
 
@@ -555,10 +592,11 @@ ${activeSessionId ? `\n  Session: ${activeSessionId}` : ""}
   Adapter: ${adapter.name}${config.noAutoLaunch ? " (no auto-launch)" : ""}
   Topology: single-node (process-local session state)
   CWD:     ${config.cwd}
-  API Key: ${consumerToken}
+  API Key: ${apiToken}
+  Auth:    ${tokenRotationInfo}
 
   Open ${tunnelSessionUrl ? "the tunnel URL" : "the local URL"} on your phone to start coding remotely.
-  API requests require: Authorization: Bearer ${consumerToken}
+  API requests require: Authorization: Bearer ${apiToken}
 
   Press Ctrl+C to stop
 `);
@@ -569,6 +607,12 @@ ${activeSessionId ? `\n  Session: ${activeSessionId}` : ""}
     cloudflared,
     daemon,
     httpServer,
+    onBeforeStop: () => {
+      clearInterval(apiTokenTimer);
+      clearInterval(consumerWsTokenTimer);
+      apiTokens.revokeAll();
+      consumerWsTokens.revokeAll();
+    },
   });
 
   process.on("SIGINT", shutdown);

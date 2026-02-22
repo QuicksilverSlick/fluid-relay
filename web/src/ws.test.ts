@@ -69,10 +69,12 @@ beforeEach(() => {
   resetStore();
   MockWebSocket.instances = [];
   _resetForTesting();
+  document.head.innerHTML = '<meta name="beamcode-consumer-token" content="ws-test-token">';
   vi.useFakeTimers();
 });
 
 afterEach(() => {
+  document.head.innerHTML = "";
   vi.useRealTimers();
 });
 
@@ -86,6 +88,7 @@ describe("ws multi-connection manager", () => {
     expect(MockWebSocket.instances).toHaveLength(2);
     expect(MockWebSocket.instances[0].url).toContain("/ws/consumer/s1");
     expect(MockWebSocket.instances[1].url).toContain("/ws/consumer/s2");
+    expect(MockWebSocket.instances[0].url).toContain("token=ws-test-token");
   });
 
   // ── Idempotent connect ───────────────────────────────────────────────────

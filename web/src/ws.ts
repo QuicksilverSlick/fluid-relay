@@ -78,12 +78,25 @@ function getConsumerId(): string {
   return id;
 }
 
+function getConsumerWsToken(): string | null {
+  return (
+    document.querySelector<HTMLMetaElement>('meta[name="beamcode-consumer-token"]')?.content ?? null
+  );
+}
+
 // ── Connection management ──────────────────────────────────────────────────
 
 function buildWsUrl(sessionId: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const consumerId = getConsumerId();
-  return `${proto}//${location.host}/ws/consumer/${encodeURIComponent(sessionId)}?consumer_id=${encodeURIComponent(consumerId)}`;
+  const params = new URLSearchParams({
+    consumer_id: consumerId,
+  });
+  const token = getConsumerWsToken();
+  if (token) {
+    params.set("token", token);
+  }
+  return `${proto}//${location.host}/ws/consumer/${encodeURIComponent(sessionId)}?${params.toString()}`;
 }
 
 function handleMessage(sessionId: string, data: string): void {

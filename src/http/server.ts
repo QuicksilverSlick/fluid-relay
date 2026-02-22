@@ -16,6 +16,7 @@ export interface HttpServerOptions {
   sessionCoordinator: SessionCoordinator;
   activeSessionId: string;
   apiKey?: string;
+  apiKeyValidator?: (token: string) => boolean;
   healthContext?: HealthContext;
   prometheusCollector?: PrometheusMetricsCollector;
 }
@@ -34,7 +35,7 @@ export function createBeamcodeServer(
   if (!sessionCoordinator) {
     throw new Error("createBeamcodeServer requires sessionCoordinator");
   }
-  const { apiKey } = options;
+  const { apiKey, apiKeyValidator } = options;
   let { activeSessionId } = options;
 
   const server = createHttpServer((req: IncomingMessage, res: ServerResponse) => {
@@ -46,9 +47,13 @@ export function createBeamcodeServer(
     // (cloudflared forwards requests as localhost, making IP-based checks unreliable).
     const isProtected =
       url.pathname.startsWith("/api/") || url.pathname === "/health" || url.pathname === "/metrics";
-    if (apiKey && isProtected) {
+    if ((apiKey || apiKeyValidator) && isProtected) {
       const auth = req.headers.authorization ?? "";
-      if (!timingSafeCompare(auth, `Bearer ${apiKey}`)) {
+      const bearerToken = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
+      const isAuthorized = apiKeyValidator
+        ? apiKeyValidator(bearerToken)
+        : timingSafeCompare(auth, `Bearer ${apiKey}`);
+      if (!isAuthorized) {
         res.writeHead(401, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Unauthorized" }));
         return;

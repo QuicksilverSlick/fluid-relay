@@ -229,4 +229,38 @@ describe("consumer-html", () => {
       expect(decompressed).toContain('<meta name="beamcode-consumer-token" content="my-key">');
     });
   });
+
+  describe("injectConsumerAuthTokens", () => {
+    it("injects both API and consumer token meta tags", async () => {
+      const { injectConsumerAuthTokens, loadConsumerHtml } = await import("./consumer-html.js");
+
+      injectConsumerAuthTokens({
+        apiToken: "api-key-123",
+        consumerToken: "ws-key-456",
+      });
+      const html = loadConsumerHtml();
+
+      expect(html).toContain('<meta name="beamcode-api-token" content="api-key-123">');
+      expect(html).toContain('<meta name="beamcode-consumer-token" content="ws-key-456">');
+    });
+
+    it("updates existing injected tags instead of duplicating stale values", async () => {
+      const { injectConsumerAuthTokens, loadConsumerHtml } = await import("./consumer-html.js");
+
+      injectConsumerAuthTokens({
+        apiToken: "api-old",
+        consumerToken: "ws-old",
+      });
+      injectConsumerAuthTokens({
+        apiToken: "api-new",
+        consumerToken: "ws-new",
+      });
+
+      const html = loadConsumerHtml();
+      expect(html).toContain('<meta name="beamcode-api-token" content="api-new">');
+      expect(html).toContain('<meta name="beamcode-consumer-token" content="ws-new">');
+      expect(html).not.toContain("api-old");
+      expect(html).not.toContain("ws-old");
+    });
+  });
 });

@@ -1,18 +1,27 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { AuthContext, Authenticator, ConsumerIdentity } from "../interfaces/auth.js";
 
+type TokenValidator = (token: string) => boolean | Promise<boolean>;
+
 /**
- * Authenticator that validates an API key from the WebSocket query params.
+ * Authenticator that validates a scoped consumer token from WebSocket query params.
  * Used to enforce authentication on consumer connections when a tunnel is active,
  * since tunnel-forwarded requests bypass bind-address and origin checks.
  *
- * Consumers connect with `?token=<apiKey>` on the WebSocket URL.
+ * Consumers connect with `?token=<consumerToken>` on the WebSocket URL.
  */
 export class ApiKeyAuthenticator implements Authenticator {
-  private readonly keyHash: Buffer;
+  private readonly keyHash: Buffer | null;
+  private readonly validator: TokenValidator | null;
 
-  constructor(apiKey: string) {
-    this.keyHash = createHash("sha256").update(apiKey).digest();
+  constructor(apiKeyOrValidator: string | TokenValidator) {
+    if (typeof apiKeyOrValidator === "string") {
+      this.keyHash = createHash("sha256").update(apiKeyOrValidator).digest();
+      this.validator = null;
+      return;
+    }
+    this.keyHash = null;
+    this.validator = apiKeyOrValidator;
   }
 
   async authenticate(context: AuthContext): Promise<ConsumerIdentity> {
@@ -26,8 +35,13 @@ export class ApiKeyAuthenticator implements Authenticator {
       throw new Error("Authentication required: missing token query parameter");
     }
 
-    const providedHash = createHash("sha256").update(token).digest();
-    if (!timingSafeEqual(providedHash, this.keyHash)) {
+    let isValid = false;
+    if (this.validator) {
+      isValid = await this.validator(token);
+    } else if (this.keyHash) {
+      isValid = timingSafeEqual(createHash("sha256").update(token).digest(), this.keyHash);
+    }
+    if (!isValid) {
       throw new Error("Authentication failed: invalid token");
     }
 
