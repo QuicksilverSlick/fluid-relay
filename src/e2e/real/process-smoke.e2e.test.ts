@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { NodeProcessManager } from "../../adapters/node-process-manager.js";
+import { createProcessManager } from "../../test-utils/session-test-utils.js";
 import { getE2EProfile } from "../helpers/e2e-profile.js";
-import { createProcessManager } from "../helpers/test-utils.js";
 import { getRealCliPrereqState } from "./prereqs.js";
 
 async function readStream(stream: ReadableStream<Uint8Array> | null): Promise<string> {

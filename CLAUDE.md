@@ -13,11 +13,8 @@ pnpm check:fix       # biome check --write src/
 pnpm check:arch      # enforce architectural layer boundaries
 
 # Unit + integration tests
-pnpm test                           # all unit + adapter integration tests
+pnpm test                           # all unit + integration tests
 pnpm exec vitest run -t "test name" # single test by name
-
-# E2E mock — system-level (no credentials needed)
-pnpm test:e2e:mock
 
 # E2E real backends (requires credentials + CLI binaries)
 pnpm test:e2e:real:smoke            # smoke tier, all adapters

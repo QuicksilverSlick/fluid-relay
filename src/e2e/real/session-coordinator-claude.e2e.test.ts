@@ -8,8 +8,8 @@ import { FileStorage } from "../../adapters/file-storage.js";
 import { MemoryStorage } from "../../adapters/memory-storage.js";
 import { NodeWebSocketServer } from "../../adapters/node-ws-server.js";
 import { SessionCoordinator } from "../../core/session-coordinator.js";
+import { createProcessManager } from "../../test-utils/session-test-utils.js";
 import { getE2EProfile } from "../helpers/e2e-profile.js";
-import { createProcessManager } from "../helpers/test-utils.js";
 import {
   assistantTextContains,
   attachTrace,

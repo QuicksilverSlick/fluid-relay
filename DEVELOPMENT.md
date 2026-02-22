@@ -50,29 +50,21 @@ pnpm check:fix
 
 ## Testing
 
-BeamCode has **three test tiers**, all powered by [Vitest](https://vitest.dev/). You almost always want to start with unit tests, confirm with mock E2E, then validate on a real backend.
+BeamCode has **three test tiers**, all powered by [Vitest](https://vitest.dev/). You almost always want to start with unit tests, then validate on a real backend.
 
 ### Test Tiers at a Glance
 
 | Tier | Command | Speed | Credentials | What it validates |
 |------|---------|-------|-------------|-------------------|
-| **Unit + Integration** | `pnpm test` | ~1s | None | Core logic, adapter integration (mock I/O), translators, crypto, daemon |
-| **E2E mock** | `pnpm test:e2e` | ~5–15s | None | System-level session flow end-to-end using mock CLI processes |
+| **Unit + Integration** | `pnpm test` | ~2s | None | Core logic, adapters, translators, crypto, daemon, session lifecycle, streaming, permissions, message queues |
 | **E2E real — smoke** | `pnpm test:e2e:real:smoke` | ~30–60s | Required | Happy-path with real CLI binaries: spawn, connect, init, clean shutdown |
 | **E2E real — full** | `pnpm test:e2e:real:full` | minutes | Required | Full coverage: live prompt/response, streaming, cancel, slash commands |
 
 > Both real tiers can be scoped to a single adapter (e.g. `pnpm test:e2e:real:gemini`) or a single test name with `-t`. See [Running a Single Test](#running-a-single-test).
 
-#### E2E mock
+#### Integration tests (formerly mock E2E)
 
-Mock E2E tests (`src/e2e/*.e2e.test.ts`) use `MockProcessManager` — no real CLI binary is needed. They exercise the complete session bridge, WebSocket protocol, and message routing in a controlled, repeatable way. These are the fastest feedback loop after unit tests, and the only E2E tier that runs on every PR without credentials.
-
-> **Note:** Per-adapter mock tests (ACP, Codex, Gemini, OpenCode, Agent SDK) now live alongside their adapter code as `src/adapters/<name>/*.integration.test.ts` and run as part of `pnpm test`. The mock E2E suite covers only system-level flows (session lifecycle, WebSocket routing, permissions, slash commands).
-
-```bash
-pnpm test:e2e           # all mock E2E
-pnpm test:e2e:mock
-```
+Session lifecycle, status flow, streaming conversation, permission routing, presence/RBAC, message queue, and WebSocket server flow tests now run as `*.integration.test.ts` files alongside the modules they test (under `src/core/` and `src/server/`). They use `MockProcessManager` and require no credentials. They run automatically with `pnpm test`.
 
 #### Real — Smoke
 
@@ -157,9 +149,9 @@ cd web && pnpm exec vitest run --coverage  # frontend → ./web/coverage/
 
 | Lane | Trigger | Scope |
 |------|---------|-------|
-| E2E mock | Every PR | All adapters (mock CLI) |
-| E2E real — smoke | PRs, Claude auth required¹ | Claude only (process + session) |
-| E2E real — full | Nightly, per-adapter auth required² | All adapters |
+| Unit + integration | Every PR | Core logic, session lifecycle, streaming, permissions, adapters |
+| E2E smoke | PRs, Claude auth required¹ | Claude only (process + session) |
+| E2E full | Nightly, per-adapter auth required² | All adapters |
 
 ¹ In CI, gated on the `ANTHROPIC_API_KEY` secret. Locally, OAuth (`claude auth login`) also works.
 
@@ -242,6 +234,7 @@ A `-fieldName` entry in the `diff` array means the field was **silently dropped*
 
 | File | Purpose |
 |------|---------|
+| `src/test-utils/session-test-utils.ts` | `setupTestSessionCoordinator()`, `connectTestConsumer()`, `waitForMessageType()`, etc. |
 | `src/e2e/real/helpers.ts` | `attachTrace()`, `dumpTraceOnFailure()`, `getTrace()` |
 | `src/e2e/real/session-coordinator-setup.ts` | `setupRealSession()` — coordinator with trace attached |
 | `src/e2e/real/prereqs.ts` | Binary/auth detection, auto-skip logic |
@@ -250,19 +243,19 @@ A `-fieldName` entry in the `diff` array means the field was **silently dropped*
 
 ### Shared Test Helpers
 
-`src/e2e/helpers/test-utils.ts`:
+`src/test-utils/session-test-utils.ts`:
 
 | Helper | Purpose |
 |--------|---------|
 | `createProcessManager()` | Profile-aware mock/real CLI process manager |
-| `setupTestSessionManager()` | Session manager with in-memory storage |
+| `setupTestSessionCoordinator()` | Session coordinator with in-memory storage |
 | `connectTestConsumer(port, id)` | Open a WebSocket as a consumer |
 | `connectTestCLI(port, id)` | Open a WebSocket as a CLI client |
 | `collectMessages(ws, count)` | Collect N messages from a WebSocket |
 | `waitForMessage(ws, predicate)` | Wait until a message matches a predicate |
 | `waitForMessageType(ws, type)` | Wait for a specific message type |
 | `closeWebSockets(...sockets)` | Graceful WebSocket cleanup |
-| `cleanupSessionManager(mgr)` | Tear down a test session manager |
+| `cleanupSessionCoordinator(mgr)` | Tear down a test session coordinator |
 
 `src/test-utils/backend-test-utils.ts`: mock infrastructure per adapter (ACP subprocess, Codex WebSocket, OpenCode HTTP+SSE). Used by the adapter integration tests in `src/adapters/<name>/*.integration.test.ts`.
 

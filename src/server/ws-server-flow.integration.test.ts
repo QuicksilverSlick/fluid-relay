@@ -11,10 +11,10 @@ import type {
 } from "../core/interfaces/backend-adapter.js";
 import { SessionBridge } from "../core/session-bridge.js";
 import type { UnifiedMessage } from "../core/types/unified-message.js";
-import { OriginValidator } from "../server/origin-validator.js";
 import { createMessageChannel } from "../testing/adapter-test-helpers.js";
 import type { CLIMessage } from "../types/cli-messages.js";
 import { parseNDJSON } from "../utils/ndjson.js";
+import { OriginValidator } from "./origin-validator.js";
 
 // ── E2E Adapter Helpers ─────────────────────────────────────────────────────
 
