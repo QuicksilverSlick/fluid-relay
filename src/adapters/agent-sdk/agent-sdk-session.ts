@@ -6,8 +6,8 @@
  * ClaudeSession (WebSocket), this runs in the same Node.js process.
  */
 
-import { AsyncMessageQueue } from "../../core/async-message-queue.js";
 import type { BackendSession, ConnectOptions } from "../../core/interfaces/backend-adapter.js";
+import { AsyncMessageQueue } from "../../core/session/async-message-queue.js";
 import type { UnifiedMessage } from "../../core/types/unified-message.js";
 import { createUnifiedMessage } from "../../core/types/unified-message.js";
 import { PermissionBridge } from "./permission-bridge.js";

@@ -10,9 +10,9 @@
 
 import type WebSocket from "ws";
 import type { RawData } from "ws";
-import { AsyncMessageQueue } from "../../core/async-message-queue.js";
 import type { BackendSession } from "../../core/interfaces/backend-adapter.js";
 import { extractTraceContext, type MessageTracer } from "../../core/messaging/message-tracer.js";
+import { AsyncMessageQueue } from "../../core/session/async-message-queue.js";
 import type { UnifiedMessage } from "../../core/types/unified-message.js";
 import type { Logger } from "../../interfaces/logger.js";
 import type { CLIMessage } from "../../types/cli-messages.js";
