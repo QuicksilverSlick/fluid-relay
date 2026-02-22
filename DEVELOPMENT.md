@@ -309,6 +309,24 @@ pnpm start --no-tunnel --verbose --trace --trace-level full --trace-allow-sensit
 
 `Ctrl+C` once = graceful shutdown. `Ctrl+C` twice = force exit.
 
+### Rebuild and Restart Guide
+
+The frontend HTML (including bundled JS) is loaded from disk **once at startup** and cached in memory (`src/http/consumer-html.ts`). The server never re-reads it while running. A restart is therefore required whenever you rebuild either layer.
+
+| Changed | Build command | Restart required? |
+|---------|--------------|:-----------------:|
+| Backend only (`src/`) | `pnpm build:lib` | ✅ |
+| Frontend only (`web/src/`) | `pnpm build:web` | ✅ |
+| Both | `pnpm build` | ✅ |
+
+**Iterating on frontend UI without restarting:**
+
+```bash
+pnpm dev:web          # Vite dev server on port 5174, HMR enabled
+```
+
+Vite proxies the WebSocket to the already-running beamcode server on port 9414, so you get hot-reload on React/CSS changes without touching the server process. Use this for frontend-only iteration; switch to `pnpm build` + restart when you also change backend code.
+
 ---
 
 ## UnifiedMessage Protocol
