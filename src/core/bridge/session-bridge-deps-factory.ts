@@ -42,6 +42,28 @@ type QueueStateAccessors = {
   getConsumerIdentity: (session: Session, ws: WebSocketLike) => ConsumerIdentity | undefined;
 };
 
+export type ConsumerPlaneRuntimeAccessors = {
+  removeConsumer: (session: Session, ws: WebSocketLike) => ConsumerIdentity | undefined;
+  getConsumerSockets: (
+    session: Session,
+  ) => ReadonlyMap<WebSocketLike, ConsumerIdentity> | Map<WebSocketLike, ConsumerIdentity>;
+  getState: (session: Session) => Session["state"];
+  setState: (session: Session, state: Session["state"]) => void;
+  allocateAnonymousIdentityIndex: (session: Session) => number;
+  checkRateLimit: (
+    session: Session,
+    ws: WebSocketLike,
+    createLimiter: Parameters<SessionRuntime["checkRateLimit"]>[1],
+  ) => boolean;
+  getConsumerIdentity: (session: Session, ws: WebSocketLike) => ConsumerIdentity | undefined;
+  getConsumerCount: (session: Session) => number;
+  getMessageHistory: (session: Session) => Session["messageHistory"];
+  getPendingPermissions: (session: Session) => ReturnType<SessionRuntime["getPendingPermissions"]>;
+  getQueuedMessage: (session: Session) => Session["queuedMessage"];
+  isBackendConnected: (session: Session) => boolean;
+  addConsumer: (session: Session, ws: WebSocketLike, identity: ConsumerIdentity) => void;
+};
+
 export function createCapabilitiesPolicyStateAccessors(
   runtime: (session: Session) => SessionRuntime,
 ): CapabilitiesPolicyStateAccessors {
@@ -73,6 +95,30 @@ export function createQueueStateAccessors(
     },
     getConsumerIdentity: (session: Session, ws: WebSocketLike) =>
       runtime(session).getConsumerIdentity(ws),
+  };
+}
+
+export function createConsumerPlaneRuntimeAccessors(
+  runtime: (session: Session) => SessionRuntime,
+): ConsumerPlaneRuntimeAccessors {
+  return {
+    removeConsumer: (session: Session, ws: WebSocketLike) => runtime(session).removeConsumer(ws),
+    getConsumerSockets: (session: Session) => runtime(session).getConsumerSockets(),
+    getState: (session: Session) => runtime(session).getState(),
+    setState: (session: Session, state: Session["state"]) => runtime(session).setState(state),
+    allocateAnonymousIdentityIndex: (session: Session) =>
+      runtime(session).allocateAnonymousIdentityIndex(),
+    checkRateLimit: (session: Session, ws: WebSocketLike, createLimiter) =>
+      runtime(session).checkRateLimit(ws, createLimiter),
+    getConsumerIdentity: (session: Session, ws: WebSocketLike) =>
+      runtime(session).getConsumerIdentity(ws),
+    getConsumerCount: (session: Session) => runtime(session).getConsumerCount(),
+    getMessageHistory: (session: Session) => runtime(session).getMessageHistory(),
+    getPendingPermissions: (session: Session) => runtime(session).getPendingPermissions(),
+    getQueuedMessage: (session: Session) => runtime(session).getQueuedMessage(),
+    isBackendConnected: (session: Session) => runtime(session).isBackendConnected(),
+    addConsumer: (session: Session, ws: WebSocketLike, identity: ConsumerIdentity) =>
+      runtime(session).addConsumer(ws, identity),
   };
 }
 
@@ -172,7 +218,20 @@ export function createConsumerGatewayDeps(params: {
   routeConsumerMessage: (session: Session, msg: InboundCommand, ws: WebSocketLike) => void;
   maxConsumerMessageSize: number;
   tracer: MessageTracer;
-  runtime: (session: Session) => SessionRuntime;
+  runtimeAccessors: Pick<
+    ConsumerPlaneRuntimeAccessors,
+    | "allocateAnonymousIdentityIndex"
+    | "checkRateLimit"
+    | "getConsumerIdentity"
+    | "getConsumerCount"
+    | "getState"
+    | "getMessageHistory"
+    | "getPendingPermissions"
+    | "getQueuedMessage"
+    | "isBackendConnected"
+    | "addConsumer"
+    | "removeConsumer"
+  >;
 }): ConsumerGatewayDeps {
   return {
     sessions: { get: (sessionId: string) => params.store.get(sessionId) },
@@ -183,21 +242,24 @@ export function createConsumerGatewayDeps(params: {
     metrics: params.metrics,
     emit: params.emit,
     allocateAnonymousIdentityIndex: (session: Session) =>
-      params.runtime(session).allocateAnonymousIdentityIndex(),
+      params.runtimeAccessors.allocateAnonymousIdentityIndex(session),
     checkRateLimit: (session: Session, ws: WebSocketLike) =>
-      params.runtime(session).checkRateLimit(ws, () => params.gatekeeper.createRateLimiter()),
+      params.runtimeAccessors.checkRateLimit(session, ws, () =>
+        params.gatekeeper.createRateLimiter(),
+      ),
     getConsumerIdentity: (session: Session, ws: WebSocketLike) =>
-      params.runtime(session).getConsumerIdentity(ws),
-    getConsumerCount: (session: Session) => params.runtime(session).getConsumerCount(),
-    getState: (session: Session) => params.runtime(session).getState(),
-    getMessageHistory: (session: Session) => params.runtime(session).getMessageHistory(),
-    getPendingPermissions: (session: Session) => params.runtime(session).getPendingPermissions(),
-    getQueuedMessage: (session: Session) => params.runtime(session).getQueuedMessage(),
-    isBackendConnected: (session: Session) => params.runtime(session).isBackendConnected(),
+      params.runtimeAccessors.getConsumerIdentity(session, ws),
+    getConsumerCount: (session: Session) => params.runtimeAccessors.getConsumerCount(session),
+    getState: (session: Session) => params.runtimeAccessors.getState(session),
+    getMessageHistory: (session: Session) => params.runtimeAccessors.getMessageHistory(session),
+    getPendingPermissions: (session: Session) =>
+      params.runtimeAccessors.getPendingPermissions(session),
+    getQueuedMessage: (session: Session) => params.runtimeAccessors.getQueuedMessage(session),
+    isBackendConnected: (session: Session) => params.runtimeAccessors.isBackendConnected(session),
     registerConsumer: (session: Session, ws: WebSocketLike, identity) =>
-      params.runtime(session).addConsumer(ws, identity),
+      params.runtimeAccessors.addConsumer(session, ws, identity),
     unregisterConsumer: (session: Session, ws: WebSocketLike) =>
-      params.runtime(session).removeConsumer(ws),
+      params.runtimeAccessors.removeConsumer(session, ws),
     routeConsumerMessage: params.routeConsumerMessage,
     maxConsumerMessageSize: params.maxConsumerMessageSize,
     tracer: params.tracer,

@@ -4,7 +4,10 @@ import type { MetricsCollector } from "../../interfaces/metrics.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { ResolvedConfig } from "../../types/config.js";
 import type { BridgeEventMap } from "../../types/events.js";
-import { createConsumerGatewayDeps } from "../bridge/session-bridge-deps-factory.js";
+import {
+  createConsumerGatewayDeps,
+  createConsumerPlaneRuntimeAccessors,
+} from "../bridge/session-bridge-deps-factory.js";
 import { SessionBroadcastApi } from "../bridge/session-broadcast-api.js";
 import {
   ConsumerBroadcaster,
@@ -53,13 +56,14 @@ export function composeConsumerPlane({
   routeConsumerMessage,
   emit,
 }: ComposeConsumerPlaneOptions): ConsumerPlane {
+  const runtimeAccessors = createConsumerPlaneRuntimeAccessors(runtime);
   const broadcaster = new ConsumerBroadcaster(
     logger,
     (sessionId, msg) => emit("message:outbound", { sessionId, message: msg }),
     tracer,
-    (session, ws) => runtime(session).removeConsumer(ws),
+    (session, ws) => runtimeAccessors.removeConsumer(session, ws),
     {
-      getConsumerSockets: (session) => runtime(session).getConsumerSockets(),
+      getConsumerSockets: (session) => runtimeAccessors.getConsumerSockets(session),
     },
   );
   const broadcastApi = new SessionBroadcastApi({
@@ -68,8 +72,8 @@ export function composeConsumerPlane({
   });
   const gatekeeper = new ConsumerGatekeeper(authenticator ?? null, config, rateLimiterFactory);
   const gitTracker = new GitInfoTracker(gitResolver ?? null, {
-    getState: (session) => runtime(session).getState(),
-    setState: (session, state) => runtime(session).setState(state),
+    getState: (session) => runtimeAccessors.getState(session),
+    setState: (session, state) => runtimeAccessors.setState(session, state),
   });
   const consumerGateway = new ConsumerGateway(
     createConsumerGatewayDeps({
@@ -83,7 +87,7 @@ export function composeConsumerPlane({
       routeConsumerMessage,
       maxConsumerMessageSize: MAX_CONSUMER_MESSAGE_SIZE,
       tracer,
-      runtime,
+      runtimeAccessors,
     }),
   );
 
