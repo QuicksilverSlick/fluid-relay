@@ -155,32 +155,7 @@ describe("SessionBridge", () => {
     });
   });
 
-  // ── 3. Consumer WebSocket handlers ─────────────────────────────────────
-
-  describe("Consumer WebSocket handlers", () => {
-    it("handleConsumerMessage routes user_message to backend", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-
-      bridge.handleConsumerMessage(
-        consumerSocket,
-        "sess-1",
-        JSON.stringify({ type: "user_message", content: "Hello from consumer" }),
-      );
-
-      // In the adapter path, sendUserMessage sends a UnifiedMessage via backendSession.send()
-      const userMsg = backendSession.sentMessages.find((m) => m.type === "user_message");
-      expect(userMsg).toBeDefined();
-      expect(
-        userMsg!.content.some((b) => b.type === "text" && b.text === "Hello from consumer"),
-      ).toBe(true);
-    });
-  });
-
-  // ── 6. Consumer message routing ────────────────────────────────────────
+  // ── 3. Consumer message routing ────────────────────────────────────────
 
   describe("Consumer message routing", () => {
     let backendSession: MockBackendSession;
