@@ -299,14 +299,12 @@ Temporary exceptions go in `docs/refactor-plan/architecture-waivers.json` with `
 
 ```bash
 pnpm build
-node dist/bin/beamcode.mjs --no-tunnel        # start locally
-pnpm start -- --no-tunnel                     # equivalent via pnpm
+pnpm start --no-tunnel                        # start locally
 curl http://localhost:9414/health              # health check
-node dist/bin/beamcode.mjs --no-tunnel --port 8080
+pnpm start --no-tunnel --port 8080
 
 # With full trace output redirected to file
-node dist/bin/beamcode.mjs --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
-pnpm start -- --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
+pnpm start --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
 ```
 
 `Ctrl+C` once = graceful shutdown. `Ctrl+C` twice = force exit.
@@ -361,14 +359,13 @@ BeamCode includes a debug tracing system that logs every message crossing a tran
 ```bash
 # Smart mode (default): bodies included, large fields truncated, sensitive keys redacted
 beamcode --trace
-pnpm start -- --trace
 
 # Headers only: traceId, type, direction, timing, size — no body
 beamcode --trace --trace-level headers
 
 # Full payloads: every message logged as-is (requires explicit opt-in)
 beamcode --trace --trace-level full --trace-allow-sensitive
-pnpm start -- --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
+pnpm start --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
 
 # Environment-variable controls (CLI flags override env)
 BEAMCODE_TRACE=1 beamcode
