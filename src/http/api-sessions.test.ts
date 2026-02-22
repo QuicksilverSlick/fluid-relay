@@ -54,6 +54,7 @@ function mockSessionCoordinator(
   overrides: Partial<{
     listSessions: () => unknown[];
     getSession: (id: string) => unknown;
+    renameSession: (id: string, name: string) => unknown;
     launch: (opts: unknown) => unknown;
     kill: (id: string) => Promise<boolean>;
     deleteSession: (id: string) => Promise<boolean>;
@@ -83,6 +84,14 @@ function mockSessionCoordinator(
       launch: vi.fn(overrides.launch ?? (() => ({ sessionId: "new-id", status: "running" }))),
       kill: vi.fn(overrides.kill ?? (async () => true)),
     },
+    renameSession: vi.fn(
+      overrides.renameSession ??
+        ((id: string, name: string) => {
+          const session = registry.getSession(id);
+          if (!session || typeof session !== "object") return null;
+          return { ...(session as Record<string, unknown>), name };
+        }),
+    ),
     registry,
     bridge: {
       broadcastNameUpdate: vi.fn(),
@@ -375,8 +384,7 @@ describe("handleApiSessions", () => {
       expect(res._status).toBe(200);
     });
     expect(parseBody(res)).toEqual({ ...session, name: "new-name" });
-    expect(coordinator.registry.setSessionName).toHaveBeenCalledWith("abc", "new-name");
-    expect(coordinator.bridge.broadcastNameUpdate).toHaveBeenCalledWith("abc", "new-name");
+    expect(coordinator.renameSession).toHaveBeenCalledWith("abc", "new-name");
   });
 
   it("PUT /api/sessions/:id/rename returns 400 for empty name", async () => {
@@ -412,7 +420,7 @@ describe("handleApiSessions", () => {
   });
 
   it("PUT /api/sessions/:id/rename returns 404 when session not found", async () => {
-    const coordinator = mockSessionCoordinator({ getSession: () => undefined });
+    const coordinator = mockSessionCoordinator({ renameSession: () => null });
     const req = mockReq("PUT");
     const res = mockRes();
 
@@ -454,7 +462,7 @@ describe("handleApiSessions", () => {
     });
     const body = parseBody(res) as { name: string };
     expect(body.name).toHaveLength(100);
-    expect(coordinator.registry.setSessionName).toHaveBeenCalledWith("abc", "a".repeat(100));
+    expect(coordinator.renameSession).toHaveBeenCalledWith("abc", "a".repeat(100));
   });
 
   // ---- Unknown method ----

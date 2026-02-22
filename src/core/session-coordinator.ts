@@ -24,6 +24,7 @@ import type {
 import type { ProviderConfig, ResolvedConfig } from "../types/config.js";
 import { resolveConfig } from "../types/config.js";
 import type { SessionCoordinatorEventMap } from "../types/events.js";
+import type { SessionInfo } from "../types/session-state.js";
 import { noopLogger } from "../utils/noop-logger.js";
 import { redactSecrets } from "../utils/redact-secrets.js";
 import type { RateLimiterFactory } from "./consumer/consumer-gatekeeper.js";
@@ -210,8 +211,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           name = redactSecrets(name);
           if (name.length > 50) name = `${name.slice(0, 47)}...`;
           if (!name) return;
-          this.bridge.broadcastNameUpdate(sessionId, name);
-          this.registry.setSessionName(sessionId, name);
+          this.renameSession(sessionId, name);
         },
         onSessionClosed: (payload) => {
           this.processLogService.cleanup(payload.sessionId);
@@ -366,6 +366,15 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     this.registry.removeSession(sessionId);
 
     return true;
+  }
+
+  /** Rename a session through the coordinator/bridge command path. */
+  renameSession(sessionId: string, name: string): SessionInfo | null {
+    const existing = this.registry.getSession(sessionId);
+    if (!existing) return null;
+    this.registry.setSessionName(sessionId, name);
+    this.bridge.renameSession(sessionId, name);
+    return { ...existing, name };
   }
 
   private handleProcessOutput(sessionId: string, stream: "stdout" | "stderr", data: string): void {

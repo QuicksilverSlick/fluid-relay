@@ -59,6 +59,7 @@ export interface BridgeEventMap {
     sessionId: string;
     firstUserMessage: string;
   };
+  "session:renamed": { sessionId: string; name: string };
   "session:closed": { sessionId: string };
 
   // ── Slash command events ──

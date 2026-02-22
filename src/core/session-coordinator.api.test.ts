@@ -349,3 +349,55 @@ describe("SessionCoordinator.deleteSession", () => {
     await mgr.stop();
   });
 });
+
+describe("SessionCoordinator.renameSession", () => {
+  it("renames through coordinator/bridge flow and emits session:renamed", async () => {
+    const pm = new TestProcessManager();
+    const storage = new MemoryStorage();
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+    await mgr.start();
+
+    const created = await mgr.createSession({ cwd: process.cwd() });
+    const bridgeRenameSpy = vi.spyOn(mgr.bridge, "renameSession");
+    const coordinatorEvents: Array<{ sessionId: string; name: string }> = [];
+    const domainEvents: Array<{ sessionId: string; name: string }> = [];
+
+    mgr.on("session:renamed", (payload) => coordinatorEvents.push(payload));
+    mgr.domainEvents.on("session:renamed", ({ payload }) => domainEvents.push(payload));
+
+    const renamed = mgr.renameSession(created.sessionId, "My Session");
+
+    expect(renamed).toMatchObject({ sessionId: created.sessionId, name: "My Session" });
+    expect(mgr.registry.getSession(created.sessionId)?.name).toBe("My Session");
+    expect(bridgeRenameSpy).toHaveBeenCalledWith(created.sessionId, "My Session");
+    expect(coordinatorEvents).toEqual([{ sessionId: created.sessionId, name: "My Session" }]);
+    expect(domainEvents).toEqual([{ sessionId: created.sessionId, name: "My Session" }]);
+
+    await mgr.stop();
+  });
+
+  it("returns null when session is missing", async () => {
+    const pm = new TestProcessManager();
+    const storage = new MemoryStorage();
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+    await mgr.start();
+
+    const bridgeRenameSpy = vi.spyOn(mgr.bridge, "renameSession");
+    const renamed = mgr.renameSession("missing-session", "new-name");
+
+    expect(renamed).toBeNull();
+    expect(bridgeRenameSpy).not.toHaveBeenCalled();
+
+    await mgr.stop();
+  });
+});

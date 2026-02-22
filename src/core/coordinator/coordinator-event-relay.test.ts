@@ -88,6 +88,7 @@ describe("CoordinatorEventRelay", () => {
           "permission:resolved",
           "session:closed",
           "session:first_turn_completed",
+          "session:renamed",
           "slash_command:executed",
           "slash_command:failed",
         ]

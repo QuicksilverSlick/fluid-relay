@@ -333,6 +333,11 @@ export class SessionBridge extends TypedEventEmitter<BridgeEventMap> {
     return this.runtimeApi.executeSlashCommand(sessionId, command);
   }
 
+  renameSession(sessionId: string, name: string): void {
+    this.broadcastNameUpdate(sessionId, name);
+    this.emit("session:renamed", { sessionId, name });
+  }
+
   broadcastNameUpdate(sessionId: string, name: string): void {
     this.broadcastApi.broadcastNameUpdate(sessionId, name);
   }
