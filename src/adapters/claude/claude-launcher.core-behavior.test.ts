@@ -4,9 +4,13 @@ const mockExecFileSync = vi.hoisted(() => vi.fn(() => "/usr/bin/claude"));
 vi.mock("node:child_process", () => ({ execFileSync: mockExecFileSync }));
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-session-id" }));
 
-import { ClaudeLauncher as CLILauncher } from "../adapters/claude/claude-launcher.js";
-import { MemoryStorage } from "../adapters/memory-storage.js";
-import type { ProcessHandle, ProcessManager, SpawnOptions } from "../interfaces/process-manager.js";
+import type {
+  ProcessHandle,
+  ProcessManager,
+  SpawnOptions,
+} from "../../interfaces/process-manager.js";
+import { MemoryStorage } from "../memory-storage.js";
+import { ClaudeLauncher as CLILauncher } from "./claude-launcher.js";
 
 // ---------------------------------------------------------------------------
 // Mock ProcessManager
