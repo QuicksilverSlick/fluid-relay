@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMockSession, noopLogger } from "../testing/cli-message-factories.js";
-import type { ResolvedConfig } from "../types/config.js";
-import { DEFAULT_CONFIG } from "../types/config.js";
+import { createMockSession, noopLogger } from "../../testing/cli-message-factories.js";
+import type { ResolvedConfig } from "../../types/config.js";
+import { DEFAULT_CONFIG } from "../../types/config.js";
+import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import { createUnifiedMessage } from "../types/unified-message.js";
 import { CapabilitiesPolicy } from "./capabilities-policy.js";
-import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
-import { createUnifiedMessage } from "./types/unified-message.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

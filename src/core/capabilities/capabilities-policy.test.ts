@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMockSession, noopLogger } from "../testing/cli-message-factories.js";
-import { DEFAULT_CONFIG } from "../types/config.js";
+import { createMockSession, noopLogger } from "../../testing/cli-message-factories.js";
+import { DEFAULT_CONFIG } from "../../types/config.js";
+import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import { CapabilitiesPolicy } from "./capabilities-policy.js";
-import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 
 describe("CapabilitiesPolicy", () => {
   it("sends initialize control_request via backend sendRaw", () => {

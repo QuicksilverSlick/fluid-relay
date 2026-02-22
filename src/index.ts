@@ -25,7 +25,7 @@ export { NodeWebSocketServer } from "./adapters/node-ws-server.js";
 export { CURRENT_SCHEMA_VERSION, migrateSession } from "./adapters/state-migrator.js";
 export type { StructuredLoggerOptions } from "./adapters/structured-logger.js";
 export { LogLevel, StructuredLogger } from "./adapters/structured-logger.js";
-export { CapabilitiesPolicy } from "./core/capabilities-policy.js";
+export { CapabilitiesPolicy } from "./core/capabilities/capabilities-policy.js";
 export type {
   ProcessSupervisorOptions,
   SupervisorEventMap,

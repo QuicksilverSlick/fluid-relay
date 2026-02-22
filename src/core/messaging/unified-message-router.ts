@@ -20,7 +20,7 @@ import type {
 import { CONSUMER_PROTOCOL_VERSION, type ConsumerMessage } from "../../types/consumer-messages.js";
 import type { BridgeEventMap } from "../../types/events.js";
 import type { SessionState } from "../../types/session-state.js";
-import type { CapabilitiesPolicy } from "../capabilities-policy.js";
+import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import { applyGitInfo, type GitInfoTracker } from "../session/git-info-tracker.js";
 import type { MessageQueueHandler } from "../session/message-queue-handler.js";

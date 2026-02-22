@@ -12,16 +12,16 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Logger } from "../interfaces/logger.js";
+import type { Logger } from "../../interfaces/logger.js";
 import type {
   InitializeAccount,
   InitializeCommand,
   InitializeModel,
-} from "../types/cli-messages.js";
-import type { ResolvedConfig } from "../types/config.js";
-import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
-import type { Session } from "./session/session-repository.js";
-import type { UnifiedMessage } from "./types/unified-message.js";
+} from "../../types/cli-messages.js";
+import type { ResolvedConfig } from "../../types/config.js";
+import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import type { Session } from "../session/session-repository.js";
+import type { UnifiedMessage } from "../types/unified-message.js";
 
 // ─── Dependency contracts ────────────────────────────────────────────────────
 

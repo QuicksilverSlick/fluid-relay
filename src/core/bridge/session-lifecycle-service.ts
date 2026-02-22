@@ -1,6 +1,6 @@
 import type { Logger } from "../../interfaces/logger.js";
 import type { MetricsCollector } from "../../interfaces/metrics.js";
-import type { CapabilitiesPolicy } from "../capabilities-policy.js";
+import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
 import type { Session, SessionRepository } from "../session/session-repository.js";
 import type { SessionRuntime } from "../session/session-runtime.js";
 import type { RuntimeManager } from "./runtime-manager.js";

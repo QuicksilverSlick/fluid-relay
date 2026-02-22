@@ -1,5 +1,5 @@
 import type { BackendConnector } from "../backend/backend-connector.js";
-import type { CapabilitiesPolicy } from "../capabilities-policy.js";
+import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
 import type { Session, SessionRepository } from "../session/session-repository.js";
 
 export interface BackendApiOptions {

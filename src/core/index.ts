@@ -1,7 +1,7 @@
 // ─── Class exports ───────────────────────────────────────────────────────────
 
 export { BackendConnector } from "./backend/backend-connector.js";
-export { CapabilitiesPolicy } from "./capabilities-policy.js";
+export { CapabilitiesPolicy } from "./capabilities/capabilities-policy.js";
 export { ConsumerGateway } from "./consumer/consumer-gateway.js";
 export type {
   ProcessSupervisorOptions,

@@ -51,7 +51,7 @@ import { SessionInfoApi } from "./bridge/session-info-api.js";
 import { SessionLifecycleService } from "./bridge/session-lifecycle-service.js";
 import { SessionPersistenceService } from "./bridge/session-persistence-service.js";
 import { createSlashService } from "./bridge/slash-service-factory.js";
-import { CapabilitiesPolicy } from "./capabilities-policy.js";
+import { CapabilitiesPolicy } from "./capabilities/capabilities-policy.js";
 import { ConsumerBroadcaster, MAX_CONSUMER_MESSAGE_SIZE } from "./consumer/consumer-broadcaster.js";
 import { ConsumerGatekeeper, type RateLimiterFactory } from "./consumer/consumer-gatekeeper.js";
 import { ConsumerGateway } from "./consumer/consumer-gateway.js";
