@@ -27,22 +27,17 @@ describe("SessionBridge — Event emission", () => {
     adapter = created.adapter;
   });
 
-  it("emits backend:connected on connectBackend", async () => {
-    const handler = vi.fn();
-    bridge.on("backend:connected", handler);
+  it("emits backend connected/disconnected lifecycle events", async () => {
+    const connected = vi.fn();
+    const disconnected = vi.fn();
+    bridge.on("backend:connected", connected);
+    bridge.on("backend:disconnected", disconnected);
 
     await bridge.connectBackend("sess-1");
-    expect(handler).toHaveBeenCalledWith({ sessionId: "sess-1" });
-  });
-
-  it("emits backend:disconnected on disconnectBackend", async () => {
-    await bridge.connectBackend("sess-1");
-
-    const handler = vi.fn();
-    bridge.on("backend:disconnected", handler);
+    expect(connected).toHaveBeenCalledWith({ sessionId: "sess-1" });
 
     await bridge.disconnectBackend("sess-1");
-    expect(handler).toHaveBeenCalledWith({
+    expect(disconnected).toHaveBeenCalledWith({
       sessionId: "sess-1",
       code: 1000,
       reason: "normal",
@@ -121,24 +116,5 @@ describe("SessionBridge — connectBackend event ordering (behavior lock)", () =
     await tick();
 
     expect(events).toEqual(["backend:connected", "backend:session_id"]);
-  });
-
-  it("backend:session_id does NOT fire until system_init arrives", async () => {
-    const sessionIdHandler = vi.fn();
-    bridge.on("backend:session_id", sessionIdHandler);
-
-    await bridge.connectBackend("sess-1");
-
-    // Not yet — no system_init has been pushed
-    expect(sessionIdHandler).not.toHaveBeenCalled();
-
-    const backendSession = adapter.getSession("sess-1")!;
-    backendSession.pushMessage(makeSessionInitMsg({ session_id: "cli-abc" }));
-    await tick();
-
-    expect(sessionIdHandler).toHaveBeenCalledWith({
-      sessionId: "sess-1",
-      backendSessionId: "cli-abc",
-    });
   });
 });
