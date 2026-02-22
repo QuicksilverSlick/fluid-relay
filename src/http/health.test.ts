@@ -39,7 +39,15 @@ describe("handleHealth", () => {
         recentErrors: [],
       }),
     };
-    const ctx: HealthContext = { version: "1.2.3", metrics };
+    const ctx: HealthContext = {
+      version: "1.2.3",
+      metrics,
+      deployment: {
+        topology: "single-node",
+        sessionStateScope: "process-local",
+        horizontalScaling: "unsupported",
+      },
+    };
 
     handleHealth({} as IncomingMessage, res, ctx);
 
@@ -50,6 +58,11 @@ describe("handleHealth", () => {
     expect(body.sessions).toBe(3);
     expect(body.consumers).toBe(5);
     expect(body.errors).toEqual({ warning: 1, error: 2, critical: 0, total: 3 });
+    expect(body.deployment).toEqual({
+      topology: "single-node",
+      session_state_scope: "process-local",
+      horizontal_scaling: "unsupported",
+    });
   });
 
   it("falls back to 0 when stats omit totalSessions/totalConsumers", () => {

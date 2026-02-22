@@ -8,6 +8,7 @@ import type { BridgeEventMap } from "../../types/events.js";
 import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "../interfaces/backend-adapter.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
+import type { SessionLeaseCoordinator } from "../session/session-lease-coordinator.js";
 import type { Session } from "../session/session-repository.js";
 import type { SessionRuntime } from "../session/session-runtime.js";
 
@@ -22,6 +23,8 @@ export type SessionBridgeInitOptions = {
   adapterResolver?: AdapterResolver;
   rateLimiterFactory?: import("../consumer/consumer-gatekeeper.js").RateLimiterFactory;
   tracer?: MessageTracer;
+  leaseCoordinator?: SessionLeaseCoordinator;
+  leaseOwnerId?: string;
 };
 
 export type EmitBridgeEvent = <K extends keyof BridgeEventMap>(

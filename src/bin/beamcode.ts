@@ -351,6 +351,9 @@ export async function runBeamcode(argv: string[] = process.argv): Promise<void> 
     if (err instanceof Error && err.message.includes("already running")) {
       console.error(`Error: ${err.message}`);
       console.error("Stop the other instance first, or use a different --data-dir.");
+      console.error(
+        "Note: separate --data-dir instances do not share session state and are not horizontally coordinated.",
+      );
       process.exit(1);
     }
     throw err;
@@ -454,12 +457,24 @@ export async function runBeamcode(argv: string[] = process.argv): Promise<void> 
   });
 
   let activeSessionId = "";
+  logger.warn(
+    "Session state is process-local to this BeamCode instance; horizontal scaling requires external coordination that is not enabled in this runtime.",
+    { component: "startup", topology: "single-node", sessionStateScope: "process-local" },
+  );
 
   const httpServer = createBeamcodeServer({
     sessionCoordinator,
     activeSessionId,
     apiKey: consumerToken,
-    healthContext: { version, metrics },
+    healthContext: {
+      version,
+      metrics,
+      deployment: {
+        topology: "single-node",
+        sessionStateScope: "process-local",
+        horizontalScaling: "unsupported",
+      },
+    },
     prometheusCollector,
   });
 
@@ -538,6 +553,7 @@ export async function runBeamcode(argv: string[] = process.argv): Promise<void> 
   Local:   ${localUrl}${tunnelSessionUrl ? `\n  Tunnel:  ${tunnelSessionUrl}` : ""}
 ${activeSessionId ? `\n  Session: ${activeSessionId}` : ""}
   Adapter: ${adapter.name}${config.noAutoLaunch ? " (no auto-launch)" : ""}
+  Topology: single-node (process-local session state)
   CWD:     ${config.cwd}
   API Key: ${consumerToken}
 

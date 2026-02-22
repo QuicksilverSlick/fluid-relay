@@ -866,4 +866,52 @@ describe("SessionRuntime", () => {
     // Should not throw or change state
     expect(() => runtime.handlePolicyCommand({ type: "capabilities_timeout" })).not.toThrow();
   });
+
+  it("blocks mutating commands when lease check denies ownership", () => {
+    const send = vi.fn();
+    const session = createMockSession({ id: "s1", backendSession: { send } as any });
+    const onMutationRejected = vi.fn();
+    const deps = makeDeps({
+      canMutateSession: vi.fn().mockReturnValue(false),
+      onMutationRejected,
+    });
+    const runtime = new SessionRuntime(session, deps);
+
+    const accepted = runtime.sendUserMessage("blocked");
+    runtime.handleInboundCommand(
+      {
+        type: "user_message",
+        content: "blocked-2",
+        session_id: "backend-1",
+      },
+      createTestSocket(),
+    );
+
+    expect(accepted).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    expect(session.messageHistory).toEqual([]);
+    expect(onMutationRejected).toHaveBeenCalledWith("s1", "sendUserMessage");
+    expect(onMutationRejected).toHaveBeenCalledWith("s1", "handleInboundCommand");
+  });
+
+  it("blocks backend connection state updates when lease is not owned", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps({
+      canMutateSession: vi.fn().mockReturnValue(false),
+      onMutationRejected: vi.fn(),
+    });
+    const runtime = new SessionRuntime(session, deps);
+    const backendSession = { close: vi.fn() } as any;
+
+    runtime.attachBackendConnection({
+      backendSession,
+      backendAbort: new AbortController(),
+      supportsSlashPassthrough: true,
+      slashExecutor: null,
+    });
+    runtime.setState({ ...runtime.getState(), model: "blocked" });
+
+    expect(runtime.getBackendSession()).toBeNull();
+    expect(runtime.getState().model).not.toBe("blocked");
+  });
 });

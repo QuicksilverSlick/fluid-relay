@@ -1,10 +1,12 @@
 import type { Logger } from "../../interfaces/logger.js";
+import type { WebSocketLike } from "../../interfaces/transport.js";
 import type {
   InitializeAccount,
   InitializeCommand,
   InitializeModel,
 } from "../../types/cli-messages.js";
-import type { PolicyCommand } from "../interfaces/runtime-commands.js";
+import type { InboundCommand, PolicyCommand } from "../interfaces/runtime-commands.js";
+import type { SessionLeaseCoordinator } from "../session/session-lease-coordinator.js";
 import type { Session, SessionRepository } from "../session/session-repository.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import type { RuntimeManager } from "./runtime-manager.js";
@@ -13,17 +15,23 @@ export interface RuntimeApiOptions {
   store: SessionRepository;
   runtimeManager: RuntimeManager;
   logger: Logger;
+  leaseCoordinator: SessionLeaseCoordinator;
+  leaseOwnerId: string;
 }
 
 export class RuntimeApi {
   private readonly store: SessionRepository;
   private readonly runtimeManager: RuntimeManager;
   private readonly logger: Logger;
+  private readonly leaseCoordinator: SessionLeaseCoordinator;
+  private readonly leaseOwnerId: string;
 
   constructor(options: RuntimeApiOptions) {
     this.store = options.store;
     this.runtimeManager = options.runtimeManager;
     this.logger = options.logger;
+    this.leaseCoordinator = options.leaseCoordinator;
+    this.leaseOwnerId = options.leaseOwnerId;
   }
 
   sendUserMessage(
@@ -37,7 +45,7 @@ export class RuntimeApi {
       slashCommand?: string;
     },
   ): void {
-    this.withSessionVoid(sessionId, (session) =>
+    this.withMutableSessionVoid(sessionId, "sendUserMessage", (session) =>
       this.runtime(session).sendUserMessage(content, options),
     );
   }
@@ -52,21 +60,27 @@ export class RuntimeApi {
       message?: string;
     },
   ): void {
-    this.withSessionVoid(sessionId, (session) =>
+    this.withMutableSessionVoid(sessionId, "sendPermissionResponse", (session) =>
       this.runtime(session).sendPermissionResponse(requestId, behavior, options),
     );
   }
 
   sendInterrupt(sessionId: string): void {
-    this.withSessionVoid(sessionId, (session) => this.runtime(session).sendInterrupt());
+    this.withMutableSessionVoid(sessionId, "sendInterrupt", (session) =>
+      this.runtime(session).sendInterrupt(),
+    );
   }
 
   sendSetModel(sessionId: string, model: string): void {
-    this.withSessionVoid(sessionId, (session) => this.runtime(session).sendSetModel(model));
+    this.withMutableSessionVoid(sessionId, "sendSetModel", (session) =>
+      this.runtime(session).sendSetModel(model),
+    );
   }
 
   sendSetPermissionMode(sessionId: string, mode: string): void {
-    this.withSessionVoid(sessionId, (session) => this.runtime(session).sendSetPermissionMode(mode));
+    this.withMutableSessionVoid(sessionId, "sendSetPermissionMode", (session) =>
+      this.runtime(session).sendSetPermissionMode(mode),
+    );
   }
 
   getSupportedModels(sessionId: string): InitializeModel[] {
@@ -95,18 +109,36 @@ export class RuntimeApi {
   }
 
   applyPolicyCommand(sessionId: string, command: PolicyCommand): void {
-    this.withSessionVoid(sessionId, (session) =>
+    this.withMutableSessionVoid(sessionId, "applyPolicyCommand", (session) =>
       this.runtime(session).handlePolicyCommand(command),
     );
   }
 
+  handleInboundCommand(sessionId: string, msg: InboundCommand, ws: WebSocketLike): void {
+    this.withMutableSessionVoid(sessionId, "handleInboundCommand", (session) =>
+      this.runtime(session).handleInboundCommand(msg, ws),
+    );
+  }
+
+  handleBackendMessage(sessionId: string, message: UnifiedMessage): void {
+    this.withMutableSessionVoid(sessionId, "handleBackendMessage", (session) =>
+      this.runtime(session).handleBackendMessage(message),
+    );
+  }
+
+  handleLifecycleSignal(
+    sessionId: string,
+    signal: "backend:connected" | "backend:disconnected" | "session:closed",
+  ): void {
+    this.withMutableSessionVoid(sessionId, "handleLifecycleSignal", (session) =>
+      this.runtime(session).handleSignal(signal),
+    );
+  }
+
   sendToBackend(sessionId: string, message: UnifiedMessage): void {
-    const session = this.store.get(sessionId);
-    if (!session) {
-      this.logger.warn(`No backend session for ${sessionId}, cannot send message`);
-      return;
-    }
-    this.runtime(session).sendToBackend(message);
+    this.withMutableSessionVoid(sessionId, "sendToBackend", (session) =>
+      this.runtime(session).sendToBackend(message),
+    );
   }
 
   private runtime(session: Session) {
@@ -119,9 +151,36 @@ export class RuntimeApi {
     return run(session);
   }
 
-  private withSessionVoid(sessionId: string, run: (session: Session) => void): void {
+  private withMutableSession<T>(
+    sessionId: string,
+    operation: string,
+    onMissing: T,
+    run: (session: Session) => T,
+  ): T {
     const session = this.store.get(sessionId);
-    if (!session) return;
-    run(session);
+    if (!session) {
+      if (operation === "sendToBackend") {
+        this.logger.warn(`No backend session for ${sessionId}, cannot send message`);
+      }
+      return onMissing;
+    }
+    if (!this.leaseCoordinator.ensureLease(sessionId, this.leaseOwnerId)) {
+      this.logger.warn("Session mutation blocked: lease not owned by this runtime", {
+        sessionId,
+        operation,
+        leaseOwnerId: this.leaseOwnerId,
+        currentLeaseOwner: this.leaseCoordinator.currentOwner(sessionId),
+      });
+      return onMissing;
+    }
+    return run(session);
+  }
+
+  private withMutableSessionVoid(
+    sessionId: string,
+    operation: string,
+    run: (session: Session) => void,
+  ): void {
+    this.withMutableSession(sessionId, operation, undefined, (session) => run(session));
   }
 }

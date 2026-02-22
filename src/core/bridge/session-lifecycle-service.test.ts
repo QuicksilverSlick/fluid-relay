@@ -2,11 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "../../interfaces/logger.js";
 import type { MetricsCollector } from "../../interfaces/metrics.js";
 import { createMockSession } from "../../testing/cli-message-factories.js";
+import { InMemorySessionLeaseCoordinator } from "../session/session-lease-coordinator.js";
 import type { Session, SessionRepository } from "../session/session-repository.js";
 import type { RuntimeManager } from "./runtime-manager.js";
 import { SessionLifecycleService } from "./session-lifecycle-service.js";
 
-function createService() {
+function createService(options?: { leaseOwnerId?: string; preclaimedLeaseOwner?: string }) {
   const sessions = new Map<string, Session>();
 
   const store = {
@@ -54,6 +55,11 @@ function createService() {
   };
 
   const emitSessionClosed = vi.fn();
+  const leaseCoordinator = new InMemorySessionLeaseCoordinator();
+  const leaseOwnerId = options?.leaseOwnerId ?? "owner-a";
+  if (options?.preclaimedLeaseOwner) {
+    leaseCoordinator.ensureLease("s1", options.preclaimedLeaseOwner);
+  }
 
   const service = new SessionLifecycleService({
     store,
@@ -62,6 +68,8 @@ function createService() {
     metrics,
     logger,
     emitSessionClosed,
+    leaseCoordinator,
+    leaseOwnerId,
   });
 
   return {
@@ -74,6 +82,8 @@ function createService() {
     metrics,
     logger,
     emitSessionClosed,
+    leaseCoordinator,
+    leaseOwnerId,
   };
 }
 
@@ -200,5 +210,30 @@ describe("SessionLifecycleService", () => {
     expect(spy).toHaveBeenCalledWith("s1");
     expect(spy).toHaveBeenCalledWith("s2");
     expect(runtimeManager.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases session lease on remove and close", async () => {
+    const { service, sessions, leaseCoordinator, leaseOwnerId } = createService();
+    sessions.set("s1", createMockSession({ id: "s1" }));
+    service.getOrCreateSession("s1");
+    expect(leaseCoordinator.currentOwner("s1")).toBe(leaseOwnerId);
+
+    service.removeSession("s1");
+    expect(leaseCoordinator.currentOwner("s1")).toBeNull();
+
+    sessions.set("s2", createMockSession({ id: "s2" }));
+    service.getOrCreateSession("s2");
+    expect(leaseCoordinator.currentOwner("s2")).toBe(leaseOwnerId);
+
+    await service.closeSession("s2");
+    expect(leaseCoordinator.currentOwner("s2")).toBeNull();
+  });
+
+  it("throws when lease is already owned by another runtime", () => {
+    const { service } = createService({ preclaimedLeaseOwner: "owner-b", leaseOwnerId: "owner-a" });
+
+    expect(() => service.getOrCreateSession("s1")).toThrow(
+      "Session lease for s1 is owned by another runtime",
+    );
   });
 });

@@ -619,6 +619,8 @@ Policy services follow the **observe and advise** pattern: they subscribe to dom
 
 The SessionRepository owns the in-memory session map (`Map<string, Session>`), creates live `Session` objects, provides session/query helpers, and delegates persistence operations to `SessionStorage`.
 
+> **Topology constraint:** live session coordination is process-local. Persistence enables restart recovery, but does not make multi-instance BeamCode nodes share runtime state. Current topology is single-node. A lease-coordination seam (`SessionLeaseCoordinator`) now exists for future distributed ownership.
+
 **Responsibilities:**
 - **Own live sessions:** `getOrCreate()`, `get()`, `has()`, `keys()`, and `remove()` over live `Session` objects
 - **Expose query snapshots:** `getSnapshot()` and `getAllStates()` for read models

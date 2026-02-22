@@ -87,6 +87,8 @@ export interface SessionRuntimeDeps {
     session: Session,
     signal: "backend:connected" | "backend:disconnected" | "session:closed",
   ) => void;
+  canMutateSession?: (sessionId: string, operation: string) => boolean;
+  onMutationRejected?: (sessionId: string, operation: string) => void;
 }
 
 export class SessionRuntime {
@@ -97,6 +99,15 @@ export class SessionRuntime {
     private readonly deps: SessionRuntimeDeps,
   ) {
     this.hydrateSlashRegistryFromState();
+  }
+
+  private ensureMutationAllowed(operation: string): boolean {
+    if (!this.deps.canMutateSession) return true;
+    const allowed = this.deps.canMutateSession(this.session.id, operation);
+    if (!allowed) {
+      this.deps.onMutationRejected?.(this.session.id, operation);
+    }
+    return allowed;
   }
 
   getLifecycleState(): LifecycleState {
@@ -135,6 +146,7 @@ export class SessionRuntime {
   }
 
   setAdapterName(name: string): void {
+    if (!this.ensureMutationAllowed("setAdapterName")) return;
     this.session.adapterName = name;
     this.session.state.adapterName = name;
     this.deps.persistSession(this.session);
@@ -149,14 +161,17 @@ export class SessionRuntime {
   }
 
   setLastStatus(status: Session["lastStatus"]): void {
+    if (!this.ensureMutationAllowed("setLastStatus")) return;
     this.session.lastStatus = status;
   }
 
   setState(state: Session["state"]): void {
+    if (!this.ensureMutationAllowed("setState")) return;
     this.session.state = state;
   }
 
   setBackendSessionId(sessionId: string | undefined): void {
+    if (!this.ensureMutationAllowed("setBackendSessionId")) return;
     this.session.backendSessionId = sessionId;
   }
 
@@ -165,6 +180,7 @@ export class SessionRuntime {
   }
 
   setMessageHistory(history: Session["messageHistory"]): void {
+    if (!this.ensureMutationAllowed("setMessageHistory")) return;
     this.session.messageHistory = history;
   }
 
@@ -173,6 +189,7 @@ export class SessionRuntime {
   }
 
   setQueuedMessage(queued: Session["queuedMessage"]): void {
+    if (!this.ensureMutationAllowed("setQueuedMessage")) return;
     this.session.queuedMessage = queued;
   }
 
@@ -209,6 +226,7 @@ export class SessionRuntime {
   }
 
   setPendingInitialize(pendingInitialize: Session["pendingInitialize"]): void {
+    if (!this.ensureMutationAllowed("setPendingInitialize")) return;
     this.session.pendingInitialize = pendingInitialize;
   }
 
@@ -224,35 +242,44 @@ export class SessionRuntime {
   }
 
   registerCLICommands(commands: InitializeCommand[]): void {
+    if (!this.ensureMutationAllowed("registerCLICommands")) return;
     this.session.registry.registerFromCLI?.(commands);
   }
 
   registerSlashCommandNames(commands: string[]): void {
+    if (!this.ensureMutationAllowed("registerSlashCommandNames")) return;
     if (commands.length === 0) return;
     this.registerCLICommands(commands.map((name) => ({ name, description: "" })));
   }
 
   registerSkillCommands(skills: string[]): void {
+    if (!this.ensureMutationAllowed("registerSkillCommands")) return;
     if (skills.length === 0) return;
     this.session.registry.registerSkills?.(skills);
   }
 
   clearDynamicSlashRegistry(): void {
+    if (!this.ensureMutationAllowed("clearDynamicSlashRegistry")) return;
     this.session.registry.clearDynamic?.();
   }
 
   seedSessionState(params: { cwd?: string; model?: string }): void {
+    if (!this.ensureMutationAllowed("seedSessionState")) return;
     if (params.cwd) this.session.state.cwd = params.cwd;
     if (params.model) this.session.state.model = params.model;
     this.deps.onSessionSeeded?.(this.session);
   }
 
   allocateAnonymousIdentityIndex(): number {
+    if (!this.ensureMutationAllowed("allocateAnonymousIdentityIndex")) {
+      return this.session.anonymousCounter;
+    }
     this.session.anonymousCounter += 1;
     return this.session.anonymousCounter;
   }
 
   addConsumer(ws: WebSocketLike, identity: ConsumerIdentity): void {
+    if (!this.ensureMutationAllowed("addConsumer")) return;
     this.session.consumerSockets.set(ws, identity);
   }
 
@@ -293,6 +320,7 @@ export class SessionRuntime {
     supportsSlashPassthrough: boolean;
     slashExecutor: Session["adapterSlashExecutor"] | null;
   }): void {
+    if (!this.ensureMutationAllowed("attachBackendConnection")) return;
     this.session.backendSession = params.backendSession;
     this.session.backendAbort = params.backendAbort;
     this.session.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
@@ -300,6 +328,7 @@ export class SessionRuntime {
   }
 
   resetBackendConnectionState(): void {
+    if (!this.ensureMutationAllowed("resetBackendConnectionState")) return;
     this.clearBackendConnection();
     this.session.backendSessionId = undefined;
     this.session.adapterSupportsSlashPassthrough = false;
@@ -307,22 +336,26 @@ export class SessionRuntime {
   }
 
   drainPendingMessages(): UnifiedMessage[] {
+    if (!this.ensureMutationAllowed("drainPendingMessages")) return [];
     const pending = this.session.pendingMessages;
     this.session.pendingMessages = [];
     return pending;
   }
 
   drainPendingPermissionIds(): string[] {
+    if (!this.ensureMutationAllowed("drainPendingPermissionIds")) return [];
     const ids = Array.from(this.session.pendingPermissions.keys());
     this.session.pendingPermissions.clear();
     return ids;
   }
 
   storePendingPermission(requestId: string, request: PermissionRequest): void {
+    if (!this.ensureMutationAllowed("storePendingPermission")) return;
     this.session.pendingPermissions.set(requestId, request);
   }
 
   enqueuePendingPassthrough(entry: Session["pendingPassthroughs"][number]): void {
+    if (!this.ensureMutationAllowed("enqueuePendingPassthrough")) return;
     this.session.pendingPassthroughs.push(entry);
   }
 
@@ -331,10 +364,12 @@ export class SessionRuntime {
   }
 
   shiftPendingPassthrough(): Session["pendingPassthroughs"][number] | undefined {
+    if (!this.ensureMutationAllowed("shiftPendingPassthrough")) return undefined;
     return this.session.pendingPassthroughs.shift();
   }
 
   checkRateLimit(ws: WebSocketLike, createLimiter: () => RateLimiter | undefined): boolean {
+    if (!this.ensureMutationAllowed("checkRateLimit")) return false;
     let limiter = this.session.consumerRateLimiters.get(ws);
     if (!limiter) {
       limiter = createLimiter();
@@ -345,6 +380,7 @@ export class SessionRuntime {
   }
 
   transitionLifecycle(next: LifecycleState, reason: string): boolean {
+    if (!this.ensureMutationAllowed("transitionLifecycle")) return false;
     const current = this.lifecycle;
     if (current === next) return true;
     if (!isLifecycleTransitionAllowed(current, next)) {
@@ -361,6 +397,7 @@ export class SessionRuntime {
   }
 
   handleInboundCommand(msg: InboundCommand, ws: WebSocketLike): void {
+    if (!this.ensureMutationAllowed("handleInboundCommand")) return;
     this.touchActivity();
     this.deps.onInboundObserved?.(this.session, msg);
     switch (msg.type) {
@@ -425,6 +462,7 @@ export class SessionRuntime {
   }
 
   sendUserMessage(content: string, options?: RuntimeSendUserMessageOptions): boolean {
+    if (!this.ensureMutationAllowed("sendUserMessage")) return false;
     const unified = this.deps.tracedNormalizeInbound(
       this.session,
       {
@@ -479,6 +517,7 @@ export class SessionRuntime {
     behavior: "allow" | "deny",
     options?: RuntimeSendPermissionOptions,
   ): void {
+    if (!this.ensureMutationAllowed("sendPermissionResponse")) return;
     const pending = this.session.pendingPermissions.get(requestId);
     if (!pending) {
       this.deps.warnUnknownPermission(this.session.id, requestId);
@@ -516,6 +555,7 @@ export class SessionRuntime {
   }
 
   handlePolicyCommand(command: PolicyCommand): void {
+    if (!this.ensureMutationAllowed("handlePolicyCommand")) return;
     switch (command.type) {
       case "reconnect_timeout":
         this.transitionLifecycle("degraded", "policy:reconnect_timeout");
@@ -532,14 +572,17 @@ export class SessionRuntime {
   async executeSlashCommand(
     command: string,
   ): Promise<{ content: string; source: "emulated" } | null> {
+    if (!this.ensureMutationAllowed("executeSlashCommand")) return null;
     return this.deps.slashService.executeProgrammatic(this.session, command);
   }
 
   sendToBackend(message: UnifiedMessage): void {
+    if (!this.ensureMutationAllowed("sendToBackend")) return;
     this.deps.sendToBackend(this.session, message);
   }
 
   private sendControlRequest(msg: InboundCommand): void {
+    if (!this.ensureMutationAllowed("sendControlRequest")) return;
     if (!this.session.backendSession) return;
     const unified = this.deps.tracedNormalizeInbound(this.session, msg);
     if (unified) {
@@ -548,6 +591,7 @@ export class SessionRuntime {
   }
 
   handleBackendMessage(msg: UnifiedMessage): void {
+    if (!this.ensureMutationAllowed("handleBackendMessage")) return;
     this.touchActivity();
     this.deps.onBackendMessageObserved?.(this.session, msg);
     this.deps.routeBackendMessage?.(this.session, msg);
@@ -556,6 +600,7 @@ export class SessionRuntime {
   }
 
   handleSignal(signal: "backend:connected" | "backend:disconnected" | "session:closed"): void {
+    if (!this.ensureMutationAllowed("handleSignal")) return;
     if (signal === "backend:connected") {
       this.transitionLifecycle("active", "signal:backend:connected");
     } else if (signal === "backend:disconnected") {

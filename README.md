@@ -164,6 +164,19 @@ Then open `http://localhost:5174`.
 - **Rate limiting**: Token bucket per consumer (configurable)
 - **Circuit breaker**: Sliding window prevents CLI restart cascades
 
+## Deployment Topology
+
+BeamCode currently runs as a **single-node runtime** for session coordination:
+
+- Live session state is **process-local** (in-memory runtime objects)
+- Persistent storage supports restart recovery, but **does not provide distributed coordination**
+- Running multiple BeamCode instances (especially with different `--data-dir`) creates isolated session islands, not a shared cluster
+
+The `/health` endpoint exposes this explicitly under `deployment`:
+- `topology: "single-node"`
+- `session_state_scope: "process-local"`
+- `horizontal_scaling: "unsupported"`
+
 See [SECURITY.md](./SECURITY.md) for the full threat model and cryptographic details.
 
 ## Documentation

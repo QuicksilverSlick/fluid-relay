@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "../../interfaces/logger.js";
+import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { PolicyCommand } from "../interfaces/runtime-commands.js";
+import {
+  InMemorySessionLeaseCoordinator,
+  type SessionLeaseCoordinator,
+} from "../session/session-lease-coordinator.js";
 import type { Session, SessionRepository } from "../session/session-repository.js";
 import { RuntimeApi } from "./runtime-api.js";
 import type { RuntimeManager } from "./runtime-manager.js";
@@ -22,10 +27,16 @@ function createRuntimeStub() {
     executeSlashCommand: vi.fn().mockResolvedValue({ content: "ok", source: "emulated" }),
     handlePolicyCommand: vi.fn(),
     sendToBackend: vi.fn(),
+    handleInboundCommand: vi.fn(),
+    handleBackendMessage: vi.fn(),
+    handleSignal: vi.fn(),
   };
 }
 
-function createApi() {
+function createApi(options?: {
+  leaseCoordinator?: SessionLeaseCoordinator;
+  leaseOwnerId?: string;
+}) {
   const sessions = new Map<string, Session>();
   const store = {
     get: vi.fn((sessionId: string) => sessions.get(sessionId)),
@@ -42,7 +53,9 @@ function createApi() {
     error: vi.fn(),
   };
 
-  const api = new RuntimeApi({ store, runtimeManager, logger });
+  const leaseCoordinator = options?.leaseCoordinator ?? new InMemorySessionLeaseCoordinator();
+  const leaseOwnerId = options?.leaseOwnerId ?? "owner-1";
+  const api = new RuntimeApi({ store, runtimeManager, logger, leaseCoordinator, leaseOwnerId });
   return { api, sessions, runtime, runtimeManager, logger };
 }
 
@@ -143,5 +156,39 @@ describe("RuntimeApi", () => {
     expect(runtime.sendPermissionResponse).toHaveBeenCalledWith("req-1", "allow", {
       message: "ok",
     });
+  });
+
+  it("delegates inbound/backend handlers when session exists", () => {
+    const { api, sessions, runtime } = createApi();
+    sessions.set("s1", stubSession("s1"));
+    const ws = {} as WebSocketLike;
+    const inbound = { type: "interrupt" } as any;
+    const backend = { type: "result", metadata: {} } as any;
+
+    api.handleInboundCommand("s1", inbound, ws);
+    api.handleBackendMessage("s1", backend);
+    api.handleLifecycleSignal("s1", "backend:connected");
+
+    expect(runtime.handleInboundCommand).toHaveBeenCalledWith(inbound, ws);
+    expect(runtime.handleBackendMessage).toHaveBeenCalledWith(backend);
+    expect(runtime.handleSignal).toHaveBeenCalledWith("backend:connected");
+  });
+
+  it("blocks mutation when lease is held by another owner", () => {
+    const leaseCoordinator = new InMemorySessionLeaseCoordinator();
+    leaseCoordinator.ensureLease("s1", "owner-other");
+    const { api, sessions, runtime, logger } = createApi({
+      leaseCoordinator,
+      leaseOwnerId: "owner-1",
+    });
+    sessions.set("s1", stubSession("s1"));
+
+    api.sendInterrupt("s1");
+
+    expect(runtime.sendInterrupt).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Session mutation blocked: lease not owned by this runtime",
+      expect.objectContaining({ sessionId: "s1", operation: "sendInterrupt" }),
+    );
   });
 });
