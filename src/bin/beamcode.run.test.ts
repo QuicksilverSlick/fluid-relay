@@ -11,8 +11,10 @@ const harness = vi.hoisted(() => {
   const coordinatorStop = vi.fn(async () => {});
   const coordinatorCreateSession = vi.fn(async () => ({ sessionId: "session-1" }));
   const coordinatorSetServer = vi.fn();
+  const coordinatorOn = vi.fn();
   const coordinatorInstances: Array<{
     setServer: ReturnType<typeof vi.fn>;
+    on: ReturnType<typeof vi.fn>;
     start: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
     createSession: ReturnType<typeof vi.fn>;
@@ -61,6 +63,7 @@ const harness = vi.hoisted(() => {
 
   class MockSessionCoordinator {
     setServer = coordinatorSetServer;
+    on = coordinatorOn;
     start = coordinatorStart;
     stop = coordinatorStop;
     createSession = coordinatorCreateSession;
@@ -104,6 +107,7 @@ const harness = vi.hoisted(() => {
     coordinatorStop,
     coordinatorCreateSession,
     coordinatorSetServer,
+    coordinatorOn,
     coordinatorInstances,
     wsServerInstances,
     apiAuthenticatorTokens,
