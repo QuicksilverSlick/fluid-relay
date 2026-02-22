@@ -441,6 +441,7 @@ describe("translateEvent: session.status retry", () => {
     const msg = translateEvent(event);
     expect(msg).not.toBeNull();
     expect(msg!.type).toBe("status_change");
+    expect(msg!.metadata.status).toBe("retry");
     expect(msg!.metadata.retry).toBe(true);
     expect(msg!.metadata.attempt).toBe(2);
     expect(msg!.metadata.message).toBe("Rate limited");

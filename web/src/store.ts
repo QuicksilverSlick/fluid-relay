@@ -41,7 +41,8 @@ export interface SessionData {
   streamingBlocks: ConsumerContentBlock[];
   connectionStatus: "connected" | "connecting" | "disconnected";
   cliConnected: boolean;
-  sessionStatus: "idle" | "running" | "compacting" | null;
+  sessionStatus: "idle" | "running" | "compacting" | "retry" | null;
+  retryInfo: { message: string; attempt: number; next: number } | null;
   pendingPermissions: Record<string, ConsumerPermissionRequest>;
   state: ConsumerSessionState | null;
   capabilities: {
@@ -139,7 +140,11 @@ export interface AppState {
     status: "connected" | "connecting" | "disconnected",
   ) => void;
   setCliConnected: (sessionId: string, connected: boolean) => void;
-  setSessionStatus: (sessionId: string, status: "idle" | "running" | "compacting" | null) => void;
+  setSessionStatus: (
+    sessionId: string,
+    status: "idle" | "running" | "compacting" | "retry" | null,
+  ) => void;
+  setRetryInfo: (sessionId: string, info: SessionData["retryInfo"]) => void;
   addPermission: (sessionId: string, request: ConsumerPermissionRequest) => void;
   removePermission: (sessionId: string, requestId: string) => void;
   clearPendingPermissions: (sessionId: string) => void;
@@ -193,6 +198,7 @@ function emptySessionData(): SessionData {
     connectionStatus: "disconnected",
     cliConnected: false,
     sessionStatus: null,
+    retryInfo: null,
     pendingPermissions: {},
     state: null,
     capabilities: null,
@@ -410,6 +416,8 @@ export const useStore = create<AppState>()((set, get) => ({
 
   setSessionStatus: (sessionId, status) =>
     set((s) => patchSession(s, sessionId, { sessionStatus: status })),
+
+  setRetryInfo: (sessionId, info) => set((s) => patchSession(s, sessionId, { retryInfo: info })),
 
   addPermission: (sessionId, request) =>
     set((s) => {

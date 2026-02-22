@@ -378,6 +378,7 @@ function translateSessionStatus(
         role: "system",
         metadata: {
           session_id: sessionID,
+          status: "retry",
           retry: true,
           attempt: status.attempt,
           message: status.message,

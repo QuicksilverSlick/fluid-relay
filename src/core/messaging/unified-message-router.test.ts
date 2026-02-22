@@ -304,6 +304,31 @@ describe("UnifiedMessageRouter", () => {
       );
       expect(sessionUpdateCall).toBeDefined();
     });
+
+    it("broadcasts status: retry and retains retry metadata", () => {
+      const m = msg("status_change", {
+        status: "retry",
+        retry: true,
+        attempt: 1,
+        message: "The usage limit has been reached",
+        next: 9999999,
+      });
+      router.route(session, m);
+
+      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+        session,
+        expect.objectContaining({
+          type: "status_change",
+          status: "retry",
+          metadata: expect.objectContaining({
+            retry: true,
+            attempt: 1,
+            message: "The usage limit has been reached",
+            next: 9999999,
+          }),
+        }),
+      );
+    });
   });
 
   // ── assistant ─────────────────────────────────────────────────────────

@@ -299,12 +299,33 @@ Temporary exceptions go in `docs/refactor-plan/architecture-waivers.json` with `
 
 ```bash
 pnpm build
-node dist/bin/beamcode.mjs --no-tunnel        # start locally
+pnpm start --no-tunnel                        # start locally
 curl http://localhost:9414/health              # health check
-node dist/bin/beamcode.mjs --no-tunnel --port 8080
+pnpm start --no-tunnel --port 8080
+
+# With full trace output redirected to file
+pnpm start --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
 ```
 
 `Ctrl+C` once = graceful shutdown. `Ctrl+C` twice = force exit.
+
+### Rebuild and Restart Guide
+
+The frontend HTML (including bundled JS) is loaded from disk **once at startup** and cached in memory (`src/http/consumer-html.ts`). The server never re-reads it while running. A restart is therefore required whenever you rebuild either layer.
+
+| Changed | Build command | Restart required? |
+|---------|--------------|:-----------------:|
+| Backend only (`src/`) | `pnpm build:lib` | ✅ |
+| Frontend only (`web/src/`) | `pnpm build:web` | ✅ |
+| Both | `pnpm build` | ✅ |
+
+**Iterating on frontend UI without restarting:**
+
+```bash
+pnpm dev:web          # Vite dev server on port 5174, HMR enabled
+```
+
+Vite proxies the WebSocket to the already-running beamcode server on port 9414, so you get hot-reload on React/CSS changes without touching the server process. Use this for frontend-only iteration; switch to `pnpm build` + restart when you also change backend code.
 
 ---
 
@@ -331,6 +352,20 @@ See **[docs/unified-message-protocol.md](docs/unified-message-protocol.md)** for
 | `interrupt` | consumer → backend | — |
 | `session_lifecycle` | internal | ✅ |
 
+#### `status_change` values
+
+The `status` field on a `status_change` message reflects the session's current operational state:
+
+| Value | Meaning |
+|-------|---------|
+| `"running"` | Actively processing a prompt |
+| `"idle"` | Ready to accept a new message |
+| `"compacting"` | Context window is being compacted |
+| `"retry"` | Rate-limited — backend is waiting to retry; `metadata` contains `message`, `attempt`, and `next` (epoch ms until next attempt) |
+| `null` | Unknown / transitional |
+
+When `status === "retry"`, the frontend renders the message and attempt count in the streaming indicator and clears it automatically when the backend resumes.
+
 ---
 
 ## Message Tracing
@@ -348,6 +383,7 @@ beamcode --trace --trace-level headers
 
 # Full payloads: every message logged as-is (requires explicit opt-in)
 beamcode --trace --trace-level full --trace-allow-sensitive
+pnpm start --no-tunnel --verbose --trace --trace-level full --trace-allow-sensitive 2>trace.log
 
 # Environment-variable controls (CLI flags override env)
 BEAMCODE_TRACE=1 beamcode
