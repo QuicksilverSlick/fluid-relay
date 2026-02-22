@@ -91,6 +91,19 @@ describe("ws multi-connection manager", () => {
     expect(MockWebSocket.instances[0].url).toContain("token=ws-test-token");
   });
 
+  it("prefers beamcode-ws-token over legacy beamcode-consumer-token", () => {
+    document.head.innerHTML = [
+      '<meta name="beamcode-consumer-token" content="legacy-token">',
+      '<meta name="beamcode-ws-token" content="scoped-ws-token">',
+    ].join("");
+
+    connectToSession("s1");
+
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(MockWebSocket.instances[0].url).toContain("token=scoped-ws-token");
+    expect(MockWebSocket.instances[0].url).not.toContain("token=legacy-token");
+  });
+
   // ── Idempotent connect ───────────────────────────────────────────────────
 
   it("does not create a second socket if session is already CONNECTING", () => {

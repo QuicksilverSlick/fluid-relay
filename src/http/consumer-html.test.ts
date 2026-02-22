@@ -241,7 +241,8 @@ describe("consumer-html", () => {
       const html = loadConsumerHtml();
 
       expect(html).toContain('<meta name="beamcode-api-token" content="api-key-123">');
-      expect(html).toContain('<meta name="beamcode-consumer-token" content="ws-key-456">');
+      expect(html).toContain('<meta name="beamcode-consumer-token" content="api-key-123">');
+      expect(html).toContain('<meta name="beamcode-ws-token" content="ws-key-456">');
     });
 
     it("updates existing injected tags instead of duplicating stale values", async () => {
@@ -258,7 +259,8 @@ describe("consumer-html", () => {
 
       const html = loadConsumerHtml();
       expect(html).toContain('<meta name="beamcode-api-token" content="api-new">');
-      expect(html).toContain('<meta name="beamcode-consumer-token" content="ws-new">');
+      expect(html).toContain('<meta name="beamcode-consumer-token" content="api-new">');
+      expect(html).toContain('<meta name="beamcode-ws-token" content="ws-new">');
       expect(html).not.toContain("api-old");
       expect(html).not.toContain("ws-old");
     });

@@ -80,7 +80,9 @@ function getConsumerId(): string {
 
 function getConsumerWsToken(): string | null {
   return (
-    document.querySelector<HTMLMetaElement>('meta[name="beamcode-consumer-token"]')?.content ?? null
+    document.querySelector<HTMLMetaElement>('meta[name="beamcode-ws-token"]')?.content ??
+    document.querySelector<HTMLMetaElement>('meta[name="beamcode-consumer-token"]')?.content ??
+    null
   );
 }
 

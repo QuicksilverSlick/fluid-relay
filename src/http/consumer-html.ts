@@ -10,7 +10,7 @@ let cachedHtml: string | null = null;
 let cachedGzip: Buffer | null = null;
 let cachedCsp: string | null = null;
 let cachedApiToken: string | null = null;
-let cachedConsumerToken: string | null = null;
+let cachedWsToken: string | null = null;
 
 /** Compute SHA-256 hashes of inline <script> and <style> blocks for CSP. */
 function computeInlineHashes(html: string): { scriptHashes: string[]; styleHashes: string[] } {
@@ -78,9 +78,16 @@ function rebuildInjectedHtml(): void {
       `<meta name="beamcode-api-token" content="${escapeHtmlAttribute(cachedApiToken)}">`,
     );
   }
-  if (cachedConsumerToken !== null) {
+  // Legacy compatibility: older clients read beamcode-consumer-token for API auth.
+  const legacyConsumerToken = cachedApiToken ?? cachedWsToken;
+  if (legacyConsumerToken !== null) {
     metaLines.push(
-      `<meta name="beamcode-consumer-token" content="${escapeHtmlAttribute(cachedConsumerToken)}">`,
+      `<meta name="beamcode-consumer-token" content="${escapeHtmlAttribute(legacyConsumerToken)}">`,
+    );
+  }
+  if (cachedWsToken !== null) {
+    metaLines.push(
+      `<meta name="beamcode-ws-token" content="${escapeHtmlAttribute(cachedWsToken)}">`,
     );
   }
 
@@ -95,7 +102,8 @@ function rebuildInjectedHtml(): void {
 /**
  * Inject scoped auth tokens into the consumer HTML.
  * - `apiToken`: used for HTTP API `Authorization: Bearer <token>`.
- * - `consumerToken`: used only for consumer WebSocket auth.
+ * - `consumerToken`: used only for consumer WebSocket auth (`beamcode-ws-token`).
+ * - `beamcode-consumer-token` remains API-compatible for older clients.
  */
 export function injectConsumerAuthTokens(options: {
   apiToken?: string;
@@ -105,7 +113,7 @@ export function injectConsumerAuthTokens(options: {
     cachedApiToken = options.apiToken;
   }
   if (options.consumerToken !== undefined) {
-    cachedConsumerToken = options.consumerToken;
+    cachedWsToken = options.consumerToken;
   }
   rebuildInjectedHtml();
 }
