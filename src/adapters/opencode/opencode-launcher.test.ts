@@ -172,6 +172,9 @@ describe("OpencodeLauncher", () => {
         },
       });
       const launcher = new OpencodeLauncher({ processManager: pm });
+      // Mock killProcess so the 5 s grace-period timer it starts does not
+      // outlive the fake-clock window (which only advances 16 s here).
+      vi.spyOn(launcher, "killProcess").mockResolvedValue(true);
 
       const launchPromise = launcher.launch("sess-timeout");
 
@@ -192,6 +195,61 @@ describe("OpencodeLauncher", () => {
       // Launch first session — should succeed
       const result = await launcher.launch("sess-A", { port: 4096 });
       expect(result.url).toBe("http://127.0.0.1:4096");
+    });
+  });
+
+  describe("orphan prevention on failed launch", () => {
+    it("kills the spawned process when waitForReady times out", async () => {
+      vi.useFakeTimers();
+
+      const pm = new StreamMockProcessManager();
+      pm.stdout = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("starting...\n"));
+          // never close — simulate a long-running process that never becomes ready
+        },
+      });
+      const launcher = new OpencodeLauncher({ processManager: pm });
+      launcher.on("error", () => {});
+
+      // Mock killProcess so the test does not need to resolve the grace-period
+      // timer — we only want to verify it is called with the right session ID.
+      const killSpy = vi.spyOn(launcher, "killProcess").mockResolvedValue(true);
+
+      const launchPromise = launcher.launch("sess-orphan-timeout");
+
+      await Promise.all([
+        expect(launchPromise).rejects.toThrow("opencode serve did not become ready within"),
+        vi.advanceTimersByTimeAsync(16_000),
+      ]);
+
+      expect(killSpy).toHaveBeenCalledWith("sess-orphan-timeout");
+
+      vi.useRealTimers();
+    });
+
+    it("calls killProcess cleanup when process crashes before ready", async () => {
+      const pm = new StreamMockProcessManager();
+      pm.stdout = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("starting...\n"));
+        },
+      });
+      const launcher = new OpencodeLauncher({ processManager: pm });
+      launcher.on("error", () => {});
+
+      // monitorExit already deletes the process from the map on exit, so
+      // killProcess returns false — mock it to verify it is still called.
+      const killSpy = vi.spyOn(launcher, "killProcess").mockResolvedValue(false);
+
+      const launchPromise = launcher.launch("sess-orphan-crash");
+
+      // Give spawn and piping time to set up, then simulate crash
+      await new Promise((r) => setTimeout(r, 10));
+      pm.lastProcess!.resolveExit(1);
+
+      await expect(launchPromise).rejects.toThrow("opencode serve exited before becoming ready");
+      expect(killSpy).toHaveBeenCalledWith("sess-orphan-crash");
     });
   });
 
