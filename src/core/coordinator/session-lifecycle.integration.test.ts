@@ -3,12 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { ClaudeAdapter } from "../adapters/claude/claude-adapter.js";
-import { ClaudeLauncher } from "../adapters/claude/claude-launcher.js";
-import { FileStorage } from "../adapters/file-storage.js";
-import { MemoryStorage } from "../adapters/memory-storage.js";
-import { NodeWebSocketServer } from "../adapters/node-ws-server.js";
-import { SessionCoordinator } from "../core/session-coordinator.js";
+import { ClaudeAdapter } from "../../adapters/claude/claude-adapter.js";
+import { ClaudeLauncher } from "../../adapters/claude/claude-launcher.js";
+import { FileStorage } from "../../adapters/file-storage.js";
+import { MemoryStorage } from "../../adapters/memory-storage.js";
+import { NodeWebSocketServer } from "../../adapters/node-ws-server.js";
 import {
   closeWebSockets,
   collectMessages,
@@ -18,7 +17,8 @@ import {
   getMessageText,
   mockAssistantMessage,
   waitForMessageType,
-} from "./helpers/test-utils.js";
+} from "../../test-utils/session-test-utils.js";
+import { SessionCoordinator } from "../session-coordinator.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

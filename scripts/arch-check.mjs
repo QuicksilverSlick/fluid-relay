@@ -296,15 +296,10 @@ function main() {
   const e2eNonTestFiles = walk(resolve(root, "src/e2e"))
     .map(toRel)
     .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
-  const e2eRealTestFiles = walk(resolve(root, "src/e2e/real"))
-    .map(toRel)
-    .filter((f) => f.endsWith(".e2e.test.ts"));
   const e2eTestFiles = walk(resolve(root, "src/e2e"))
     .map(toRel)
     .filter((f) => f.endsWith(".e2e.test.ts"));
-  const e2eRealFiles = walk(resolve(root, "src/e2e/real"))
-    .map(toRel)
-    .filter((f) => f.endsWith(".ts"));
+  const e2eAllFiles = [...e2eNonTestFiles, ...e2eTestFiles];
 
   const policyFiles = [
     "src/core/policies/reconnect-policy.ts",
@@ -324,7 +319,7 @@ function main() {
         "src/core/session-store.ts",
         "src/core/session-manager.ts",
         "src/core/interfaces/session-manager-coordination.ts",
-        "src/e2e/real/session-manager-setup.ts",
+        "src/e2e/session-manager-setup.ts",
       ],
       "legacy shim file reintroduced; use canonical coordinator-era modules",
     ),
@@ -385,40 +380,39 @@ function main() {
       /\b(TestSessionManager|setupTestSessionManager|cleanupSessionManager)\b/,
       "prefer TestSessionCoordinator helper names",
     ),
-    ...checkForbiddenImports("e2e_no_session_manager_import", e2eTestFiles, ["core/session-manager"]),
-    ...checkForbiddenImports("e2e_real_no_session_manager_import", e2eRealTestFiles, [
+    ...checkForbiddenImports("e2e_no_session_manager_import", e2eTestFiles, [
       "core/session-manager",
     ]),
-    ...checkForbiddenImports("e2e_real_no_manager_setup_import", e2eRealTestFiles, [
+    ...checkForbiddenImports("e2e_no_manager_setup_import", e2eTestFiles, [
       "session-manager-setup",
     ]),
     ...checkForbiddenPattern(
-      "e2e_real_no_manager_filename_refs",
-      ["package.json", ...e2eRealTestFiles],
+      "e2e_no_manager_filename_refs",
+      ["package.json", ...e2eTestFiles],
       /session-manager-(claude|codex|gemini|opencode)\.e2e\.test\.ts/,
       "prefer session-coordinator-*.e2e.test.ts filenames",
     ),
     ...checkForbiddenPattern(
-      "e2e_real_no_active_managers_symbol",
-      e2eRealTestFiles,
+      "e2e_no_active_managers_symbol",
+      e2eTestFiles,
       /\bactiveManagers\b/,
-      "prefer activeCoordinators naming in real e2e tests",
+      "prefer activeCoordinators naming in e2e tests",
     ),
     ...checkForbiddenPattern(
-      "e2e_real_no_session_manager_symbol",
-      e2eRealTestFiles,
+      "e2e_no_session_manager_symbol",
+      e2eTestFiles,
       /\bSessionManager\b/,
-      "prefer SessionCoordinator naming in real e2e tests",
+      "prefer SessionCoordinator naming in e2e tests",
     ),
     ...checkForbiddenPattern(
-      "e2e_real_no_legacy_manager_alias_symbols",
-      e2eRealFiles,
+      "e2e_no_legacy_manager_alias_symbols",
+      e2eAllFiles,
       /\b(activeManagers|waitForManagerEvent|SessionManagerEventPayload)\b/,
-      "remove legacy manager aliases in real e2e support files",
+      "remove legacy manager aliases in e2e support files",
     ),
     ...checkForbiddenPattern(
-      "e2e_real_context_no_manager_alias",
-      ["src/e2e/real/session-coordinator-setup.ts"],
+      "e2e_context_no_manager_alias",
+      ["src/e2e/session-coordinator-setup.ts"],
       /\bmanager\s*:\s*SessionCoordinator\b/,
       "RealSessionContext should expose coordinator only",
     ),

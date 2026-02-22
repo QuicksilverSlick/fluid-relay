@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe } from "vitest";
-import type { SessionCoordinator } from "../../core/session-coordinator.js";
+import type { SessionCoordinator } from "../core/session-coordinator.js";
 import {
   canBindLocalhostSync,
   deleteTrace,
@@ -19,7 +19,7 @@ import {
 } from "./helpers.js";
 import { getGeminiPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
-import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-real-e2e-tests.js";
+import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
 const prereqs = getGeminiPrereqState();
 const canBindLocalhost = canBindLocalhostSync();

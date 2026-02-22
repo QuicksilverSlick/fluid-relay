@@ -1,16 +1,16 @@
 import { WebSocket } from "ws";
-import { ClaudeAdapter } from "../../adapters/claude/claude-adapter.js";
-import { ClaudeLauncher } from "../../adapters/claude/claude-launcher.js";
-import { MemoryStorage } from "../../adapters/memory-storage.js";
-import { MockProcessManager } from "../../adapters/mock-process-manager.js";
-import { NodeProcessManager } from "../../adapters/node-process-manager.js";
-import { NodeWebSocketServer } from "../../adapters/node-ws-server.js";
-import { SessionCoordinator } from "../../core/session-coordinator.js";
-import type { Authenticator } from "../../interfaces/auth.js";
-import type { ProcessManager } from "../../interfaces/process-manager.js";
-import type { ProviderConfig } from "../../types/config.js";
-import { isClaudeAvailable } from "../../utils/claude-detection.js";
-import { getE2EProfile, isRealCliProfile } from "./e2e-profile.js";
+import { ClaudeAdapter } from "../adapters/claude/claude-adapter.js";
+import { ClaudeLauncher } from "../adapters/claude/claude-launcher.js";
+import { MemoryStorage } from "../adapters/memory-storage.js";
+import { MockProcessManager } from "../adapters/mock-process-manager.js";
+import { NodeProcessManager } from "../adapters/node-process-manager.js";
+import { NodeWebSocketServer } from "../adapters/node-ws-server.js";
+import { SessionCoordinator } from "../core/session-coordinator.js";
+import { getE2EProfile, isRealCliProfile } from "../e2e/e2e-profile.js";
+import type { Authenticator } from "../interfaces/auth.js";
+import type { ProcessManager } from "../interfaces/process-manager.js";
+import type { ProviderConfig } from "../types/config.js";
+import { isClaudeAvailable } from "../utils/claude-detection.js";
 
 // Prebuffer: WebSocket messages arriving before a test starts listening are
 // captured in a per-socket buffer so they're not lost to race conditions.

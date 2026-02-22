@@ -12,22 +12,22 @@ pnpm typecheck       # tsc --noEmit
 pnpm check:fix       # biome check --write src/
 pnpm check:arch      # enforce architectural layer boundaries
 
-# Unit + integration tests
-pnpm test                           # all unit + adapter integration tests
+# Unit + integration tests (no credentials needed)
+pnpm test                           # all unit + integration tests
 pnpm exec vitest run -t "test name" # single test by name
 
-# E2E mock — system-level (no credentials needed)
-pnpm test:e2e:mock
+# E2E smoke — binary in PATH, no API key (every PR)
+pnpm test:e2e:smoke                 # all adapters
+pnpm test:e2e:claude:smoke          # single adapter
 
-# E2E real backends (requires credentials + CLI binaries)
-pnpm test:e2e:real:smoke            # smoke tier, all adapters
-pnpm test:e2e:real:full             # full tier, all adapters
-pnpm test:e2e:real:<adapter>        # e.g. :claude :gemini :codex :opencode :agent-sdk
+# E2E full — binary + API key or CLI OAuth, sends real prompts (nightly)
+pnpm test:e2e:full                  # all adapters
+pnpm test:e2e:<adapter>             # e.g. :claude :gemini :codex :opencode :agent-sdk
 
-# Single real e2e test with full tracing
+# Single e2e test with full tracing
 BEAMCODE_TRACE=1 BEAMCODE_TRACE_LEVEL=full BEAMCODE_TRACE_ALLOW_SENSITIVE=1 \
   E2E_PROFILE=real-full USE_REAL_CLI=true \
-  pnpm exec vitest run src/e2e/real/session-coordinator-gemini.e2e.test.ts \
+  pnpm exec vitest run src/e2e/session-coordinator-gemini.e2e.test.ts \
   --config vitest.e2e.real.config.ts -t "test name" 2>trace.ndjson
 pnpm trace:inspect   # analyze trace.ndjson
 ```

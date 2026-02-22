@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { TestSessionCoordinator } from "./helpers/test-utils.js";
+import type { TestSessionCoordinator } from "../../test-utils/session-test-utils.js";
 import {
   cleanupSessionCoordinator,
   closeWebSockets,
@@ -8,7 +8,7 @@ import {
   setupTestSessionCoordinator,
   waitForMessage,
   waitForMessageType,
-} from "./helpers/test-utils.js";
+} from "../../test-utils/session-test-utils.js";
 
 describe("E2E: Presence & RBAC", () => {
   let tm: TestSessionCoordinator | undefined;

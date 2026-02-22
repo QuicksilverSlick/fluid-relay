@@ -9,8 +9,12 @@ import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { expect } from "vitest";
 import { WebSocket } from "ws";
-import type { SessionCoordinator } from "../../core/session-coordinator.js";
-import { attachPrebuffer, collectMessages, waitForMessageType } from "../helpers/test-utils.js";
+import type { SessionCoordinator } from "../core/session-coordinator.js";
+import {
+  attachPrebuffer,
+  collectMessages,
+  waitForMessageType,
+} from "../test-utils/session-test-utils.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -387,4 +391,8 @@ export function dumpTraceOnFailure(
 }
 
 // Re-export test-utils for convenience
-export { closeWebSockets, waitForMessage, waitForMessageType } from "../helpers/test-utils.js";
+export {
+  closeWebSockets,
+  waitForMessage,
+  waitForMessageType,
+} from "../test-utils/session-test-utils.js";

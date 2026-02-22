@@ -8,7 +8,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { SessionCoordinator } from "../../core/session-coordinator.js";
+import type { SessionCoordinator } from "../core/session-coordinator.js";
 import {
   canBindLocalhostSync,
   closeWebSockets,
@@ -21,7 +21,7 @@ import {
 } from "./helpers.js";
 import { getOpencodePrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
-import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-real-e2e-tests.js";
+import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
 const prereqs = getOpencodePrereqState();
 const canBindLocalhost = canBindLocalhostSync();

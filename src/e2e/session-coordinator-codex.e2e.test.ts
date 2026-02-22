@@ -8,7 +8,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { SessionCoordinator } from "../../core/session-coordinator.js";
+import type { SessionCoordinator } from "../core/session-coordinator.js";
 import {
   assistantTextContains,
   canBindLocalhostSync,
@@ -23,7 +23,7 @@ import {
 } from "./helpers.js";
 import { getCodexPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
-import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-real-e2e-tests.js";
+import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
 const prereqs = getCodexPrereqState();
 const canBindLocalhost = canBindLocalhostSync();

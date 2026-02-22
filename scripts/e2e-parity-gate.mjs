@@ -7,23 +7,28 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
 
 const REQUIRED_SCRIPTS = [
-  "test:e2e:mock",
-  "test:e2e:realcli:smoke:process",
-  "test:e2e:real:claude:smoke",
+  "test:e2e:smoke",
+  "test:e2e:smoke:process",
+  "test:e2e:claude:smoke",
 ];
 
 const REQUIRED_TEST_FILES = [
-  "src/e2e/session-lifecycle.e2e.test.ts",
-  "src/e2e/session-status.e2e.test.ts",
-  "src/e2e/presence-rbac.e2e.test.ts",
-  "src/e2e/slash-commands.e2e.test.ts",
-  "src/e2e/consumer-edge-cases.e2e.test.ts",
+  // Session integration tests (formerly mock e2e, now run under pnpm test)
+  "src/core/coordinator/session-lifecycle.integration.test.ts",
+  "src/core/coordinator/session-status.integration.test.ts",
+  "src/core/coordinator/streaming-conversation.integration.test.ts",
+  "src/core/bridge/permission-flow.integration.test.ts",
+  "src/core/consumer/presence-rbac.integration.test.ts",
+  "src/core/session/message-queue.integration.test.ts",
+  "src/server/ws-server-flow.integration.test.ts",
+  // Adapter integration tests (formerly adapter e2e, now run under pnpm test)
   "src/adapters/codex/codex-adapter.integration.test.ts",
   "src/adapters/gemini/gemini-adapter.integration.test.ts",
   "src/adapters/acp/acp-adapter.integration.test.ts",
   "src/adapters/opencode/opencode-adapter.integration.test.ts",
-  "src/e2e/real/smoke.e2e.test.ts",
-  "src/e2e/real/handshake.e2e.test.ts",
+  // E2E tests (real backends)
+  "src/e2e/smoke.e2e.test.ts",
+  "src/e2e/handshake.e2e.test.ts",
 ];
 
 const REQUIRED_DOCS = [];

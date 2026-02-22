@@ -2,14 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ClaudeAdapter } from "../../adapters/claude/claude-adapter.js";
-import { ClaudeLauncher } from "../../adapters/claude/claude-launcher.js";
-import { FileStorage } from "../../adapters/file-storage.js";
-import { MemoryStorage } from "../../adapters/memory-storage.js";
-import { NodeWebSocketServer } from "../../adapters/node-ws-server.js";
-import { SessionCoordinator } from "../../core/session-coordinator.js";
-import { getE2EProfile } from "../helpers/e2e-profile.js";
-import { createProcessManager } from "../helpers/test-utils.js";
+import { ClaudeAdapter } from "../adapters/claude/claude-adapter.js";
+import { ClaudeLauncher } from "../adapters/claude/claude-launcher.js";
+import { FileStorage } from "../adapters/file-storage.js";
+import { MemoryStorage } from "../adapters/memory-storage.js";
+import { NodeWebSocketServer } from "../adapters/node-ws-server.js";
+import { SessionCoordinator } from "../core/session-coordinator.js";
+import { createProcessManager } from "../test-utils/session-test-utils.js";
+import { getE2EProfile } from "./e2e-profile.js";
 import {
   assistantTextContains,
   attachTrace,
@@ -28,7 +28,7 @@ import {
 } from "./helpers.js";
 import { getRealCliPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
-import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-real-e2e-tests.js";
+import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
 const profile = getE2EProfile();
 const prereqs = getRealCliPrereqState();
