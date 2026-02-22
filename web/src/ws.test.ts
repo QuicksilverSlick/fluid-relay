@@ -977,6 +977,20 @@ describe("handleMessage", () => {
     expect(getSessionData()?.retryInfo).toBeNull();
   });
 
+  it("status_change: clears retryInfo when retry metadata is malformed", () => {
+    const ws = openSession();
+
+    ws.simulateMessage(
+      JSON.stringify({
+        type: "status_change",
+        status: "retry",
+        metadata: { message: 42, attempt: "bad", next: null },
+      }),
+    );
+
+    expect(getSessionData()?.retryInfo).toBeNull();
+  });
+
   // ── permission_request / permission_cancelled ───────────────────────────
 
   it("permission_request: adds to pending permissions", () => {

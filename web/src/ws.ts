@@ -311,11 +311,16 @@ function handleMessage(sessionId: string, data: string): void {
     case "status_change":
       store.setSessionStatus(sessionId, msg.status);
       if (msg.status === "retry" && msg.metadata) {
-        store.setRetryInfo(sessionId, {
-          message: msg.metadata.message as string,
-          attempt: msg.metadata.attempt as number,
-          next: msg.metadata.next as number,
-        });
+        const { message, attempt, next } = msg.metadata;
+        if (
+          typeof message === "string" &&
+          typeof attempt === "number" &&
+          typeof next === "number"
+        ) {
+          store.setRetryInfo(sessionId, { message, attempt, next });
+        } else {
+          store.setRetryInfo(sessionId, null);
+        }
       } else {
         store.setRetryInfo(sessionId, null);
       }
