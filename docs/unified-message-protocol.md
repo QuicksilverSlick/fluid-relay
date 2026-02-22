@@ -236,14 +236,7 @@ ACP agents (e.g., Goose) send `fs/read_text_file`, `fs/write_text_file`, `termin
 
 ## 7. Remaining Open Issues
 
-### ISSUE 1: ~~Claude Adapter Drops Rich Content Blocks~~ — RESOLVED
-
-~~**Severity:** Medium~~
-~~**File:** `src/adapters/claude/message-translator.ts`~~
-
-The Claude adapter now handles all 7 content types (`text`, `tool_use`, `tool_result`, `thinking`, `image`, `code`, `refusal`). Only truly unknown block types outside this union are converted to empty text blocks with `dropped_content_block_types` tracking.
-
-### ISSUE 2: ~~Metadata Shape Divergence Across Adapters~~ — PARTIALLY RESOLVED
+### ISSUE 1: ~~Metadata Shape Divergence Across Adapters~~ — PARTIALLY RESOLVED
 
 ~~**Severity:** Medium~~
 
@@ -255,18 +248,3 @@ Most metadata keys are now consistent across adapters:
 Remaining inconsistencies (lower priority):
 - **Model ID**: Claude uses `model`, OpenCode uses `model_id` + `provider_id`, Codex doesn't emit it
 - **Cost/usage**: Claude (`usage` object), OpenCode (`cost` + `tokens`), and ACP (passthrough `inputTokens`/`outputTokens`) provide usage in different shapes; Codex doesn't provide it
-
-### ISSUE 3: ~~Status Inference is Claude-Specific~~ — RESOLVED
-
-~~**Severity:** Low~~
-~~**File:** `src/core/messaging/unified-message-router.ts`~~
-
-The router infers "running" status from `stream_event` messages when `event.type === "message_start"` — a Claude-specific convention. This is now supplemented by:
-- **OpenCode**: `session.status(busy)` now emits `status_change` with `status: "running"` (previously only had `busy: true`)
-- **ACP**: `agent_message_chunk` now emits `status_change(running)` on the first chunk per turn via `turnRunningEmitted` flag
-
-All three adapters now produce a `status: "running"` signal the router can consume.
-
-### ~~ISSUE 4: Test Coverage Gaps for Content Types~~ — RESOLVED
-
-The consumer mapper test (`consumer-message-mapper.test.ts`) now tests all 7 content types including `code`, `image`, `thinking`, and `refusal` blocks. Characterization and integration tests also cover the full pipeline for these content types.
