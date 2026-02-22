@@ -104,6 +104,50 @@ describe("SessionRuntime", () => {
     expect(deps.persistSession).toHaveBeenCalledWith(session);
   });
 
+  it("rejects user_message when lifecycle is closed", () => {
+    const send = vi.fn();
+    const session = createMockSession({
+      id: "s1",
+      lastStatus: null,
+      backendSession: { send } as any,
+    });
+    const deps = makeDeps({
+      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
+    });
+    const runtime = new SessionRuntime(session, deps);
+    const ws = createTestSocket();
+
+    expect(runtime.transitionLifecycle("closed", "test:force-close")).toBe(true);
+
+    runtime.handleInboundCommand(
+      {
+        type: "user_message",
+        content: "should-reject",
+        session_id: "backend-1",
+      },
+      ws,
+    );
+
+    expect(runtime.getLifecycleState()).toBe("closed");
+    expect(session.lastStatus).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+    expect(session.messageHistory).toEqual([]);
+    expect(session.pendingMessages).toEqual([]);
+    expect(deps.persistSession).not.toHaveBeenCalled();
+    expect(deps.broadcaster.sendTo).toHaveBeenCalledWith(ws, {
+      type: "error",
+      message: "Session is closing or closed and cannot accept new messages.",
+    });
+    expect(deps.onInvalidLifecycleTransition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "s1",
+        from: "closed",
+        to: "active",
+        reason: "inbound:user_message",
+      }),
+    );
+  });
+
   it("trims message history using runtime-owned max length", () => {
     const send = vi.fn();
     const session = createMockSession({
@@ -468,8 +512,8 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.transitionLifecycle("closed", "force-close");
-    runtime.transitionLifecycle("active", "invalid-reopen");
+    expect(runtime.transitionLifecycle("closed", "force-close")).toBe(true);
+    expect(runtime.transitionLifecycle("active", "invalid-reopen")).toBe(false);
 
     expect(deps.onInvalidLifecycleTransition).toHaveBeenCalledWith(
       expect.objectContaining({

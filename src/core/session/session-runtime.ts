@@ -344,9 +344,9 @@ export class SessionRuntime {
     return limiter.tryConsume();
   }
 
-  transitionLifecycle(next: LifecycleState, reason: string): void {
+  transitionLifecycle(next: LifecycleState, reason: string): boolean {
     const current = this.lifecycle;
-    if (current === next) return;
+    if (current === next) return true;
     if (!isLifecycleTransitionAllowed(current, next)) {
       this.deps.onInvalidLifecycleTransition?.({
         sessionId: this.session.id,
@@ -354,9 +354,10 @@ export class SessionRuntime {
         to: next,
         reason,
       });
-      return;
+      return false;
     }
     this.lifecycle = next;
+    return true;
   }
 
   handleInboundCommand(msg: InboundCommand, ws: WebSocketLike): void {
@@ -365,11 +366,21 @@ export class SessionRuntime {
     switch (msg.type) {
       case "user_message":
         // Preserve legacy optimistic running behavior for queue decisions.
-        this.session.lastStatus = "running";
-        this.sendUserMessage(msg.content, {
-          sessionIdOverride: msg.session_id,
-          images: msg.images,
-        });
+        {
+          const previousStatus = this.session.lastStatus;
+          this.session.lastStatus = "running";
+          const accepted = this.sendUserMessage(msg.content, {
+            sessionIdOverride: msg.session_id,
+            images: msg.images,
+          });
+          if (!accepted) {
+            this.session.lastStatus = previousStatus;
+            this.deps.broadcaster.sendTo(ws, {
+              type: "error",
+              message: "Session is closing or closed and cannot accept new messages.",
+            });
+          }
+        }
         break;
       case "permission_response":
         this.sendPermissionResponse(msg.request_id, msg.behavior, {
@@ -413,16 +424,7 @@ export class SessionRuntime {
     this.deps.onInboundHandled?.(this.session, msg);
   }
 
-  sendUserMessage(content: string, options?: RuntimeSendUserMessageOptions): void {
-    const userMsg: ConsumerMessage = {
-      type: "user_message",
-      content,
-      timestamp: this.deps.now(),
-    };
-    this.session.messageHistory.push(userMsg);
-    this.trimMessageHistory();
-    this.deps.broadcaster.broadcast(this.session, userMsg);
-
+  sendUserMessage(content: string, options?: RuntimeSendUserMessageOptions): boolean {
     const unified = this.deps.tracedNormalizeInbound(
       this.session,
       {
@@ -437,16 +439,32 @@ export class SessionRuntime {
         command: options?.slashCommand,
       },
     );
-    if (!unified) return;
+    if (!unified) return true;
 
-    if (this.session.backendSession) {
-      this.transitionLifecycle("active", "inbound:user_message");
-      this.session.backendSession.send(unified);
+    const backendSession = this.session.backendSession;
+    const lifecycleTransitioned = backendSession
+      ? this.transitionLifecycle("active", "inbound:user_message")
+      : this.transitionLifecycle("awaiting_backend", "inbound:user_message:queued");
+    if (!lifecycleTransitioned) {
+      return false;
+    }
+
+    const userMsg: ConsumerMessage = {
+      type: "user_message",
+      content,
+      timestamp: this.deps.now(),
+    };
+    this.session.messageHistory.push(userMsg);
+    this.trimMessageHistory();
+    this.deps.broadcaster.broadcast(this.session, userMsg);
+
+    if (backendSession) {
+      backendSession.send(unified);
     } else {
       this.session.pendingMessages.push(unified);
-      this.transitionLifecycle("awaiting_backend", "inbound:user_message:queued");
     }
     this.deps.persistSession(this.session);
+    return true;
   }
 
   private trimMessageHistory(): void {
