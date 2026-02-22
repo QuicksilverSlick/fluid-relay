@@ -548,6 +548,13 @@ export class SessionRuntime {
 
   sendSetModel(model: string): void {
     this.sendControlRequest({ type: "set_model", model });
+    // Optimistically update session state — the backend never sends a
+    // configuration_change back, so we must reflect the change ourselves.
+    this.session.state = { ...this.session.state, model };
+    this.deps.broadcaster.broadcast(this.session, {
+      type: "session_update",
+      session: { model },
+    });
   }
 
   sendSetPermissionMode(mode: string): void {

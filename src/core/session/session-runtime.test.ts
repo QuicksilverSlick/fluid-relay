@@ -480,6 +480,27 @@ describe("SessionRuntime", () => {
     );
   });
 
+  it("sendSetModel updates session.state.model and broadcasts session_update", () => {
+    const send = vi.fn();
+    const session = createMockSession({ id: "s1", backendSession: { send } as any });
+    session.state = { ...session.state, model: "claude-sonnet-4-6" };
+    const deps = makeDeps({
+      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
+    });
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.sendSetModel("claude-haiku-4-5");
+
+    expect(session.state.model).toBe("claude-haiku-4-5");
+    expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({
+        type: "session_update",
+        session: expect.objectContaining({ model: "claude-haiku-4-5" }),
+      }),
+    );
+  });
+
   it("delegates programmatic slash execution to slash service", async () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
