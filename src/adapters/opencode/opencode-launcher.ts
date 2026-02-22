@@ -94,7 +94,14 @@ export class OpencodeLauncher extends ProcessSupervisor {
       throw new Error("Failed to spawn opencode serve process");
     }
 
-    await readyPromise;
+    try {
+      await readyPromise;
+    } catch (err) {
+      // Ensure the process is killed and removed from the registry so it
+      // cannot become orphaned when the caller never calls stop().
+      await this.killProcess(sessionId).catch(() => {});
+      throw err;
+    }
 
     return { url, pid: proc.pid };
   }

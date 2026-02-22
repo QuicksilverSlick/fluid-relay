@@ -225,6 +225,40 @@ describe("handleApiSessions", () => {
     expect(parseBody(res)).toEqual({ error: "Invalid cwd: not an existing directory" });
   });
 
+  it("POST /api/sessions with invalid adapter returns 400", async () => {
+    const coordinator = mockSessionCoordinator();
+    const req = mockReq("POST");
+    const res = mockRes();
+
+    handleApiSessions(req, res, makeUrl("/api/sessions"), coordinator);
+    emitBody(req, JSON.stringify({ adapter: "nonexistent-adapter" }));
+
+    await vi.waitFor(() => {
+      expect(res._status).toBe(400);
+    });
+    const body = parseBody(res) as { error: string };
+    expect(body.error).toContain("Invalid adapter");
+    expect(body.error).toContain("nonexistent-adapter");
+  });
+
+  it("POST /api/sessions returns 500 when createSession throws", async () => {
+    const coordinator = mockSessionCoordinator({
+      createSession: async () => {
+        throw new Error("internal failure");
+      },
+    });
+    const req = mockReq("POST");
+    const res = mockRes();
+
+    handleApiSessions(req, res, makeUrl("/api/sessions"), coordinator);
+    emitBody(req, JSON.stringify({}));
+
+    await vi.waitFor(() => {
+      expect(res._status).toBe(500);
+    });
+    expect(parseBody(res)).toEqual({ error: "Failed to create session: internal failure" });
+  });
+
   it("POST /api/sessions with body too large returns 413", async () => {
     const coordinator = mockSessionCoordinator();
     const req = mockReq("POST");
@@ -447,5 +481,77 @@ describe("handleApiSessions", () => {
 
     expect(res._status).toBe(404);
     expect(parseBody(res)).toEqual({ error: "Not found" });
+  });
+
+  // ---- PUT /api/sessions/:id/archive ----
+
+  it("PUT /api/sessions/:id/archive archives a session", () => {
+    const session = { sessionId: "abc", state: "connected", cwd: "/tmp", createdAt: 1 };
+    const coordinator = mockSessionCoordinator({ getSession: () => session });
+    const req = mockReq("PUT");
+    const res = mockRes();
+
+    handleApiSessions(req, res, makeUrl("/api/sessions/abc/archive"), coordinator);
+
+    expect(res._status).toBe(200);
+    expect(coordinator.registry.setArchived).toHaveBeenCalledWith("abc", true);
+    const body = parseBody(res) as { archived: boolean };
+    expect(body.archived).toBe(true);
+  });
+
+  it("PUT /api/sessions/:id/unarchive unarchives a session", () => {
+    const session = {
+      sessionId: "abc",
+      state: "connected",
+      cwd: "/tmp",
+      createdAt: 1,
+      archived: true,
+    };
+    const coordinator = mockSessionCoordinator({ getSession: () => session });
+    const req = mockReq("PUT");
+    const res = mockRes();
+
+    handleApiSessions(req, res, makeUrl("/api/sessions/abc/unarchive"), coordinator);
+
+    expect(res._status).toBe(200);
+    expect(coordinator.registry.setArchived).toHaveBeenCalledWith("abc", false);
+    const body = parseBody(res) as { archived: boolean };
+    expect(body.archived).toBe(false);
+  });
+
+  it("PUT /api/sessions/:id/archive returns 404 when session not found", () => {
+    const coordinator = mockSessionCoordinator({ getSession: () => undefined });
+    const req = mockReq("PUT");
+    const res = mockRes();
+
+    handleApiSessions(req, res, makeUrl("/api/sessions/missing/archive"), coordinator);
+
+    expect(res._status).toBe(404);
+    expect(parseBody(res)).toEqual({ error: "Session not found" });
+  });
+
+  // ---- PUT /api/sessions/:id/rename — error path ----
+
+  it("PUT /api/sessions/:id/rename returns 413 when body is too large", async () => {
+    const coordinator = mockSessionCoordinator();
+    const req = mockReq("PUT");
+    const res = mockRes();
+
+    handleApiSessions(req, res, makeUrl("/api/sessions/abc/rename"), coordinator);
+
+    // Simulate body-too-large by emitting an error from the request stream
+    queueMicrotask(() => {
+      (req as unknown as import("node:events").EventEmitter).emit(
+        "error",
+        Object.assign(new Error("Request body too large"), {}),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(res._status).not.toBeNull();
+    });
+
+    // The catch block maps the body-too-large message to 413
+    expect(res._status).toBe(413);
   });
 });

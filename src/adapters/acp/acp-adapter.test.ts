@@ -110,6 +110,61 @@ describe("AcpAdapter", () => {
       await connectPromise;
     });
 
+    it("rejects when initialize response contains an error field", async () => {
+      setup();
+      const adapter = new AcpAdapter(mockSpawn);
+      const connectPromise = adapter.connect({
+        sessionId: "sess-1",
+        adapterOptions: { command: "my-agent" },
+      });
+
+      await tick();
+
+      // Respond with an ACP error response
+      const initReq = JSON.parse(mockChild.stdin.chunks[0]);
+      const errResponse = JSON.stringify({
+        jsonrpc: "2.0",
+        id: initReq.id,
+        error: { message: "agent initialization failed" },
+      });
+      mockChild.stdout.emit("data", Buffer.from(`${errResponse}\n`));
+
+      await expect(connectPromise).rejects.toThrow("ACP error: agent initialization failed");
+    });
+
+    it("rejects when stdout emits an error during handshake", async () => {
+      setup();
+      const adapter = new AcpAdapter(mockSpawn);
+      const connectPromise = adapter.connect({
+        sessionId: "sess-1",
+        adapterOptions: { command: "my-agent" },
+      });
+
+      await tick();
+
+      // Simulate stdout error before handshake completes
+      mockChild.stdout.emit("error", new Error("stdout pipe broken"));
+
+      await expect(connectPromise).rejects.toThrow("stdout pipe broken");
+    });
+
+    it("rejects when handshake exceeds initializeTimeoutMs", async () => {
+      vi.useFakeTimers();
+      setup();
+      const adapter = new AcpAdapter(mockSpawn);
+      const connectPromise = adapter.connect({
+        sessionId: "sess-1",
+        adapterOptions: { command: "my-agent", initializeTimeoutMs: 50 },
+      });
+
+      // Run rejection check and time advance in parallel to avoid unhandled rejection
+      await Promise.all([
+        expect(connectPromise).rejects.toThrow("ACP handshake timed out after 50ms"),
+        vi.advanceTimersByTimeAsync(100),
+      ]);
+      vi.useRealTimers();
+    });
+
     it("uses session/load for resume", async () => {
       setup();
       const adapter = new AcpAdapter(mockSpawn);

@@ -159,6 +159,38 @@ describe("consumer-html", () => {
     });
   });
 
+  describe("CSP with no inline scripts or styles", () => {
+    it("uses 'none' for script-src when HTML has no scripts", async () => {
+      const { readFileSync } = await import("node:fs");
+      vi.mocked(readFileSync).mockReturnValue("<html><head></head><body></body></html>" as any);
+      const { handleConsumerHtml } = await import("./consumer-html.js");
+      const req = mockReq("");
+      const res = mockRes();
+
+      handleConsumerHtml(req, res);
+
+      const csp = res._headers["Content-Security-Policy"] as string;
+      expect(csp).toContain("script-src 'none'");
+      expect(csp).toContain("style-src 'none'");
+    });
+
+    it("skips empty <script> and <style> blocks in CSP hashing", async () => {
+      const { readFileSync } = await import("node:fs");
+      vi.mocked(readFileSync).mockReturnValue(
+        "<html><head><script></script><style></style></head></html>" as any,
+      );
+      const { handleConsumerHtml } = await import("./consumer-html.js");
+      const req = mockReq("");
+      const res = mockRes();
+
+      handleConsumerHtml(req, res);
+
+      const csp = res._headers["Content-Security-Policy"] as string;
+      expect(csp).toContain("script-src 'none'");
+      expect(csp).toContain("style-src 'none'");
+    });
+  });
+
   describe("injectConsumerToken", () => {
     it("adds a meta tag with the consumer token", async () => {
       const { injectConsumerToken, loadConsumerHtml } = await import("./consumer-html.js");

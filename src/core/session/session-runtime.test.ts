@@ -831,4 +831,39 @@ describe("SessionRuntime", () => {
 
     expect(deps.sendToBackend).toHaveBeenCalledWith(session, message);
   });
+
+  it("getSupportedModels/Commands/AccountInfo return defaults when capabilities absent", () => {
+    const session = createMockSession({ id: "s1" });
+    session.state = { ...session.state, capabilities: undefined };
+    const runtime = new SessionRuntime(session, makeDeps());
+
+    expect(runtime.getSupportedModels()).toEqual([]);
+    expect(runtime.getSupportedCommands()).toEqual([]);
+    expect(runtime.getAccountInfo()).toBeNull();
+  });
+
+  it("trySendRawToBackend returns 'unsupported' when sendRaw throws", () => {
+    const session = createMockSession({
+      id: "s1",
+      backendSession: {
+        send: vi.fn(),
+        sendRaw: vi.fn(() => { throw new Error("not supported"); }),
+        close: vi.fn(),
+        messages: (async function* () {})(),
+        sessionId: "s1",
+      } as any,
+    });
+    const runtime = new SessionRuntime(session, makeDeps());
+
+    expect(runtime.trySendRawToBackend("ndjson-line")).toBe("unsupported");
+  });
+
+  it("handlePolicyCommand capabilities_timeout is a no-op", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    // Should not throw or change state
+    expect(() => runtime.handlePolicyCommand({ type: "capabilities_timeout" })).not.toThrow();
+  });
 });

@@ -123,6 +123,17 @@ describe("Daemon", () => {
     errSpy.mockRestore();
   });
 
+  it("stop is a no-op for healthTimer when it is null (edge case coverage)", async () => {
+    const daemon = new Daemon();
+    await daemon.start({ dataDir: dir });
+
+    // Manually clear healthTimer before stop() to cover the else branch at line 82
+    (daemon as any).healthTimer = null;
+
+    await daemon.stop();
+    expect(daemon.isRunning()).toBe(false);
+  });
+
   it("stop handles already-deleted state file gracefully", async () => {
     const daemon = new Daemon();
     await daemon.start({ dataDir: dir });

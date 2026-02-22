@@ -16,6 +16,7 @@ export default defineConfig({
         "src/testing.ts",
         "src/**/index.ts",
         "src/testing/**",
+        "src/test-utils/**",
         "src/e2e/**",
         "src/interfaces/**",
         "src/bin/**",
@@ -23,7 +24,7 @@ export default defineConfig({
       reportsDirectory: "./coverage",
       thresholds: {
         lines: 90,
-        branches: 83,
+        branches: 90,
         functions: 90,
         statements: 90,
       },

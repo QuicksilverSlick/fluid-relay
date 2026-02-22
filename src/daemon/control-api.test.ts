@@ -178,6 +178,95 @@ describe("ControlApi", () => {
     expect(status).toBe(404);
   });
 
+  it("closes connection when POST /sessions body exceeds 64 KB", async () => {
+    // The readBody helper calls req.destroy() on oversized bodies, which closes
+    // the socket before the 413 response can be sent — the client sees a
+    // connection reset rather than an HTTP response.
+    const bigBody = "x".repeat(65 * 1024 + 1);
+    await expect(
+      fetch(`${baseUrl}/sessions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: bigBody,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("returns 429 when supervisor rejects session creation due to limit", async () => {
+    // Fill up to the max session limit by creating sessions until rejected
+    // The ChildProcessSupervisor default maxSessions is 10; we simulate by
+    // creating sessions and patching createSession to throw the limit error.
+    const limitError = new Error("Maximum session limit (10) reached");
+    const originalCreate = supervisor.createSession.bind(supervisor);
+    let callCount = 0;
+    Object.defineProperty(supervisor, "createSession", {
+      value: () => {
+        callCount++;
+        if (callCount > 1) throw limitError;
+        return originalCreate({ cwd: "/tmp" });
+      },
+      configurable: true,
+    });
+
+    // First call succeeds
+    await request("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/tmp" }),
+    });
+
+    // Second call hits the limit
+    const { status, body } = await request("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/tmp" }),
+    });
+    expect(status).toBe(429);
+    expect(body.error).toContain("Maximum session limit");
+  });
+
+  it("returns 500 when createSession throws a non-limit error", async () => {
+    Object.defineProperty(supervisor, "createSession", {
+      value: () => {
+        throw new Error("unexpected db error");
+      },
+      configurable: true,
+    });
+
+    const { status, body } = await request("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/tmp" }),
+    });
+    expect(status).toBe(500);
+    expect(body.error).toBe("Failed to read request body");
+  });
+
+  it("returns 500 when stopSession throws", async () => {
+    // First create a session
+    const { body: created } = await request("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/tmp" }),
+    });
+    const id = created.sessionId as string;
+
+    // Patch stopSession to throw
+    Object.defineProperty(supervisor, "stopSession", {
+      value: async () => {
+        throw new Error("stop failed");
+      },
+      configurable: true,
+    });
+
+    const { status, body } = await request(`/sessions/${id}`, { method: "DELETE" });
+    expect(status).toBe(500);
+    expect(body.error).toBe("Failed to stop session");
+  });
+
   // ---- POST /revoke-device ----
 
   it("returns 501 for revoke-device placeholder", async () => {

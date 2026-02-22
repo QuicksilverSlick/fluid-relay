@@ -392,6 +392,70 @@ describe("MessageTracerImpl", () => {
       tracer.destroy();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Overflow eviction — covers lines 362-364, 581-584, 626-628
+  // -------------------------------------------------------------------------
+
+  describe("overflow eviction", () => {
+    it("evicts oldest error trace when errorTraces exceeds MAX_ERRORS", () => {
+      const { tracer } = createTracer();
+      const MAX = (MessageTracerImpl as any).MAX_ERRORS as number;
+
+      // Pre-fill to exactly MAX so the next error call triggers eviction
+      for (let i = 0; i < MAX; i++) {
+        (tracer as any).errorTraces.add(`err-seed-${i}`);
+      }
+      expect((tracer as any).errorTraces.size).toBe(MAX);
+
+      // This pushes size to MAX+1, triggering eviction back to MAX
+      tracer.error("bridge", "msg", "overflow error", { traceId: "err-overflow" });
+
+      expect((tracer as any).errorTraces.size).toBe(MAX);
+      tracer.destroy();
+    });
+
+    it("evicts oldest completed traces when completedTraces exceeds MAX_COMPLETED", () => {
+      const { tracer } = createTracer();
+      const MAX = (MessageTracerImpl as any).MAX_COMPLETED as number;
+
+      // Pre-fill the completedTraces array to exactly MAX
+      const arr = (tracer as any).completedTraces as number[];
+      for (let i = 0; i < MAX; i++) {
+        arr.push(i);
+      }
+      expect(arr.length).toBe(MAX);
+
+      // tracer.send("bridge", ...) triggers the completion path (direction=send, layer=bridge)
+      // which pushes one more item and splices off the excess
+      tracer.send("bridge", "response", {}, { traceId: "complete-overflow" });
+
+      expect(arr.length).toBe(MAX);
+      tracer.destroy();
+    });
+
+    it("evicts oldest stale traces during sweep when staleTraces exceeds MAX_STALE", () => {
+      const { tracer, advance } = createTracer();
+      const MAX = (MessageTracerImpl as any).MAX_STALE as number;
+
+      // Pre-fill staleTraces to exactly MAX
+      for (let i = 0; i < MAX; i++) {
+        (tracer as any).staleTraces.add(`stale-seed-${i}`);
+      }
+      expect((tracer as any).staleTraces.size).toBe(MAX);
+
+      // Create an open trace that will become stale on sweep
+      tracer.recv("bridge", "msg", {}, { traceId: "t-stale-overflow" });
+      // Advance clock past the stale threshold (staleTimeoutMs=100 in createTracer)
+      advance(200);
+
+      // sweepStale moves the open trace to staleTraces (size → MAX+1), then evicts
+      (tracer as any).sweepStale();
+
+      expect((tracer as any).staleTraces.size).toBe(MAX);
+      tracer.destroy();
+    });
+  });
 });
 
 describe("noopTracer", () => {

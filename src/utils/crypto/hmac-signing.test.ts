@@ -133,4 +133,26 @@ describe("NonceTracker", () => {
     // At capacity (2) — adding n3 should evict after attempting time-based eviction
     expect(tracker.track(n3, now)).toBe(true);
   });
+
+  it("time-based eviction frees slots without needing oldest fallback", () => {
+    const windowMs = 30_000;
+    const tracker = new NonceTracker(2, windowMs);
+
+    const n1 = new Uint8Array([1]);
+    const n2 = new Uint8Array([2]);
+    const n3 = new Uint8Array([3]);
+
+    // Add n1 and n2 while they're fresh
+    const t1 = Date.now();
+    expect(tracker.track(n1, t1)).toBe(true);
+    expect(tracker.track(n2, t1)).toBe(true);
+
+    // Advance time so n1 and n2 are now outside the window
+    vi.advanceTimersByTime(windowMs + 1);
+
+    // At capacity; both old entries should be evicted by time-based cutoff,
+    // so n3 gets a slot without needing the oldest-fallback removal (line 90-92)
+    const t3 = Date.now();
+    expect(tracker.track(n3, t3)).toBe(true);
+  });
 });

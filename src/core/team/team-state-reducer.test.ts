@@ -813,5 +813,43 @@ describe("reduceTeamState", () => {
       const second = reduceTeamState(first, correlated);
       expect(second!.tasks).toHaveLength(1);
     });
+
+    it("creates task when result ID is a number (numeric JSON id)", () => {
+      const state = makeTeamState();
+      const correlated = makeCorrelated({
+        toolName: "TaskCreate",
+        category: "team_task_update",
+        input: { subject: "Numeric ID task" },
+        result: { content: JSON.stringify({ id: 42 }) },
+      });
+      const result = reduceTeamState(state, correlated);
+      expect(result!.tasks).toHaveLength(1);
+      expect(result!.tasks[0].id).toBe("42");
+    });
+
+    it("returns state unchanged when result content has no id field", () => {
+      const state = makeTeamState();
+      const correlated = makeCorrelated({
+        toolName: "TaskCreate",
+        category: "team_task_update",
+        input: { subject: "No id task" },
+        result: { content: JSON.stringify({ subject: "no-id" }) },
+      });
+      const result = reduceTeamState(state, correlated);
+      // No task created because extractTaskId returns undefined
+      expect(result!.tasks).toHaveLength(0);
+    });
+  });
+
+  describe("default case", () => {
+    it("returns state unchanged for unknown tool names", () => {
+      const state = makeTeamState();
+      const correlated = makeCorrelated({
+        toolName: "UnknownTool",
+        category: "team_state_change",
+      });
+      const result = reduceTeamState(state, correlated);
+      expect(result).toBe(state);
+    });
   });
 });

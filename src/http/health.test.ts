@@ -52,6 +52,21 @@ describe("handleHealth", () => {
     expect(body.errors).toEqual({ warning: 1, error: 2, critical: 0, total: 3 });
   });
 
+  it("falls back to 0 when stats omit totalSessions/totalConsumers", () => {
+    const res = mockResponse();
+    const metrics: MetricsCollector = {
+      recordEvent: vi.fn(),
+      getStats: vi.fn().mockReturnValue({}),
+    };
+    const ctx: HealthContext = { version: "1.0.0", metrics };
+
+    handleHealth({} as IncomingMessage, res, ctx);
+
+    const body = JSON.parse((res.end as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+    expect(body.sessions).toBe(0);
+    expect(body.consumers).toBe(0);
+  });
+
   it("handles context without optional methods", () => {
     const res = mockResponse();
     const metrics: MetricsCollector = {

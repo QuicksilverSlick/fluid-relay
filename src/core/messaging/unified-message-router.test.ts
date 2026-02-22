@@ -957,6 +957,13 @@ describe("UnifiedMessageRouter", () => {
     });
   });
 
+  // ── default / unhandled ────────────────────────────────────────────────
+
+  it("routes unhandled message types to tracer without throwing", () => {
+    const m = msg("some_unknown_type_xyz");
+    expect(() => router.route(session, m)).not.toThrow();
+  });
+
   // ── emitTeamEvents ────────────────────────────────────────────────────
 
   describe("emitTeamEvents", () => {

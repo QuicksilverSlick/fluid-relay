@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { createServer } from "node:http";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import type { AuthContext } from "../interfaces/auth.js";
 import { OriginValidator } from "../server/origin-validator.js";
@@ -233,5 +234,105 @@ describe("NodeWebSocketServer", () => {
 
     expect(ws.readyState).toBe(WebSocket.OPEN);
     ws.close();
+  });
+
+  // ── External HTTP server attachment (lines 100-106) ─────────────────
+
+  it("attaches to an external HTTP server, exposes port, and wrapSocket.close() works (lines 73-77, 29, 100-106)", async () => {
+    const httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const addr = httpServer.address() as { port: number };
+    const port = addr.port;
+
+    server = new NodeWebSocketServer({ port: 0, server: httpServer });
+    const closedSessionIds: string[] = [];
+
+    // listen() with external server takes the early-return path (lines 100-106)
+    await server.listen((socket, sessionId) => {
+      // Call socket.close() to cover line 29 (wrapSocket.close)
+      socket.close(1000, "test-initiated close");
+      closedSessionIds.push(sessionId);
+    });
+
+    // server.port falls back to httpServer.address() — covers lines 73-77
+    expect(server.port).toBe(port);
+
+    const ws = new WebSocket(`ws://localhost:${port}/ws/cli/${TEST_UUID_1}`);
+    await new Promise<void>((resolve) => {
+      ws.on("open", resolve);
+      ws.on("error", resolve); // proceed even if close happens immediately
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(closedSessionIds).toContain(TEST_UUID_1);
+    ws.terminate();
+    await server.close();
+    server = null;
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  });
+
+  // ── port getter falls back to httpServer when wss is null (lines 73-77) ────
+
+  it("port getter falls back to httpServer.address() when wss not yet initialized (lines 73-77)", async () => {
+    const httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const addr = httpServer.address() as { port: number };
+    const expectedPort = addr.port;
+
+    // Create with external server but do NOT call listen() — wss stays null
+    // port getter: wss?.address() is undefined → false → checks this.options.server (line 73)
+    const externalServer = new NodeWebSocketServer({ port: 0, server: httpServer });
+    expect(externalServer.port).toBe(expectedPort); // lines 73-75
+
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+
+    // After httpServer closes, httpServer.address() returns null → line 77 (return undefined)
+    expect(externalServer.port).toBeUndefined();
+  });
+
+  // ── close() before listen() — wss is null (lines 175-176) ───────────
+
+  it("close() resolves immediately when wss is null (not yet started)", async () => {
+    const uninitServer = new NodeWebSocketServer({ port: 0 });
+    // close() without ever calling listen() — wss is null
+    await expect(uninitServer.close()).resolves.toBeUndefined();
+  });
+
+  // ── External HTTP server + originValidator (line 103 — verifyClient spread) ──
+
+  it("external server with originValidator rejects untrusted origins (line 103)", async () => {
+    const httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const addr = httpServer.address() as { port: number };
+    const port = addr.port;
+
+    const originValidator = new OriginValidator();
+    server = new NodeWebSocketServer({ port: 0, server: httpServer, originValidator });
+    await server.listen(() => {});
+
+    const ws = new WebSocket(`ws://localhost:${port}/ws/cli/${TEST_UUID_1}`, {
+      headers: { origin: "https://evil.com" },
+    });
+
+    const result = await new Promise<"error" | "open">((resolve) => {
+      ws.on("open", () => resolve("open"));
+      ws.on("error", () => resolve("error"));
+      ws.on("unexpected-response", () => resolve("error"));
+    });
+
+    expect(result).toBe("error");
+    ws.close();
+    await server.close();
+    server = null;
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  });
+
+  // ── wireConnectionHandler null guard (line 128 — early return when wss is null) ──
+
+  it("wireConnectionHandler returns immediately when wss is null (line 128)", () => {
+    const uninitServer = new NodeWebSocketServer({ port: 0 });
+    // wss is still null — call the private method directly to cover the early-return branch
+    (uninitServer as any).wireConnectionHandler(vi.fn());
+    // No error = null guard executed and returned
   });
 });

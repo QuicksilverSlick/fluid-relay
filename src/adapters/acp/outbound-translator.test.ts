@@ -181,6 +181,39 @@ describe("translateSessionUpdate", () => {
     });
   });
 
+  describe("tool_call_update with array content (ACP wrapped format)", () => {
+    it("flattens ACP nested content format [{type:'content',content:{type:'text',text:'...'}}]", () => {
+      const update: AcpSessionUpdate = {
+        sessionId: "sess-1",
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-1",
+        status: "completed",
+        content: [
+          { type: "content", content: { type: "text", text: "File line 1" } },
+          { type: "content", content: { type: "text", text: "File line 2" } },
+        ] as unknown as AcpSessionUpdate["content"],
+      };
+      const result = translateSessionUpdate(update);
+
+      expect(result.metadata.content).toBe("File line 1\nFile line 2");
+    });
+
+    it("flattens flat text array format [{type:'text',text:'...'}]", () => {
+      const update: AcpSessionUpdate = {
+        sessionId: "sess-1",
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-1",
+        status: "completed",
+        content: [
+          { type: "text", text: "result text" },
+        ] as unknown as AcpSessionUpdate["content"],
+      };
+      const result = translateSessionUpdate(update);
+
+      expect(result.metadata.content).toBe("result text");
+    });
+  });
+
   describe("plan → status_change", () => {
     it("translates plan with entries", () => {
       const planEntries = [

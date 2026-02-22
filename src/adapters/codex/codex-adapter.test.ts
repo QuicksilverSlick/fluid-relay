@@ -531,6 +531,14 @@ describe("CodexAdapter", () => {
     });
   });
 
+  it("createSlashExecutor returns null for non-CodexSession", () => {
+    const adapter = new CodexAdapter({
+      processManager: createMockProcessManager(),
+    });
+    const fakeSession = { sessionId: "x", send: vi.fn(), close: vi.fn(), messages: [] as any };
+    expect(adapter.createSlashExecutor(fakeSession)).toBeNull();
+  });
+
   describe("connect", () => {
     let adapter: CodexAdapter;
     let launchSpy: ReturnType<typeof vi.spyOn>;

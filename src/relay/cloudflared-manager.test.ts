@@ -1,8 +1,17 @@
+import * as cp from "node:child_process";
+import { EventEmitter } from "node:events";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CloudflaredManager, detectCloudflared } from "./cloudflared-manager.js";
+
+// Wrap spawn in a spy so individual tests can override it once.
+// The default implementation delegates to the real spawn.
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn().mockImplementation(actual.spawn) };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -174,6 +183,63 @@ sleep 60
       expect(url).toBe("https://dev-tunnel.trycloudflare.com");
       await manager.stop();
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // onError fires before URL found — covers lines 151-155
+  // -------------------------------------------------------------------------
+
+  it("rejects when cloudflared process emits error event before URL is found", async () => {
+    // Build a mock ChildProcess that we can manually trigger events on
+    const mockProc = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      kill: vi.fn(),
+    });
+
+    vi.mocked(cp.spawn).mockReturnValueOnce(mockProc as any);
+
+    await withFakePath(dir, async () => {
+      const manager = new CloudflaredManager();
+      const startPromise = manager.start({ mode: "development", localPort: 8080 });
+
+      // Let the event loop turn so listeners are attached
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Emit a spawn error (EACCES, ENOENT, etc.) before any URL is found
+      mockProc.emit("error", new Error("spawn EACCES: permission denied, spawn cloudflared"));
+
+      await expect(startPromise).rejects.toThrow("spawn EACCES");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // scheduleRestart stopped guard — covers lines 206-207
+  // -------------------------------------------------------------------------
+
+  it("scheduleRestart timer callback is a no-op when manager is stopped before it fires", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const manager = new CloudflaredManager();
+      const spawnSpy = vi.spyOn(manager as any, "spawnProcess");
+
+      // Simulate the internal state right before a restart is scheduled
+      (manager as any).stopped = true;
+      (manager as any).config = { mode: "development", localPort: 8080 };
+      (manager as any).restartAttempts = 0;
+
+      // Call scheduleRestart — sets a timer internally
+      (manager as any).scheduleRestart();
+
+      // Advance time past the backoff delay to fire the timer
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // spawnProcess must NOT have been called since the manager is stopped
+      expect(spawnSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("schedules restart with backoff when process exits after URL found", async () => {

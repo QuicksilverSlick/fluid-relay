@@ -162,6 +162,48 @@ describe("NodeProcessManager", () => {
   // spawn — undefined pid (mocked)
   // -----------------------------------------------------------------------
 
+  describe("spawn error event", () => {
+    it("exited resolves with null when child emits an error event post-spawn", async () => {
+      // Create a fake child with a real pid but that will emit an 'error' event
+      const fakeChild = Object.assign(new EventEmitter(), {
+        pid: 99998,
+        stdin: null,
+        stdout: null,
+        stderr: null,
+        stdio: [null, null, null, null, null] as const,
+        channel: undefined,
+        connected: false,
+        exitCode: null,
+        signalCode: null,
+        spawnargs: [],
+        spawnfile: "",
+        killed: false,
+        kill: vi.fn(),
+        send: vi.fn(),
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        ref: vi.fn(),
+        [Symbol.dispose]: vi.fn(),
+      });
+
+      mockSpawn.mockImplementationOnce(() => fakeChild);
+
+      const handle = manager.spawn({
+        command: "any-command",
+        args: [],
+        cwd: "/tmp",
+      });
+
+      // Emit error AFTER spawn so the real handler is already attached
+      fakeChild.emit("error", new Error("EPERM"));
+
+      const code = await handle.exited;
+      expect(code).toBeNull();
+
+      mockSpawn.mockReset();
+    });
+  });
+
   describe("spawn with undefined pid", () => {
     it("throws when spawned process has no pid", () => {
       // Create a fake ChildProcess-like object with undefined pid
