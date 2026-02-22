@@ -478,6 +478,7 @@ describe("SessionRuntime", () => {
         to: "active",
       }),
     );
+    expect(runtime.getLifecycleState()).toBe("closed");
   });
 
   it("applies reconnect_timeout policy by transitioning to degraded", () => {

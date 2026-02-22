@@ -5,6 +5,7 @@ describe("session lifecycle transitions", () => {
   it("allows expected forward transitions", () => {
     expect(isLifecycleTransitionAllowed("starting", "awaiting_backend")).toBe(true);
     expect(isLifecycleTransitionAllowed("awaiting_backend", "active")).toBe(true);
+    expect(isLifecycleTransitionAllowed("awaiting_backend", "idle")).toBe(true);
     expect(isLifecycleTransitionAllowed("active", "idle")).toBe(true);
     expect(isLifecycleTransitionAllowed("idle", "active")).toBe(true);
     expect(isLifecycleTransitionAllowed("degraded", "awaiting_backend")).toBe(true);

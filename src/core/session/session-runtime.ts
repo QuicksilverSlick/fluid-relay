@@ -354,6 +354,7 @@ export class SessionRuntime {
         to: next,
         reason,
       });
+      return;
     }
     this.lifecycle = next;
   }
