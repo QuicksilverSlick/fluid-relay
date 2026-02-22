@@ -225,6 +225,40 @@ describe("handleApiSessions", () => {
     expect(parseBody(res)).toEqual({ error: "Invalid cwd: not an existing directory" });
   });
 
+  it("POST /api/sessions with invalid adapter returns 400", async () => {
+    const coordinator = mockSessionCoordinator();
+    const req = mockReq("POST");
+    const res = mockRes();
+
+    handleApiSessions(req, res, makeUrl("/api/sessions"), coordinator);
+    emitBody(req, JSON.stringify({ adapter: "nonexistent-adapter" }));
+
+    await vi.waitFor(() => {
+      expect(res._status).toBe(400);
+    });
+    const body = parseBody(res) as { error: string };
+    expect(body.error).toContain("Invalid adapter");
+    expect(body.error).toContain("nonexistent-adapter");
+  });
+
+  it("POST /api/sessions returns 500 when createSession throws", async () => {
+    const coordinator = mockSessionCoordinator({
+      createSession: async () => {
+        throw new Error("internal failure");
+      },
+    });
+    const req = mockReq("POST");
+    const res = mockRes();
+
+    handleApiSessions(req, res, makeUrl("/api/sessions"), coordinator);
+    emitBody(req, JSON.stringify({}));
+
+    await vi.waitFor(() => {
+      expect(res._status).toBe(500);
+    });
+    expect(parseBody(res)).toEqual({ error: "Failed to create session: internal failure" });
+  });
+
   it("POST /api/sessions with body too large returns 413", async () => {
     const coordinator = mockSessionCoordinator();
     const req = mockReq("POST");

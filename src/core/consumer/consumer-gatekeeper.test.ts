@@ -131,6 +131,35 @@ describe("ConsumerGatekeeper", () => {
     });
   });
 
+  // ─── isAuthenticated ───────────────────────────────────────────────────
+
+  describe("isAuthenticated", () => {
+    it("returns true for a socket not in pendingAuth", () => {
+      const gk = createGatekeeper();
+      const ws = createTestSocket();
+      expect(gk.isAuthenticated(ws)).toBe(true);
+    });
+
+    it("returns false while socket is pending auth, true after auth completes", async () => {
+      let resolveAuth!: (id: ConsumerIdentity) => void;
+      const authenticator: Authenticator = {
+        authenticate: () =>
+          new Promise<ConsumerIdentity>((resolve) => {
+            resolveAuth = resolve;
+          }),
+      };
+      const gk = createGatekeeper(authenticator);
+      const ws = createTestSocket();
+
+      const promise = gk.authenticateAsync(ws, authContext("sess-1"));
+      expect(gk.isAuthenticated(ws)).toBe(false);
+
+      resolveAuth(makeIdentity());
+      await promise;
+      expect(gk.isAuthenticated(ws)).toBe(true);
+    });
+  });
+
   // ─── Authorization (behavioral) ────────────────────────────────────────
 
   describe("authorize", () => {
@@ -209,6 +238,18 @@ describe("ConsumerGatekeeper", () => {
         gk.checkRateLimit(ws, accessors);
       }
       expect(gk.checkRateLimit(ws, accessors)).toBe(false);
+    });
+
+    it("returns true without consuming when no rate limiter factory is configured", () => {
+      const gk = new ConsumerGatekeeper(null, defaultConfig);
+      const ws = createTestSocket();
+      const setRateLimiter = vi.fn();
+      const accessors = {
+        getRateLimiter: () => undefined,
+        setRateLimiter,
+      };
+      expect(gk.checkRateLimit(ws, accessors)).toBe(true);
+      expect(setRateLimiter).not.toHaveBeenCalled();
     });
 
     it("limiter refills after time advances", () => {

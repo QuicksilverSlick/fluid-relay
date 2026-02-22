@@ -228,6 +228,45 @@ describe("ControlApi", () => {
     expect(body.error).toContain("Maximum session limit");
   });
 
+  it("returns 500 when createSession throws a non-limit error", async () => {
+    Object.defineProperty(supervisor, "createSession", {
+      value: () => {
+        throw new Error("unexpected db error");
+      },
+      configurable: true,
+    });
+
+    const { status, body } = await request("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/tmp" }),
+    });
+    expect(status).toBe(500);
+    expect(body.error).toBe("Failed to read request body");
+  });
+
+  it("returns 500 when stopSession throws", async () => {
+    // First create a session
+    const { body: created } = await request("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/tmp" }),
+    });
+    const id = created.sessionId as string;
+
+    // Patch stopSession to throw
+    Object.defineProperty(supervisor, "stopSession", {
+      value: async () => {
+        throw new Error("stop failed");
+      },
+      configurable: true,
+    });
+
+    const { status, body } = await request(`/sessions/${id}`, { method: "DELETE" });
+    expect(status).toBe(500);
+    expect(body.error).toBe("Failed to stop session");
+  });
+
   // ---- POST /revoke-device ----
 
   it("returns 501 for revoke-device placeholder", async () => {
