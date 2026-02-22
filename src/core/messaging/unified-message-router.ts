@@ -26,7 +26,7 @@ import { applyGitInfo, type GitInfoTracker } from "../git-info-tracker.js";
 import type { MessageQueueHandler } from "../message-queue-handler.js";
 import type { Session } from "../session-repository.js";
 import { reduce as reduceState } from "../session-state-reducer.js";
-import { diffTeamState } from "../team-event-differ.js";
+import { diffTeamState } from "../team/team-event-differ.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import {

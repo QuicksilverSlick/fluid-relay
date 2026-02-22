@@ -8,8 +8,8 @@
  * @module MessagePlane
  */
 
-import type { BridgeEventMap } from "../types/events.js";
-import type { TeamState } from "./types/team-types.js";
+import type { BridgeEventMap } from "../../types/events.js";
+import type { TeamState } from "../types/team-types.js";
 
 // ─── Event type ──────────────────────────────────────────────────────────────
 

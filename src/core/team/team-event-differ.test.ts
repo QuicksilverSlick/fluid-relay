@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-
+import type { TeamMember, TeamState, TeamTask } from "../types/team-types.js";
 import { diffTeamState, type TeamEvent } from "./team-event-differ.js";
-import type { TeamMember, TeamState, TeamTask } from "./types/team-types.js";
 
 // ── Factories ────────────────────────────────────────────────────────────────
 

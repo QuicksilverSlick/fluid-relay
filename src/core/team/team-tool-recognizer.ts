@@ -11,8 +11,8 @@
  * @module MessagePlane
  */
 
-import type { ToolUseContent, UnifiedMessage } from "./types/unified-message.js";
-import { isToolUseContent } from "./types/unified-message.js";
+import type { ToolUseContent, UnifiedMessage } from "../types/unified-message.js";
+import { isToolUseContent } from "../types/unified-message.js";
 
 // ---------------------------------------------------------------------------
 // Types

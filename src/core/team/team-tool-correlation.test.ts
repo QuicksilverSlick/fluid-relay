@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ToolResultContent } from "../types/unified-message.js";
 import { TeamToolCorrelationBuffer } from "./team-tool-correlation.js";
 import type { RecognizedTeamToolUse } from "./team-tool-recognizer.js";
-import type { ToolResultContent } from "./types/unified-message.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

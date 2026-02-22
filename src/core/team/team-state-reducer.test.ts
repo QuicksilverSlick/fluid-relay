@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { TeamMember, TeamState, TeamTask } from "../types/team-types.js";
+import type { ToolResultContent } from "../types/unified-message.js";
 import { reduceTeamState } from "./team-state-reducer.js";
 import type { CorrelatedToolUse } from "./team-tool-correlation.js";
 import type { RecognizedTeamToolUse } from "./team-tool-recognizer.js";
-import type { TeamMember, TeamState, TeamTask } from "./types/team-types.js";
-import type { ToolResultContent } from "./types/unified-message.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { UnifiedMessage } from "../types/unified-message.js";
+import { createUnifiedMessage } from "../types/unified-message.js";
 import type { RecognizedTeamToolUse } from "./team-tool-recognizer.js";
 import { recognizeTeamToolUses } from "./team-tool-recognizer.js";
-import type { UnifiedMessage } from "./types/unified-message.js";
-import { createUnifiedMessage } from "./types/unified-message.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

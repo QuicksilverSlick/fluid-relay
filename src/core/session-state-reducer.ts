@@ -11,10 +11,10 @@
  */
 
 import type { SessionState } from "../types/session-state.js";
-import { reduceTeamState } from "./team-state-reducer.js";
-import type { CorrelatedToolUse } from "./team-tool-correlation.js";
-import { TeamToolCorrelationBuffer } from "./team-tool-correlation.js";
-import { recognizeTeamToolUses } from "./team-tool-recognizer.js";
+import { reduceTeamState } from "./team/team-state-reducer.js";
+import type { CorrelatedToolUse } from "./team/team-tool-correlation.js";
+import { TeamToolCorrelationBuffer } from "./team/team-tool-correlation.js";
+import { recognizeTeamToolUses } from "./team/team-tool-recognizer.js";
 import type { TeamState } from "./types/team-types.js";
 import type { UnifiedMessage } from "./types/unified-message.js";
 import { isToolResultContent } from "./types/unified-message.js";

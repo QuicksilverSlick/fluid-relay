@@ -12,8 +12,8 @@
  * @module MessagePlane
  */
 
+import type { ToolResultContent } from "../types/unified-message.js";
 import type { RecognizedTeamToolUse } from "./team-tool-recognizer.js";
-import type { ToolResultContent } from "./types/unified-message.js";
 
 // ---------------------------------------------------------------------------
 // Types

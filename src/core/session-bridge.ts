@@ -67,7 +67,7 @@ import { type Session, SessionRepository } from "./session-repository.js";
 import type { SessionRuntime } from "./session-runtime.js";
 import { SlashCommandRegistry } from "./slash-command-registry.js";
 import type { SlashCommandService } from "./slash-command-service.js";
-import { TeamToolCorrelationBuffer } from "./team-tool-correlation.js";
+import { TeamToolCorrelationBuffer } from "./team/team-tool-correlation.js";
 import { TypedEventEmitter } from "./typed-emitter.js";
 import type { UnifiedMessage } from "./types/unified-message.js";
 

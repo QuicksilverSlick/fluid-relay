@@ -13,8 +13,8 @@
  * @module MessagePlane
  */
 
+import type { TeamMember, TeamState, TeamTask } from "../types/team-types.js";
 import type { CorrelatedToolUse } from "./team-tool-correlation.js";
-import type { TeamMember, TeamState, TeamTask } from "./types/team-types.js";
 
 // ---------------------------------------------------------------------------
 // Public API

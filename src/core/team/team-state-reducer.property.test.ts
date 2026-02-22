@@ -1,8 +1,8 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
+import type { TeamState } from "../types/team-types.js";
 import { reduceTeamState } from "./team-state-reducer.js";
 import type { CorrelatedToolUse } from "./team-tool-correlation.js";
-import type { TeamState } from "./types/team-types.js";
 
 function arbTeamState(): fc.Arbitrary<TeamState> {
   return fc.record({

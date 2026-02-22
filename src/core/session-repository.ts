@@ -19,7 +19,7 @@ import type { ConsumerMessage } from "../types/consumer-messages.js";
 import type { SessionSnapshot, SessionState } from "../types/session-state.js";
 import type { AdapterSlashExecutor, BackendSession } from "./interfaces/backend-adapter.js";
 import type { SlashCommandRegistry } from "./slash-command-registry.js";
-import type { TeamToolCorrelationBuffer } from "./team-tool-correlation.js";
+import type { TeamToolCorrelationBuffer } from "./team/team-tool-correlation.js";
 import type { UnifiedMessage } from "./types/unified-message.js";
 
 export type { AdapterSlashExecutor };
