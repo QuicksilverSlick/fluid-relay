@@ -5,10 +5,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import type WebSocket from "ws";
-import { CodexLauncher } from "../adapters/codex/codex-launcher.js";
-import { CodexSession } from "../adapters/codex/codex-session.js";
-import { CodexSlashExecutor } from "../adapters/codex/codex-slash-executor.js";
-import type { BackendSession } from "../core/interfaces/backend-adapter.js";
+import type { BackendSession } from "../../core/interfaces/backend-adapter.js";
 import {
   collectUnifiedMessages,
   createInterruptMessage,
@@ -22,7 +19,10 @@ import {
   sendCodexRequest,
   sendCodexResponse,
   waitForUnifiedMessageType,
-} from "./helpers/backend-test-utils.js";
+} from "../../test-utils/backend-test-utils.js";
+import { CodexLauncher } from "./codex-launcher.js";
+import { CodexSession } from "./codex-session.js";
+import { CodexSlashExecutor } from "./codex-slash-executor.js";
 
 describe("E2E: CodexAdapter", () => {
   let session: BackendSession | undefined;

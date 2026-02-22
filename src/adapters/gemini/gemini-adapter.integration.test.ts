@@ -7,9 +7,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { SpawnFn } from "../adapters/acp/acp-adapter.js";
-import { GeminiAdapter } from "../adapters/gemini/gemini-adapter.js";
-import type { BackendSession } from "../core/interfaces/backend-adapter.js";
+import type { BackendSession } from "../../core/interfaces/backend-adapter.js";
 import {
   createAcpAutoResponder,
   createInterruptMessage,
@@ -21,7 +19,9 @@ import {
   respondToRequest,
   sendJsonRpcRequest,
   sendNotification,
-} from "./helpers/backend-test-utils.js";
+} from "../../test-utils/backend-test-utils.js";
+import type { SpawnFn } from "../acp/acp-adapter.js";
+import { GeminiAdapter } from "./gemini-adapter.js";
 
 describe("E2E: GeminiAdapter", () => {
   let session: BackendSession | undefined;

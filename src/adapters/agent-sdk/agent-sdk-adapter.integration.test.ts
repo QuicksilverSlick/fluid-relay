@@ -7,15 +7,15 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BackendSession } from "../core/interfaces/backend-adapter.js";
-import type { UnifiedMessage } from "../core/types/unified-message.js";
+import type { BackendSession } from "../../core/interfaces/backend-adapter.js";
+import type { UnifiedMessage } from "../../core/types/unified-message.js";
 import {
   collectUnifiedMessages,
   createInterruptMessage,
   createPermissionResponse,
   createUserMessage,
   waitForUnifiedMessageType,
-} from "./helpers/backend-test-utils.js";
+} from "../../test-utils/backend-test-utils.js";
 
 // ---------------------------------------------------------------------------
 // Controllable mock query
@@ -372,7 +372,7 @@ async function createSession(options?: {
   resume?: boolean;
   backendSessionId?: string;
 }): Promise<BackendSession> {
-  const { AgentSdkSession } = await import("../adapters/agent-sdk/agent-sdk-session.js");
+  const { AgentSdkSession } = await import("./agent-sdk-session.js");
   return AgentSdkSession.create({
     sessionId: options?.sessionId ?? "e2e-agent-sdk",
     resume: options?.resume,
@@ -799,7 +799,7 @@ describe("E2E: AgentSdkAdapter", () => {
   it("captures backendSessionId from system:init", async () => {
     currentMock = createControllableMock();
 
-    const { AgentSdkSession } = await import("../adapters/agent-sdk/agent-sdk-session.js");
+    const { AgentSdkSession } = await import("./agent-sdk-session.js");
     const agentSession = await AgentSdkSession.create({
       sessionId: "e2e-backend-id",
     });

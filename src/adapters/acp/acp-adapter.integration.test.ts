@@ -7,8 +7,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { AcpAdapter, type SpawnFn } from "../adapters/acp/acp-adapter.js";
-import type { BackendSession } from "../core/interfaces/backend-adapter.js";
+import type { BackendSession } from "../../core/interfaces/backend-adapter.js";
 import {
   createAcpAutoResponder,
   createMockChild,
@@ -19,7 +18,8 @@ import {
   respondToRequest,
   sendJsonRpcRequest,
   sendNotification,
-} from "./helpers/backend-test-utils.js";
+} from "../../test-utils/backend-test-utils.js";
+import { AcpAdapter, type SpawnFn } from "./acp-adapter.js";
 
 describe("E2E: AcpAdapter", () => {
   let session: BackendSession | undefined;
