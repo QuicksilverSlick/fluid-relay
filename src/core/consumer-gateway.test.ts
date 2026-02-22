@@ -295,6 +295,20 @@ describe("ConsumerGateway", () => {
     expect(vi.mocked(deps.tracer.recv)).toHaveBeenCalled();
   });
 
+  it("parses Buffer payloads and routes them", () => {
+    const { gateway, deps, ws, session } = createHarness();
+    gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);
+    vi.mocked(deps.routeConsumerMessage).mockClear();
+
+    gateway.handleConsumerMessage(ws, "s1", Buffer.from(JSON.stringify({ type: "interrupt" })));
+
+    expect(vi.mocked(deps.routeConsumerMessage)).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({ type: "interrupt" }),
+      ws,
+    );
+  });
+
   it("drops malformed JSON without routing", () => {
     const { gateway, deps, ws } = createHarness();
     gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);

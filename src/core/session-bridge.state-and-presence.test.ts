@@ -247,20 +247,6 @@ describe("SessionBridge", () => {
   // ── 10. Edge cases ─────────────────────────────────────────────────────
 
   describe("Edge cases", () => {
-    it("handleConsumerMessage handles Buffer input", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-      const ws = createMockSocket();
-      bridge.handleConsumerOpen(ws, authContext("sess-1"));
-      backendSession.sentMessages.length = 0;
-
-      const bufferData = Buffer.from(JSON.stringify({ type: "interrupt" }));
-      bridge.handleConsumerMessage(ws, "sess-1", bufferData);
-
-      const interruptMsg = backendSession.sentMessages.find((m) => m.type === "interrupt");
-      expect(interruptMsg).toBeDefined();
-    });
-
     it("consumer socket that throws on send is removed from the set", async () => {
       await bridge.connectBackend("sess-1");
       const backendSession = adapter.getSession("sess-1")!;
