@@ -51,11 +51,14 @@ export type {
 export type { RegisterSessionInput, SessionRegistry } from "./core/interfaces/session-registry.js";
 export type { ProcessSupervisorOptions, SupervisorEventMap } from "./core/process-supervisor.js";
 export { ProcessSupervisor } from "./core/process-supervisor.js";
+export type { LifecycleState } from "./core/session/session-lifecycle.js";
+export {
+  isLifecycleTransitionAllowed,
+  LIFECYCLE_STATES,
+} from "./core/session/session-lifecycle.js";
 export { SessionBridge } from "./core/session-bridge.js";
 export type { SessionCoordinatorOptions } from "./core/session-coordinator.js";
 export { SessionCoordinator } from "./core/session-coordinator.js";
-export type { LifecycleState } from "./core/session-lifecycle.js";
-export { isLifecycleTransitionAllowed, LIFECYCLE_STATES } from "./core/session-lifecycle.js";
 export { SessionRuntime } from "./core/session-runtime.js";
 export { SimpleSessionRegistry } from "./core/simple-session-registry.js";
 export type { SlashCommandResult } from "./core/slash/slash-command-executor.js";

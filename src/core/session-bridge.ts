@@ -62,7 +62,7 @@ import type { InboundCommand, PolicyCommand } from "./interfaces/runtime-command
 import { MessageQueueHandler } from "./message-queue-handler.js";
 import { type MessageTracer, noopTracer } from "./messaging/message-tracer.js";
 import { UnifiedMessageRouter } from "./messaging/unified-message-router.js";
-import type { LifecycleState } from "./session-lifecycle.js";
+import type { LifecycleState } from "./session/session-lifecycle.js";
 import { type Session, SessionRepository } from "./session-repository.js";
 import type { SessionRuntime } from "./session-runtime.js";
 import { SlashCommandRegistry } from "./slash/slash-command-registry.js";

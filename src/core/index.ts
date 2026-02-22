@@ -31,13 +31,13 @@ export { IdlePolicy } from "./policies/idle-policy.js";
 export { ReconnectPolicy } from "./policies/reconnect-policy.js";
 export type { ProcessSupervisorOptions, SupervisorEventMap } from "./process-supervisor.js";
 export { ProcessSupervisor } from "./process-supervisor.js";
-export { SessionBridge } from "./session-bridge.js";
-export { SessionCoordinator, type SessionCoordinatorOptions } from "./session-coordinator.js";
 export {
   isLifecycleTransitionAllowed,
   LIFECYCLE_STATES,
   type LifecycleState,
-} from "./session-lifecycle.js";
+} from "./session/session-lifecycle.js";
+export { SessionBridge } from "./session-bridge.js";
+export { SessionCoordinator, type SessionCoordinatorOptions } from "./session-coordinator.js";
 export { SessionRepository } from "./session-repository.js";
 export { SessionRuntime } from "./session-runtime.js";
 export { TypedEventEmitter } from "./typed-emitter.js";
