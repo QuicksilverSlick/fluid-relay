@@ -58,4 +58,23 @@ describe("state-migrator", () => {
     expect(result!.pendingMessages).toEqual([]);
     expect(result!.pendingPermissions).toEqual([]);
   });
+
+  it("v1→v2 drops string and array pendingMessages, keeps object entries", () => {
+    const objectMsg = { type: "user_message", role: "user", content: [] };
+    const v1 = {
+      id: "test-id",
+      state: { session_id: "test-id" },
+      messageHistory: [],
+      pendingPermissions: [],
+      pendingMessages: [
+        "raw ndjson string",  // string → dropped
+        objectMsg,            // plain object → kept
+        ["array", "item"],    // array → dropped
+      ],
+      schemaVersion: 1,
+    };
+    const result = migrateSession(v1);
+    expect(result).not.toBeNull();
+    expect(result!.pendingMessages).toEqual([objectMsg]);
+  });
 });
