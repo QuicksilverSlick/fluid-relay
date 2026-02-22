@@ -114,4 +114,72 @@ describe("SlashCommandRegistry", () => {
     expect(registry.find("/Help")).toBeDefined();
     expect(registry.find("/HELP")).toBeDefined();
   });
+
+  // ── registerFromCLI — input validation branches ────────────────────────────
+
+  it("registerFromCLI skips entries with non-string name", () => {
+    const before = registry.getAll().length;
+    registry.registerFromCLI([
+      { name: 42 as unknown as string, description: "should be skipped" },
+      { name: null as unknown as string, description: "also skipped" },
+    ]);
+    expect(registry.getAll().length).toBe(before);
+  });
+
+  it("registerFromCLI skips entries with empty string name", () => {
+    const before = registry.getAll().length;
+    registry.registerFromCLI([
+      { name: "", description: "blank name should be skipped" },
+      { name: "   ", description: "whitespace-only name skipped" },
+    ]);
+    expect(registry.getAll().length).toBe(before);
+  });
+
+  it("registerFromCLI omits argumentHint when it is not a string", () => {
+    registry.registerFromCLI([
+      { name: "/vim", description: "Toggle vim", argumentHint: 123 as unknown as string },
+    ]);
+    const cmd = registry.find("/vim");
+    expect(cmd).toBeDefined();
+    expect(cmd!.argumentHint).toBeUndefined();
+  });
+
+  it("registerFromCLI uses empty string when description is not a string", () => {
+    registry.registerFromCLI([
+      { name: "/vim", description: undefined as unknown as string },
+    ]);
+    const cmd = registry.find("/vim");
+    expect(cmd).toBeDefined();
+    expect(cmd!.description).toBe("");
+  });
+
+  // ── registerSkills — upgrade and no-upgrade branches ─────────────────────
+
+  it("registerSkills upgrades a CLI command to skill source", () => {
+    registry.registerFromCLI([{ name: "/lint", description: "Run linter" }]);
+    expect(registry.find("/lint")!.source).toBe("cli");
+
+    registry.registerSkills(["lint"]);
+    expect(registry.find("/lint")!.source).toBe("skill");
+  });
+
+  it("registerSkills does not downgrade a built-in command to skill", () => {
+    registry.registerSkills(["help"]); // /help is a built-in
+    expect(registry.find("/help")!.source).toBe("built-in");
+  });
+
+  it("registerSkills does not overwrite an existing skill", () => {
+    registry.registerSkills(["lint"]);
+    const first = registry.find("/lint");
+
+    registry.registerSkills(["lint"]); // register again
+    const second = registry.find("/lint");
+
+    expect(second).toEqual(first);
+  });
+
+  it("registerFromCLI adds leading slash when name is missing it", () => {
+    registry.registerFromCLI([{ name: "mycommand", description: "no slash prefix" }]);
+    expect(registry.find("/mycommand")).toBeDefined();
+  });
 });
