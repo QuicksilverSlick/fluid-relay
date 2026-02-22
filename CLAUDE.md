@@ -12,11 +12,11 @@ pnpm typecheck       # tsc --noEmit
 pnpm check:fix       # biome check --write src/
 pnpm check:arch      # enforce architectural layer boundaries
 
-# Unit tests
-pnpm test                           # all unit tests
+# Unit + integration tests
+pnpm test                           # all unit + adapter integration tests
 pnpm exec vitest run -t "test name" # single test by name
 
-# E2E mock (no credentials needed)
+# E2E mock — system-level (no credentials needed)
 pnpm test:e2e:mock
 
 # E2E real backends (requires credentials + CLI binaries)
