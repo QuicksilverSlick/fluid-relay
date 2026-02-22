@@ -273,6 +273,26 @@ describe("codex-message-translator", () => {
         const result = translateCodexEvent(event)!;
         expect(result.metadata.error_code).toBe("rate_limit");
       });
+
+      it("maps incomplete status to output_length error_code", () => {
+        const event: CodexTurnEvent = {
+          type: "response.failed",
+          response: { id: "r-1", status: "incomplete", output: [] },
+        };
+        const result = translateCodexEvent(event)!;
+        expect(result.metadata.error_code).toBe("output_length");
+        expect(result.metadata.error_message).toContain("truncated");
+      });
+
+      it("maps cancelled status to aborted error_code", () => {
+        const event: CodexTurnEvent = {
+          type: "response.failed",
+          response: { id: "r-1", status: "cancelled", output: [] },
+        };
+        const result = translateCodexEvent(event)!;
+        expect(result.metadata.error_code).toBe("aborted");
+        expect(result.metadata.error_message).toContain("cancelled");
+      });
     });
 
     describe("null returns for events without items", () => {
