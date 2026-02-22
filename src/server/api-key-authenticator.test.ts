@@ -35,4 +35,17 @@ describe("ApiKeyAuthenticator", () => {
     await expect(auth.authenticate(makeContext("x"))).rejects.toThrow("invalid token");
     await expect(auth.authenticate(makeContext("x".repeat(1000)))).rejects.toThrow("invalid token");
   });
+
+  it("supports validator callback mode", async () => {
+    const validatorAuth = new ApiKeyAuthenticator((token) => token === "rotating-accept");
+
+    await expect(validatorAuth.authenticate(makeContext("rotating-accept"))).resolves.toMatchObject(
+      {
+        role: "participant",
+      },
+    );
+    await expect(validatorAuth.authenticate(makeContext("rotating-reject"))).rejects.toThrow(
+      "invalid token",
+    );
+  });
 });

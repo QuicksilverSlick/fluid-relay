@@ -23,11 +23,11 @@ const harness = vi.hoisted(() => {
   }> = [];
 
   const wsServerInstances: Array<Record<string, unknown>> = [];
-  const apiAuthenticatorTokens: string[] = [];
+  const apiAuthenticatorArgs: unknown[] = [];
   const tracerConfigs: Array<{ level: string; allowSensitive: boolean }> = [];
 
   const loadConsumerHtml = vi.fn();
-  const injectConsumerToken = vi.fn();
+  const injectConsumerAuthTokens = vi.fn();
 
   const createBeamcodeServer = vi.fn(() => {
     const listeners = new Map<string, (...args: unknown[]) => void>();
@@ -83,8 +83,8 @@ const harness = vi.hoisted(() => {
   }
 
   class MockApiKeyAuthenticator {
-    constructor(token: string) {
-      apiAuthenticatorTokens.push(token);
+    constructor(arg: unknown) {
+      apiAuthenticatorArgs.push(arg);
     }
   }
 
@@ -114,10 +114,10 @@ const harness = vi.hoisted(() => {
     coordinatorListSessions,
     coordinatorInstances,
     wsServerInstances,
-    apiAuthenticatorTokens,
+    apiAuthenticatorArgs,
     tracerConfigs,
     loadConsumerHtml,
-    injectConsumerToken,
+    injectConsumerAuthTokens,
     createBeamcodeServer,
     createAdapterResolver,
     adapterResolve,
@@ -134,11 +134,15 @@ const harness = vi.hoisted(() => {
   };
 });
 
-vi.mock("node:crypto", () => ({
-  randomBytes: vi.fn(() => ({
-    toString: () => "token-123",
-  })),
-}));
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  return {
+    ...actual,
+    randomBytes: vi.fn(() => ({
+      toString: () => "token-123",
+    })),
+  };
+});
 
 vi.mock("../adapters/adapter-resolver.js", () => ({
   createAdapterResolver: harness.createAdapterResolver,
@@ -195,7 +199,7 @@ vi.mock("../daemon/daemon.js", () => ({
   Daemon: harness.MockDaemon,
 }));
 vi.mock("../http/consumer-html.js", () => ({
-  injectConsumerToken: harness.injectConsumerToken,
+  injectConsumerAuthTokens: harness.injectConsumerAuthTokens,
   loadConsumerHtml: harness.loadConsumerHtml,
 }));
 vi.mock("../http/server.js", () => ({
@@ -221,7 +225,7 @@ describe("runBeamcode", () => {
     vi.clearAllMocks();
     harness.coordinatorInstances.length = 0;
     harness.wsServerInstances.length = 0;
-    harness.apiAuthenticatorTokens.length = 0;
+    harness.apiAuthenticatorArgs.length = 0;
     harness.tracerConfigs.length = 0;
     harness.cloudflaredStart.mockResolvedValue({ url: "https://beam.example" });
     harness.coordinatorCreateSession.mockResolvedValue({ sessionId: "session-1" });
@@ -238,11 +242,14 @@ describe("runBeamcode", () => {
     await runBeamcode(["node", "beamcode", "--no-tunnel", "--no-auto-launch"]);
 
     expect(harness.loadConsumerHtml).toHaveBeenCalledOnce();
-    expect(harness.injectConsumerToken).toHaveBeenCalledWith("token-123");
+    expect(harness.injectConsumerAuthTokens).toHaveBeenCalledWith({
+      apiToken: "token-123",
+      consumerToken: "token-123",
+    });
     expect(harness.daemonStart).toHaveBeenCalledOnce();
     expect(harness.cloudflaredStart).not.toHaveBeenCalled();
     expect(harness.coordinatorCreateSession).not.toHaveBeenCalled();
-    expect(harness.apiAuthenticatorTokens).toHaveLength(0);
+    expect(harness.apiAuthenticatorArgs).toHaveLength(0);
     expect(harness.createBeamcodeServer).toHaveBeenCalledOnce();
     const server = harness.createBeamcodeServer.mock.results[0]?.value as {
       setActiveSessionId: ReturnType<typeof vi.fn>;
@@ -268,7 +275,8 @@ describe("runBeamcode", () => {
 
     expect(harness.cloudflaredStart).toHaveBeenCalledOnce();
     expect(harness.coordinatorCreateSession).toHaveBeenCalledOnce();
-    expect(harness.apiAuthenticatorTokens).toEqual(["token-123"]);
+    expect(harness.apiAuthenticatorArgs).toHaveLength(1);
+    expect(typeof harness.apiAuthenticatorArgs[0]).toBe("function");
     expect(harness.tracerConfigs).toEqual([{ level: "full", allowSensitive: true }]);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Message tracing enabled (level=full)"),

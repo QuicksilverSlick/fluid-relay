@@ -5,9 +5,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
+let sourceHtml: string | null = null;
 let cachedHtml: string | null = null;
 let cachedGzip: Buffer | null = null;
 let cachedCsp: string | null = null;
+let cachedApiToken: string | null = null;
+let cachedWsToken: string | null = null;
 
 /** Compute SHA-256 hashes of inline <script> and <style> blocks for CSP. */
 function computeInlineHashes(html: string): { scriptHashes: string[]; styleHashes: string[] } {
@@ -43,14 +46,76 @@ const consumerHtmlPath = join(
   "index.html",
 );
 
+function loadSourceHtml(): string {
+  if (!sourceHtml) {
+    sourceHtml = readFileSync(consumerHtmlPath, "utf-8");
+  }
+  return sourceHtml;
+}
+
 export function loadConsumerHtml(): string {
   if (cachedHtml) return cachedHtml;
-
-  cachedHtml = readFileSync(consumerHtmlPath, "utf-8");
+  cachedHtml = loadSourceHtml();
   cachedGzip = gzipSync(cachedHtml);
   cachedCsp = buildCsp(cachedHtml);
 
   return cachedHtml;
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function rebuildInjectedHtml(): void {
+  const baseHtml = loadSourceHtml();
+  const metaLines: string[] = [];
+  if (cachedApiToken !== null) {
+    metaLines.push(
+      `<meta name="beamcode-api-token" content="${escapeHtmlAttribute(cachedApiToken)}">`,
+    );
+  }
+  // Legacy compatibility: older clients read beamcode-consumer-token for API auth.
+  const legacyConsumerToken = cachedApiToken ?? cachedWsToken;
+  if (legacyConsumerToken !== null) {
+    metaLines.push(
+      `<meta name="beamcode-consumer-token" content="${escapeHtmlAttribute(legacyConsumerToken)}">`,
+    );
+  }
+  if (cachedWsToken !== null) {
+    metaLines.push(
+      `<meta name="beamcode-ws-token" content="${escapeHtmlAttribute(cachedWsToken)}">`,
+    );
+  }
+
+  cachedHtml = baseHtml.replace(
+    "<head>",
+    metaLines.length > 0 ? `<head>\n  ${metaLines.join("\n  ")}` : "<head>",
+  );
+  cachedGzip = gzipSync(cachedHtml);
+  cachedCsp = buildCsp(cachedHtml);
+}
+
+/**
+ * Inject scoped auth tokens into the consumer HTML.
+ * - `apiToken`: used for HTTP API `Authorization: Bearer <token>`.
+ * - `consumerToken`: used only for consumer WebSocket auth (`beamcode-ws-token`).
+ * - `beamcode-consumer-token` remains API-compatible for older clients.
+ */
+export function injectConsumerAuthTokens(options: {
+  apiToken?: string;
+  consumerToken?: string;
+}): void {
+  if (options.apiToken !== undefined) {
+    cachedApiToken = options.apiToken;
+  }
+  if (options.consumerToken !== undefined) {
+    cachedWsToken = options.consumerToken;
+  }
+  rebuildInjectedHtml();
 }
 
 /**
@@ -59,18 +124,12 @@ export function loadConsumerHtml(): string {
  * so that consumer page access does not grant full API access.
  */
 export function injectConsumerToken(token: string): void {
-  const baseHtml = loadConsumerHtml();
-  const escaped = token
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  cachedHtml = baseHtml.replace(
-    "<head>",
-    `<head>\n  <meta name="beamcode-consumer-token" content="${escaped}">`,
-  );
-  cachedGzip = gzipSync(cachedHtml);
-  cachedCsp = buildCsp(cachedHtml);
+  injectConsumerAuthTokens({ consumerToken: token });
+}
+
+/** Inject API token as a <meta> tag for browser-issued HTTP API requests. */
+export function injectApiToken(token: string): void {
+  injectConsumerAuthTokens({ apiToken: token });
 }
 
 export function handleConsumerHtml(req: IncomingMessage, res: ServerResponse): void {

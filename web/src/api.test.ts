@@ -12,7 +12,7 @@ import {
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  document.head.innerHTML = '<meta name="beamcode-consumer-token" content="test-key">';
+  document.head.innerHTML = '<meta name="beamcode-api-token" content="test-key">';
   vi.stubGlobal(
     "fetch",
     vi.fn(() =>
@@ -123,6 +123,14 @@ describe("API functions", () => {
       await listSessions();
       const [, opts] = mockFetch().mock.calls[0];
       expect(opts.headers.Authorization).toBe("Bearer test-key");
+    });
+
+    it("falls back to legacy consumer token meta for API auth", async () => {
+      document.head.innerHTML = '<meta name="beamcode-consumer-token" content="legacy-key">';
+      mockResponse([]);
+      await listSessions();
+      const [, opts] = mockFetch().mock.calls[0];
+      expect(opts.headers.Authorization).toBe("Bearer legacy-key");
     });
 
     it("no Authorization header when meta tag absent", async () => {

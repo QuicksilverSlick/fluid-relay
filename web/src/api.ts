@@ -4,7 +4,10 @@ const BASE = "/api";
 
 function getApiKey(): string | null {
   return (
-    document.querySelector<HTMLMetaElement>('meta[name="beamcode-consumer-token"]')?.content ?? null
+    document.querySelector<HTMLMetaElement>('meta[name="beamcode-api-token"]')?.content ??
+    // Backward-compatible fallback for pages that only inject the legacy meta tag.
+    document.querySelector<HTMLMetaElement>('meta[name="beamcode-consumer-token"]')?.content ??
+    null
   );
 }
 
