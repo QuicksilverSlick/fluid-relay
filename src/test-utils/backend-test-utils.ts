@@ -8,10 +8,10 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { vi } from "vitest";
-import type { BackendSession } from "../../core/interfaces/backend-adapter.js";
-import type { UnifiedMessage, UnifiedMessageType } from "../../core/types/unified-message.js";
-import { createUnifiedMessage } from "../../core/types/unified-message.js";
-import type { ProcessHandle, ProcessManager } from "../../interfaces/process-manager.js";
+import type { BackendSession } from "../core/interfaces/backend-adapter.js";
+import type { UnifiedMessage, UnifiedMessageType } from "../core/types/unified-message.js";
+import { createUnifiedMessage } from "../core/types/unified-message.js";
+import type { ProcessHandle, ProcessManager } from "../interfaces/process-manager.js";
 
 // ---------------------------------------------------------------------------
 // MessageReader — wraps a single iterator for consistent sequential reads
@@ -327,11 +327,8 @@ export function createInterruptMessage(): UnifiedMessage {
 // Each builder returns a typed OpencodeEvent matching one SSE event shape.
 // ---------------------------------------------------------------------------
 
-import type { OpencodeHttpClient } from "../../adapters/opencode/opencode-http-client.js";
-import type {
-  OpencodeEvent,
-  OpencodeMessageError,
-} from "../../adapters/opencode/opencode-types.js";
+import type { OpencodeHttpClient } from "../adapters/opencode/opencode-http-client.js";
+import type { OpencodeEvent, OpencodeMessageError } from "../adapters/opencode/opencode-types.js";
 
 /** Create a vitest-mocked OpencodeHttpClient with all methods stubbed. */
 export function createMockOpencodeHttpClient() {

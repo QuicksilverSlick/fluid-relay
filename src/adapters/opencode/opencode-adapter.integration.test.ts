@@ -4,9 +4,8 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { OpencodeSession } from "../adapters/opencode/opencode-session.js";
-import type { BackendSession } from "../core/interfaces/backend-adapter.js";
-import { createUnifiedMessage } from "../core/types/unified-message.js";
+import type { BackendSession } from "../../core/interfaces/backend-adapter.js";
+import { createUnifiedMessage } from "../../core/types/unified-message.js";
 import {
   buildOpencodeAssistantUpdatedEvent,
   buildOpencodeBusyEvent,
@@ -34,7 +33,8 @@ import {
   createPermissionResponse,
   createUserMessage,
   waitForUnifiedMessageType,
-} from "./helpers/backend-test-utils.js";
+} from "../../test-utils/backend-test-utils.js";
+import { OpencodeSession } from "./opencode-session.js";
 
 describe("E2E: OpencodeAdapter", () => {
   let session: BackendSession | undefined;

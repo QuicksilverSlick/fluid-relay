@@ -56,8 +56,8 @@ BeamCode has **three test tiers**, all powered by [Vitest](https://vitest.dev/).
 
 | Tier | Command | Speed | Credentials | What it validates |
 |------|---------|-------|-------------|-------------------|
-| **Unit** | `pnpm test` | ~1s | None | Core logic, adapters, translators, crypto, daemon |
-| **E2E mock** | `pnpm test:e2e` | ~5–15s | None | Full session flow end-to-end using mock CLI processes |
+| **Unit + Integration** | `pnpm test` | ~1s | None | Core logic, adapter integration (mock I/O), translators, crypto, daemon |
+| **E2E mock** | `pnpm test:e2e` | ~5–15s | None | System-level session flow end-to-end using mock CLI processes |
 | **E2E real — smoke** | `pnpm test:e2e:real:smoke` | ~30–60s | Required | Happy-path with real CLI binaries: spawn, connect, init, clean shutdown |
 | **E2E real — full** | `pnpm test:e2e:real:full` | minutes | Required | Full coverage: live prompt/response, streaming, cancel, slash commands |
 
@@ -66,6 +66,8 @@ BeamCode has **three test tiers**, all powered by [Vitest](https://vitest.dev/).
 #### E2E mock
 
 Mock E2E tests (`src/e2e/*.e2e.test.ts`) use `MockProcessManager` — no real CLI binary is needed. They exercise the complete session bridge, WebSocket protocol, and message routing in a controlled, repeatable way. These are the fastest feedback loop after unit tests, and the only E2E tier that runs on every PR without credentials.
+
+> **Note:** Per-adapter mock tests (ACP, Codex, Gemini, OpenCode, Agent SDK) now live alongside their adapter code as `src/adapters/<name>/*.integration.test.ts` and run as part of `pnpm test`. The mock E2E suite covers only system-level flows (session lifecycle, WebSocket routing, permissions, slash commands).
 
 ```bash
 pnpm test:e2e           # all mock E2E
@@ -262,7 +264,7 @@ A `-fieldName` entry in the `diff` array means the field was **silently dropped*
 | `closeWebSockets(...sockets)` | Graceful WebSocket cleanup |
 | `cleanupSessionManager(mgr)` | Tear down a test session manager |
 
-`src/e2e/helpers/backend-test-utils.ts`: mock infrastructure per adapter (ACP subprocess, Codex WebSocket, OpenCode HTTP+SSE).
+`src/test-utils/backend-test-utils.ts`: mock infrastructure per adapter (ACP subprocess, Codex WebSocket, OpenCode HTTP+SSE). Used by the adapter integration tests in `src/adapters/<name>/*.integration.test.ts`.
 
 ### Architecture Boundary Checks
 
