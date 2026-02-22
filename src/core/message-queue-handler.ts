@@ -8,7 +8,7 @@
 
 import type { ConsumerIdentity } from "../interfaces/auth.js";
 import type { WebSocketLike } from "../interfaces/transport.js";
-import type { ConsumerBroadcaster } from "./consumer-broadcaster.js";
+import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 import type { QueuedMessage, Session } from "./session-repository.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────

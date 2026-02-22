@@ -6,7 +6,7 @@ import {
   flushPromises,
   noopLogger,
 } from "../testing/cli-message-factories.js";
-import { ConsumerBroadcaster } from "./consumer-broadcaster.js";
+import { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 import {
   AdapterNativeHandler,
   type CommandHandler,

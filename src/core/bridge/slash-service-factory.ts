@@ -1,5 +1,5 @@
 import type { BridgeEventMap } from "../../types/events.js";
-import type { ConsumerBroadcaster } from "../consumer-broadcaster.js";
+import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { MessageTracer } from "../message-tracer.js";
 import {
   AdapterNativeHandler,

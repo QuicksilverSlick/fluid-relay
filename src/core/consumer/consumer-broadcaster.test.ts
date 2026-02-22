@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ConsumerIdentity } from "../interfaces/auth.js";
-import type { WebSocketLike } from "../interfaces/transport.js";
+import type { ConsumerIdentity } from "../../interfaces/auth.js";
+import type { WebSocketLike } from "../../interfaces/transport.js";
 import {
   createMockSession,
   createTestSocket,
   noopLogger,
-} from "../testing/cli-message-factories.js";
+} from "../../testing/cli-message-factories.js";
+import type { Session } from "../session-repository.js";
 import {
   BACKPRESSURE_THRESHOLD,
   type BroadcastCallback,
   ConsumerBroadcaster,
 } from "./consumer-broadcaster.js";
-import type { Session } from "./session-repository.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

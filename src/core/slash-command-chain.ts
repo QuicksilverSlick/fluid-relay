@@ -11,7 +11,7 @@
  */
 
 import type { BridgeEventMap } from "../types/events.js";
-import type { ConsumerBroadcaster } from "./consumer-broadcaster.js";
+import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 import { type MessageTracer, noopTracer, type TraceOutcome } from "./message-tracer.js";
 import type { Session } from "./session-repository.js";
 import type { SlashCommandExecutor } from "./slash-command-executor.js";

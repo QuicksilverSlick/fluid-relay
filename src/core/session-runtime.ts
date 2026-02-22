@@ -20,7 +20,7 @@ import type {
 } from "../types/cli-messages.js";
 import type { ConsumerMessage } from "../types/consumer-messages.js";
 import type { SessionSnapshot } from "../types/session-state.js";
-import type { ConsumerBroadcaster } from "./consumer-broadcaster.js";
+import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 import type { InboundCommand, PolicyCommand } from "./interfaces/runtime-commands.js";
 import type { MessageQueueHandler } from "./message-queue-handler.js";
 import type { LifecycleState } from "./session-lifecycle.js";

@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TokenBucketLimiter } from "../adapters/token-bucket-limiter.js";
-import type { Authenticator, ConsumerIdentity } from "../interfaces/auth.js";
+import { TokenBucketLimiter } from "../../adapters/token-bucket-limiter.js";
+import type { Authenticator, ConsumerIdentity } from "../../interfaces/auth.js";
 import {
   authContext,
   createMockSession,
   createTestSocket,
-} from "../testing/cli-message-factories.js";
-import { resolveConfig } from "../types/config.js";
+} from "../../testing/cli-message-factories.js";
+import { resolveConfig } from "../../types/config.js";
 import {
   ConsumerGatekeeper,
   PARTICIPANT_ONLY_TYPES,

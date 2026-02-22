@@ -21,7 +21,7 @@ import { CONSUMER_PROTOCOL_VERSION, type ConsumerMessage } from "../types/consum
 import type { BridgeEventMap } from "../types/events.js";
 import type { SessionState } from "../types/session-state.js";
 import type { CapabilitiesPolicy } from "./capabilities-policy.js";
-import type { ConsumerBroadcaster } from "./consumer-broadcaster.js";
+import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 import {
   mapAssistantMessage,
   mapAuthStatus,

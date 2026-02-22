@@ -9,11 +9,11 @@
  * @module ConsumerPlane
  */
 
-import type { AuthContext, Authenticator, ConsumerIdentity } from "../interfaces/auth.js";
-import type { RateLimiter } from "../interfaces/rate-limiter.js";
-import type { WebSocketLike } from "../interfaces/transport.js";
-import { createAnonymousIdentity } from "../types/auth.js";
-import type { ResolvedConfig } from "../types/config.js";
+import type { AuthContext, Authenticator, ConsumerIdentity } from "../../interfaces/auth.js";
+import type { RateLimiter } from "../../interfaces/rate-limiter.js";
+import type { WebSocketLike } from "../../interfaces/transport.js";
+import { createAnonymousIdentity } from "../../types/auth.js";
+import type { ResolvedConfig } from "../../types/config.js";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 

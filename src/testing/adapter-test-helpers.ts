@@ -12,7 +12,7 @@
 
 import { translate } from "../adapters/claude/message-translator.js";
 import { MemoryStorage } from "../adapters/memory-storage.js";
-import type { RateLimiterFactory } from "../core/consumer-gatekeeper.js";
+import type { RateLimiterFactory } from "../core/consumer/consumer-gatekeeper.js";
 import type {
   BackendAdapter,
   BackendCapabilities,

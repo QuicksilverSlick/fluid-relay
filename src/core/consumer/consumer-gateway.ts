@@ -9,13 +9,13 @@
  * @module ConsumerPlane
  */
 
-import type { AuthContext, ConsumerIdentity } from "../interfaces/auth.js";
-import type { WebSocketLike } from "../interfaces/transport.js";
-import { CONSUMER_PROTOCOL_VERSION } from "../types/consumer-messages.js";
-import { inboundMessageSchema } from "../types/inbound-message-schema.js";
-import type { InboundCommand } from "./interfaces/runtime-commands.js";
-import type { ConsumerTransportCoordinatorDeps } from "./interfaces/session-bridge-coordination.js";
-import type { Session } from "./session-repository.js";
+import type { AuthContext, ConsumerIdentity } from "../../interfaces/auth.js";
+import type { WebSocketLike } from "../../interfaces/transport.js";
+import { CONSUMER_PROTOCOL_VERSION } from "../../types/consumer-messages.js";
+import { inboundMessageSchema } from "../../types/inbound-message-schema.js";
+import type { InboundCommand } from "../interfaces/runtime-commands.js";
+import type { ConsumerTransportCoordinatorDeps } from "../interfaces/session-bridge-coordination.js";
+import type { Session } from "../session-repository.js";
 
 export type ConsumerGatewayDeps = ConsumerTransportCoordinatorDeps;
 

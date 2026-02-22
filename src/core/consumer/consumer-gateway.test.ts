@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ConsumerIdentity } from "../interfaces/auth.js";
+import type { ConsumerIdentity } from "../../interfaces/auth.js";
 import {
   createMockSession,
   createTestSocket,
   flushPromises,
-} from "../testing/cli-message-factories.js";
-import { CONSUMER_PROTOCOL_VERSION } from "../types/consumer-messages.js";
+} from "../../testing/cli-message-factories.js";
+import { CONSUMER_PROTOCOL_VERSION } from "../../types/consumer-messages.js";
+import type { InboundCommand } from "../interfaces/runtime-commands.js";
+import type { Session } from "../session-repository.js";
 import type { ConsumerGatewayDeps } from "./consumer-gateway.js";
 import { ConsumerGateway } from "./consumer-gateway.js";
-import type { InboundCommand } from "./interfaces/runtime-commands.js";
-import type { Session } from "./session-repository.js";
 
 function createDeps(overrides?: Partial<ConsumerGatewayDeps>): ConsumerGatewayDeps {
   return {

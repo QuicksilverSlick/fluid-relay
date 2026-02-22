@@ -26,7 +26,7 @@ import { resolveConfig } from "../types/config.js";
 import type { SessionCoordinatorEventMap } from "../types/events.js";
 import { noopLogger } from "../utils/noop-logger.js";
 import { redactSecrets } from "../utils/redact-secrets.js";
-import type { RateLimiterFactory } from "./consumer-gatekeeper.js";
+import type { RateLimiterFactory } from "./consumer/consumer-gatekeeper.js";
 import { BackendRecoveryService } from "./coordinator/backend-recovery-service.js";
 import { CoordinatorEventRelay } from "./coordinator/coordinator-event-relay.js";
 import { ProcessLogService } from "./coordinator/process-log-service.js";

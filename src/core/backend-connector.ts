@@ -16,7 +16,7 @@ import type { Logger } from "../interfaces/logger.js";
 import type { MetricsCollector } from "../interfaces/metrics.js";
 import type { CLIMessage } from "../types/cli-messages.js";
 import type { BridgeEventMap } from "../types/events.js";
-import type { ConsumerBroadcaster } from "./consumer-broadcaster.js";
+import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 import { CLI_ADAPTER_NAMES, type CliAdapterName } from "./interfaces/adapter-names.js";
 import type { AdapterResolver } from "./interfaces/adapter-resolver.js";
 import type { BackendAdapter, BackendSession } from "./interfaces/backend-adapter.js";
