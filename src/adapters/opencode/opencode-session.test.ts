@@ -659,6 +659,57 @@ describe("OpencodeSession", () => {
   });
 
   // -------------------------------------------------------------------------
+  // normalizeUnifiedMessage — assistant with pre-populated content
+  // These cover the content.length > 0 branch in materializeAssistantText
+  // which is a defensive path for future opencode API changes.
+  // -------------------------------------------------------------------------
+
+  it("normalizeUnifiedMessage returns pre-populated assistant message unchanged", () => {
+    const message = createUnifiedMessage({
+      type: "assistant",
+      role: "assistant",
+      content: [{ type: "text", text: "already has content" }],
+      metadata: { message_id: "m-pre" },
+    });
+    const result = (session as any).normalizeUnifiedMessage(message);
+    expect(result).toBe(message);
+    expect(result.content).toEqual([{ type: "text", text: "already has content" }]);
+  });
+
+  it("normalizeUnifiedMessage saves text from pre-populated content for later re-emit", () => {
+    // First call: assistant message with content → text saved to assistantTextByMessage
+    const messageWithContent = createUnifiedMessage({
+      type: "assistant",
+      role: "assistant",
+      content: [{ type: "text", text: "saved text" }],
+      metadata: { message_id: "m-save" },
+    });
+    (session as any).normalizeUnifiedMessage(messageWithContent);
+
+    // Second call: same message id but empty content → should reconstruct from saved text
+    const emptyMessage = createUnifiedMessage({
+      type: "assistant",
+      role: "assistant",
+      metadata: { message_id: "m-save" },
+    });
+    const result = (session as any).normalizeUnifiedMessage(emptyMessage);
+    expect(result.content).toEqual([{ type: "text", text: "saved text" }]);
+  });
+
+  it("normalizeUnifiedMessage handles non-text content blocks in extractTextFromContent", () => {
+    // Content with a non-text block (thinking) → extractTextFromContent returns ""
+    const message = createUnifiedMessage({
+      type: "assistant",
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "internal reasoning" }],
+      metadata: { message_id: "m-thinking" },
+    });
+    const result = (session as any).normalizeUnifiedMessage(message);
+    // Message returned unchanged, but no text saved (empty string from extractTextFromContent)
+    expect(result).toBe(message);
+  });
+
+  // -------------------------------------------------------------------------
   // send() with session_init is a no-op (no HTTP call)
   // -------------------------------------------------------------------------
 

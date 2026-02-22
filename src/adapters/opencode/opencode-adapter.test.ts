@@ -373,6 +373,102 @@ describe("OpencodeAdapter", () => {
   // SSE — retries exhausted notifies all sessions
   // -------------------------------------------------------------------------
 
+  // -------------------------------------------------------------------------
+  // resolveLaunchPort — default port detection
+  // -------------------------------------------------------------------------
+
+  it("uses default port when none specified and port is free", async () => {
+    const defaultAdapter = new OpencodeAdapter({
+      processManager: createMockProcessManager(),
+      hostname: "127.0.0.1",
+      directory: "/test/dir",
+      // no port → uses DEFAULT_PORT (4096)
+    });
+
+    vi.spyOn(defaultAdapter as any, "isPortInUse").mockResolvedValue(false);
+
+    await defaultAdapter.connect({ sessionId: "beamcode-def" });
+
+    expect(launchSpy).toHaveBeenCalledWith(
+      "server",
+      expect.objectContaining({ port: 4096 }),
+    );
+  });
+
+  it("falls back to ephemeral port when default port is in use", async () => {
+    const defaultAdapter = new OpencodeAdapter({
+      processManager: createMockProcessManager(),
+      hostname: "127.0.0.1",
+      directory: "/test/dir",
+    });
+
+    vi.spyOn(defaultAdapter as any, "isPortInUse").mockResolvedValue(true);
+    vi.spyOn(defaultAdapter as any, "reserveEphemeralPort").mockResolvedValue(54321);
+
+    await defaultAdapter.connect({ sessionId: "beamcode-def" });
+
+    expect(launchSpy).toHaveBeenCalledWith(
+      "server",
+      expect.objectContaining({ port: 54321 }),
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // isPortInUse and reserveEphemeralPort — real TCP
+  // -------------------------------------------------------------------------
+
+  it("isPortInUse returns true when port is occupied", async () => {
+    const net = await import("node:net");
+    const server = net.createServer();
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as { port: number };
+
+    try {
+      const result = await (adapter as any).isPortInUse("127.0.0.1", port);
+      expect(result).toBe(true);
+    } finally {
+      await new Promise<void>((r, rej) => server.close((err) => (err ? rej(err) : r())));
+    }
+  });
+
+  it("isPortInUse returns false for a recently freed port", async () => {
+    const net = await import("node:net");
+    const server = net.createServer();
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as { port: number };
+    await new Promise<void>((r, rej) => server.close((err) => (err ? rej(err) : r())));
+
+    const result = await (adapter as any).isPortInUse("127.0.0.1", port);
+    expect(result).toBe(false);
+  });
+
+  it("reserveEphemeralPort returns a valid port number", async () => {
+    const port = await (adapter as any).reserveEphemeralPort("127.0.0.1");
+    expect(typeof port).toBe("number");
+    expect(port).toBeGreaterThan(0);
+    expect(port).toBeLessThan(65536);
+  });
+
+  // -------------------------------------------------------------------------
+  // notifyAllSessions
+  // -------------------------------------------------------------------------
+
+  it("notifyAllSessions dispatches session.error to all active sessions", async () => {
+    const session = await adapter.connect({ sessionId: "beamcode-notify" });
+    const iter = session.messages[Symbol.asyncIterator]();
+
+    // Directly invoke the private method
+    (adapter as any).notifyAllSessions("connection lost after retries");
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    const result = await iter.next();
+    expect(result.done).toBe(false);
+    expect(result.value.type).toBe("result");
+    expect(result.value.metadata.is_error).toBe(true);
+    expect(result.value.metadata.error_message).toBe("connection lost after retries");
+  });
+
   it("notifies sessions with session.error when SSE retries are exhausted", async () => {
     const session = await adapter.connect({ sessionId: "beamcode-1" });
     const iter = session.messages[Symbol.asyncIterator]();
