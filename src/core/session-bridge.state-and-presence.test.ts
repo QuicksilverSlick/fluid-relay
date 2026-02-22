@@ -140,40 +140,4 @@ describe("SessionBridge", () => {
       expect(userMsg!.metadata.session_id).toBe("cli-real-id");
     });
   });
-
-  // ── 13. Presence ────────────────────────────────────────────────────────
-
-  describe("Presence", () => {
-    it("presence_query triggers presence broadcast", () => {
-      bridge.getOrCreateSession("sess-1");
-      const ws1 = createMockSocket();
-      const ws2 = createMockSocket();
-      bridge.handleConsumerOpen(ws1, authContext("sess-1"));
-      bridge.handleConsumerOpen(ws2, authContext("sess-1"));
-      ws1.sentMessages.length = 0;
-      ws2.sentMessages.length = 0;
-
-      bridge.handleConsumerMessage(ws1, "sess-1", JSON.stringify({ type: "presence_query" }));
-
-      // Both consumers should get presence_update
-      for (const ws of [ws1, ws2]) {
-        const parsed = ws.sentMessages.map((m) => JSON.parse(m));
-        expect(parsed.some((m: any) => m.type === "presence_update")).toBe(true);
-      }
-    });
-
-    it("getSession includes consumers array", () => {
-      bridge.getOrCreateSession("sess-1");
-      const ws = createMockSocket();
-      bridge.handleConsumerOpen(ws, authContext("sess-1"));
-
-      const snapshot = bridge.getSession("sess-1")!;
-      expect(snapshot.consumers).toHaveLength(1);
-      expect(snapshot.consumers[0]).toEqual({
-        userId: "anonymous-1",
-        displayName: "User 1",
-        role: "participant",
-      });
-    });
-  });
 });

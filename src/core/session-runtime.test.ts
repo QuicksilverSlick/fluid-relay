@@ -280,6 +280,47 @@ describe("SessionRuntime", () => {
     expect(runtime.getLifecycleState()).toBe("idle");
   });
 
+  it("derives lifecycle transitions from backend status/stream/result messages", () => {
+    const session = createMockSession({ id: "s1" });
+    const runtime = new SessionRuntime(session, makeDeps());
+
+    expect(runtime.getLifecycleState()).toBe("awaiting_backend");
+
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "status_change",
+        role: "system",
+        metadata: { status: "idle" },
+      }),
+    );
+    expect(runtime.getLifecycleState()).toBe("idle");
+
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "stream_event",
+        role: "system",
+        metadata: {
+          event: { type: "message_start" },
+          parent_tool_use_id: null,
+        },
+      }),
+    );
+    expect(runtime.getLifecycleState()).toBe("active");
+
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "result",
+        role: "system",
+        metadata: {
+          subtype: "success",
+          is_error: false,
+          num_turns: 1,
+        },
+      }),
+    );
+    expect(runtime.getLifecycleState()).toBe("idle");
+  });
+
   it("invokes signal callback", () => {
     const session = createMockSession({ id: "s1" });
     const onSignal = vi.fn();
@@ -505,6 +546,35 @@ describe("SessionRuntime", () => {
     });
     expect(session.consumerSockets.has(ws)).toBe(false);
     expect(session.consumerRateLimiters.has(ws)).toBe(false);
+  });
+
+  it("routes presence_query inbound commands to broadcaster presence updates", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+    const ws = createTestSocket();
+    runtime.addConsumer(ws, { userId: "u1", displayName: "U1", role: "participant" });
+
+    runtime.handleInboundCommand({ type: "presence_query" }, ws);
+
+    expect(deps.broadcaster.broadcastPresence).toHaveBeenCalledWith(session);
+  });
+
+  it("getSessionSnapshot includes connected consumer identities", () => {
+    const session = createMockSession({ id: "s1" });
+    const runtime = new SessionRuntime(session, makeDeps());
+    const ws1 = createTestSocket();
+    const ws2 = createTestSocket();
+    runtime.addConsumer(ws1, { userId: "u1", displayName: "Alice", role: "participant" });
+    runtime.addConsumer(ws2, { userId: "u2", displayName: "Bob", role: "observer" });
+
+    const snapshot = runtime.getSessionSnapshot();
+
+    expect(snapshot.consumers).toEqual([
+      { userId: "u1", displayName: "Alice", role: "participant" },
+      { userId: "u2", displayName: "Bob", role: "observer" },
+    ]);
+    expect(snapshot.consumerCount).toBe(2);
   });
 
   it("owns state, backend session id, status, queued message, and history accessors", () => {
