@@ -166,7 +166,7 @@ export type ConsumerMessage =
     }
   | {
       type: "status_change";
-      status: "compacting" | "idle" | "running" | null;
+      status: "compacting" | "idle" | "running" | "retry" | null;
       metadata?: Record<string, unknown>;
     }
   | {

@@ -51,6 +51,7 @@ export function StreamingIndicator({ sessionId }: StreamingIndicatorProps) {
     (s) => s.sessionData[sessionId]?.streamingOutputTokens ?? 0,
   );
   const sessionStatus = useStore((s) => s.sessionData[sessionId]?.sessionStatus ?? null);
+  const retryInfo = useStore((s) => s.sessionData[sessionId]?.retryInfo ?? null);
 
   const elapsed = useElapsed(streamingStartedAt);
   const [stopping, setStopping] = useState(false);
@@ -68,6 +69,18 @@ export function StreamingIndicator({ sessionId }: StreamingIndicatorProps) {
     send({ type: "interrupt" }, sessionId);
     setStopping(true);
   }, [sessionId]);
+
+  if (sessionStatus === "retry" && retryInfo) {
+    return (
+      <div className="mx-auto w-full max-w-3xl px-3">
+        <div className="flex items-center gap-2 py-1.5 text-xs text-bc-text-muted">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-bc-warning" />
+          <span className="text-bc-warning">{retryInfo.message}</span>
+          <span className="text-bc-text-muted">— attempt {retryInfo.attempt}</span>
+        </div>
+      </div>
+    );
+  }
 
   if (!streaming && !streamingStartedAt && sessionStatus !== "running") return null;
 

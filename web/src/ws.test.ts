@@ -937,6 +937,46 @@ describe("handleMessage", () => {
     expect(getSessionData()?.sessionStatus).toBe("idle");
   });
 
+  it("status_change retry: stores retryInfo and sets status to retry", () => {
+    const ws = openSession();
+    const nextTs = Date.now() + 5000;
+
+    ws.simulateMessage(
+      JSON.stringify({
+        type: "status_change",
+        status: "retry",
+        metadata: {
+          retry: true,
+          attempt: 2,
+          message: "The usage limit has been reached",
+          next: nextTs,
+        },
+      }),
+    );
+
+    expect(getSessionData()?.sessionStatus).toBe("retry");
+    expect(getSessionData()?.retryInfo).toEqual({
+      message: "The usage limit has been reached",
+      attempt: 2,
+      next: nextTs,
+    });
+  });
+
+  it("status_change: clears retryInfo on non-retry status", () => {
+    const ws = openSession();
+
+    ws.simulateMessage(
+      JSON.stringify({
+        type: "status_change",
+        status: "retry",
+        metadata: { retry: true, attempt: 1, message: "Rate limited", next: 9999 },
+      }),
+    );
+    ws.simulateMessage(JSON.stringify({ type: "status_change", status: "running" }));
+
+    expect(getSessionData()?.retryInfo).toBeNull();
+  });
+
   // ── permission_request / permission_cancelled ───────────────────────────
 
   it("permission_request: adds to pending permissions", () => {

@@ -165,4 +165,42 @@ describe("StreamingIndicator", () => {
       expect(screen.getByText("Generating...")).toBeInTheDocument();
     });
   });
+
+  describe("retry state", () => {
+    it("shows retry message when session is rate-limited", () => {
+      store().ensureSessionData(SESSION);
+      store().setSessionStatus(SESSION, "retry");
+      store().setRetryInfo(SESSION, {
+        message: "The usage limit has been reached",
+        attempt: 1,
+        next: Date.now() + 5000,
+      });
+      render(<StreamingIndicator sessionId={SESSION} />);
+      expect(screen.getByText("The usage limit has been reached")).toBeInTheDocument();
+    });
+
+    it("shows attempt count in retry state", () => {
+      store().ensureSessionData(SESSION);
+      store().setSessionStatus(SESSION, "retry");
+      store().setRetryInfo(SESSION, {
+        message: "The usage limit has been reached",
+        attempt: 3,
+        next: Date.now() + 5000,
+      });
+      render(<StreamingIndicator sessionId={SESSION} />);
+      expect(screen.getByText(/attempt 3/i)).toBeInTheDocument();
+    });
+
+    it("hides stop button during retry state", () => {
+      store().ensureSessionData(SESSION);
+      store().setSessionStatus(SESSION, "retry");
+      store().setRetryInfo(SESSION, {
+        message: "Rate limited",
+        attempt: 1,
+        next: Date.now() + 5000,
+      });
+      render(<StreamingIndicator sessionId={SESSION} />);
+      expect(screen.queryByRole("button", { name: "Stop generation" })).not.toBeInTheDocument();
+    });
+  });
 });
