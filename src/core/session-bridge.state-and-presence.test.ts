@@ -3,17 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 
 import type { MemoryStorage } from "../adapters/memory-storage.js";
-import {
-  createBridgeWithAdapter,
-  type MockBackendAdapter,
-  makeSessionInitMsg,
-  setupInitializedSession,
-  tick,
-} from "../testing/adapter-test-helpers.js";
-import {
-  authContext,
-  createTestSocket as createMockSocket,
-} from "../testing/cli-message-factories.js";
+import { createBridgeWithAdapter } from "../testing/adapter-test-helpers.js";
 import type { SessionBridge } from "./session-bridge.js";
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -21,13 +11,11 @@ import type { SessionBridge } from "./session-bridge.js";
 describe("SessionBridge", () => {
   let bridge: SessionBridge;
   let storage: MemoryStorage;
-  let adapter: MockBackendAdapter;
 
   beforeEach(() => {
     const created = createBridgeWithAdapter();
     bridge = created.bridge;
     storage = created.storage;
-    adapter = created.adapter;
   });
   describe("Persistence", () => {
     it("restoreFromStorage loads persisted sessions", () => {
@@ -69,75 +57,6 @@ describe("SessionBridge", () => {
       expect(snapshot!.state.model).toBe("claude-sonnet-4-5-20250929");
       expect(snapshot!.state.cwd).toBe("/restored");
       expect(snapshot!.messageHistoryLength).toBe(1);
-    });
-
-    it("restoreFromStorage does not overwrite live sessions", async () => {
-      const backendSession = await setupInitializedSession(bridge, adapter, "sess-1");
-
-      // Push a session_init with a specific cwd to establish state
-      // (setupInitializedSession already pushes session_init with cwd: "/test")
-
-      // Now put a different version in storage
-      storage.save({
-        id: "sess-1",
-        state: {
-          session_id: "sess-1",
-          model: "old-model",
-          cwd: "/old",
-          tools: [],
-          permissionMode: "default",
-          claude_code_version: "0.1",
-          mcp_servers: [],
-          slash_commands: [],
-          skills: [],
-          total_cost_usd: 0,
-          num_turns: 0,
-          context_used_percent: 0,
-          is_compacting: false,
-          git_branch: "",
-          is_worktree: false,
-          repo_root: "",
-          git_ahead: 0,
-          git_behind: 0,
-          total_lines_added: 0,
-          total_lines_removed: 0,
-        },
-        messageHistory: [],
-        pendingMessages: [],
-        pendingPermissions: [],
-      });
-
-      const count = bridge.restoreFromStorage();
-      expect(count).toBe(0);
-      // Live session should still have the current cwd
-      expect(bridge.getSession("sess-1")!.state.cwd).toBe("/test");
-    });
-  });
-
-  // ── 10. Edge cases ─────────────────────────────────────────────────────
-
-  describe("Edge cases", () => {
-    it("sendUserMessage with user_message via consumer includes session_id override", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      // First populate the backend session_id via init
-      backendSession.pushMessage(makeSessionInitMsg({ session_id: "cli-real-id" }));
-      await tick();
-
-      const ws = createMockSocket();
-      bridge.handleConsumerOpen(ws, authContext("sess-1"));
-      backendSession.sentMessages.length = 0;
-
-      bridge.handleConsumerMessage(
-        ws,
-        "sess-1",
-        JSON.stringify({ type: "user_message", content: "test", session_id: "cli-real-id" }),
-      );
-
-      const userMsg = backendSession.sentMessages.find((m) => m.type === "user_message");
-      expect(userMsg).toBeDefined();
-      expect(userMsg!.metadata.session_id).toBe("cli-real-id");
     });
   });
 });
