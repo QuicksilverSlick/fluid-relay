@@ -179,7 +179,7 @@ describe("StreamingIndicator", () => {
       expect(screen.getByText("The usage limit has been reached")).toBeInTheDocument();
     });
 
-    it("shows attempt count in retry state", () => {
+    it("does not show attempt count — usage limits are not self-resolving", () => {
       store().ensureSessionData(SESSION);
       store().setSessionStatus(SESSION, "retry");
       store().setRetryInfo(SESSION, {
@@ -188,7 +188,7 @@ describe("StreamingIndicator", () => {
         next: Date.now() + 5000,
       });
       render(<StreamingIndicator sessionId={SESSION} />);
-      expect(screen.getByText(/attempt 3/i)).toBeInTheDocument();
+      expect(screen.queryByText(/attempt/i)).not.toBeInTheDocument();
     });
 
     it("hides stop button during retry state", () => {

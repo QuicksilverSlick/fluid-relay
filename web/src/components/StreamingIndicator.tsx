@@ -73,10 +73,9 @@ export function StreamingIndicator({ sessionId }: StreamingIndicatorProps) {
   if (sessionStatus === "retry" && retryInfo) {
     return (
       <div className="mx-auto w-full max-w-3xl px-3">
-        <div className="flex items-center gap-2 py-1.5 text-xs text-bc-text-muted">
-          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-bc-warning" />
-          <span className="text-bc-warning">{retryInfo.message}</span>
-          <span className="text-bc-text-muted">— attempt {retryInfo.attempt}</span>
+        <div className="flex items-center gap-2 py-1.5 text-xs text-bc-error">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-bc-error" />
+          <span>{retryInfo.message}</span>
         </div>
       </div>
     );
