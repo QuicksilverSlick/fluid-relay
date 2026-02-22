@@ -259,7 +259,7 @@ Remaining inconsistencies (lower priority):
 ### ISSUE 3: ~~Status Inference is Claude-Specific~~ — RESOLVED
 
 ~~**Severity:** Low~~
-~~**File:** `src/core/unified-message-router.ts`~~
+~~**File:** `src/core/messaging/unified-message-router.ts`~~
 
 The router infers "running" status from `stream_event` messages when `event.type === "message_start"` — a Claude-specific convention. This is now supplemented by:
 - **OpenCode**: `session.status(busy)` now emits `status_change` with `status: "running"` (previously only had `busy: true`)

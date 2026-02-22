@@ -16,7 +16,7 @@ Architecture reference, testing, and message tracing.
 
 See [docs/architecture-diagram.md](docs/architecture-diagram.md) for the full architecture diagram, data flows, module decomposition, and package structure.
 
-**Summary:** An HTTP+WS server routes `ConsumerMessage` / `InboundMessage` through `SessionBridge` (~500L, decomposed into 12 focused modules in `bridge/`) and `SessionCoordinator` (~400L, with 4 extracted services in `coordinator/`) to a `BackendAdapter` — Claude, ACP, Codex, Gemini, or OpenCode. A daemon layer manages process lifecycle; a relay layer adds Cloudflare Tunnel + E2E encryption for remote access.
+**Summary:** An HTTP+WS server routes `ConsumerMessage` / `InboundMessage` through `SessionBridge` (~500L, decomposed into 12 focused modules in `bridge/`) and `SessionCoordinator` (~400L, with 5 extracted services in `coordinator/`) to a `BackendAdapter` — Claude, ACP, Codex, Gemini, or OpenCode. Core logic is organized into 13 subdirectories under `src/core/`: `backend/`, `bridge/`, `capabilities/`, `consumer/`, `coordinator/`, `events/`, `interfaces/`, `messaging/`, `policies/`, `session/`, `slash/`, `team/`, `types/`. A daemon layer manages process lifecycle; a relay layer adds Cloudflare Tunnel + E2E encryption for remote access.
 
 ---
 
@@ -231,10 +231,10 @@ A `-fieldName` entry in the `diff` array means the field was **silently dropped*
 
 | Boundary | Where bugs hide | File to fix |
 |----------|----------------|-------------|
-| T1 `InboundMessage → UnifiedMessage` | Consumer sends but backend ignores | `src/core/inbound-normalizer.ts` |
+| T1 `InboundMessage → UnifiedMessage` | Consumer sends but backend ignores | `src/core/messaging/inbound-normalizer.ts` |
 | T2 `UnifiedMessage → NativeCLI` | Backend receives wrong params | Adapter's `send()` method |
 | T3 `NativeCLI → UnifiedMessage` | Backend response not translated | Adapter's message loop |
-| T4 `UnifiedMessage → ConsumerMessage` | Consumer never receives the message | `src/core/unified-message-router.ts` |
+| T4 `UnifiedMessage → ConsumerMessage` | Consumer never receives the message | `src/core/messaging/unified-message-router.ts` |
 
 #### Key files
 
@@ -244,7 +244,7 @@ A `-fieldName` entry in the `diff` array means the field was **silently dropped*
 | `src/e2e/real/session-coordinator-setup.ts` | `setupRealSession()` — coordinator with trace attached |
 | `src/e2e/real/prereqs.ts` | Binary/auth detection, auto-skip logic |
 | `src/e2e/real/shared-real-e2e-tests.ts` | Shared parameterised test factory (`registerSharedSmokeTests`, `registerSharedFullTests`) |
-| `src/core/message-tracer.ts` | `MessageTracerImpl` for T1–T4 boundary tracing |
+| `src/core/messaging/message-tracer.ts` | `MessageTracerImpl` for T1–T4 boundary tracing |
 
 ### Shared Test Helpers
 
@@ -353,10 +353,10 @@ There are 4 translation boundaries where bugs hide:
 
 | # | Boundary | Translator | Location |
 |---|----------|-----------|----------|
-| T1 | `InboundMessage` → `UnifiedMessage` | `normalizeInbound()` | `src/core/inbound-normalizer.ts` |
+| T1 | `InboundMessage` → `UnifiedMessage` | `normalizeInbound()` | `src/core/messaging/inbound-normalizer.ts` |
 | T2 | `UnifiedMessage` → Native CLI format | Adapter outbound translator | Each adapter's `send()` method |
 | T3 | Native CLI response → `UnifiedMessage` | Adapter inbound translator | Each adapter's message loop |
-| T4 | `UnifiedMessage` → `ConsumerMessage` | `map*()` functions | `src/core/unified-message-router.ts` |
+| T4 | `UnifiedMessage` → `ConsumerMessage` | `map*()` functions | `src/core/messaging/unified-message-router.ts` |
 
 Each boundary emits a `translate` trace event with before/after objects and an auto-generated diff. A field appearing as `-metadata.someField` in the diff means it was **silently dropped** at that boundary.
 
@@ -385,8 +385,8 @@ Each boundary emits a `translate` trace event with before/after objects and an a
 
 | File | Purpose |
 |------|---------|
-| `src/core/message-tracer.ts` | `MessageTracer` interface, `MessageTracerImpl`, `noopTracer` |
-| `src/core/trace-differ.ts` | Auto-diff utility for translation events |
+| `src/core/messaging/message-tracer.ts` | `MessageTracer` interface, `MessageTracerImpl`, `noopTracer` |
+| `src/core/messaging/trace-differ.ts` | Auto-diff utility for translation events |
 
 ### Programmatic Usage
 
