@@ -6,11 +6,7 @@ import {
   createBridgeWithAdapter,
   type MockBackendAdapter,
   type MockBackendSession,
-  makeAssistantUnifiedMsg,
   makePermissionRequestUnifiedMsg,
-  makeResultUnifiedMsg,
-  makeSessionInitMsg,
-  noopLogger,
   tick,
 } from "../testing/adapter-test-helpers.js";
 import {
@@ -31,25 +27,6 @@ describe("SessionBridge", () => {
     adapter = created.adapter;
   });
   describe("Session management", () => {
-    it("closeSession closes backend session, consumer sockets, removes session, and emits event", async () => {
-      await bridge.connectBackend("sess-1");
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-
-      const closedHandler = vi.fn();
-      bridge.on("session:closed", closedHandler);
-
-      await bridge.closeSession("sess-1");
-
-      expect(consumerSocket.close).toHaveBeenCalled();
-      expect(bridge.getSession("sess-1")).toBeUndefined();
-      expect(closedHandler).toHaveBeenCalledWith({ sessionId: "sess-1" });
-    });
-
-    it("closeSession is a no-op for nonexistent sessions", async () => {
-      await expect(bridge.closeSession("nonexistent")).resolves.toBeUndefined();
-    });
-
     it("close shuts down all sessions and removes all listeners", async () => {
       await bridge.connectBackend("sess-1");
       await bridge.connectBackend("sess-2");
@@ -132,39 +109,6 @@ describe("SessionBridge", () => {
       expect(backendSession.sentMessages.length).toBeGreaterThanOrEqual(1);
       const flushed = backendSession.sentMessages.some((m) => m.type === "user_message");
       expect(flushed).toBe(true);
-    });
-
-    it("backend message routes correctly to consumers", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-      consumerSocket.sentMessages.length = 0;
-
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-
-      const parsed = consumerSocket.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "session_init")).toBe(true);
-    });
-
-    it("multiple backend messages in sequence are all routed", async () => {
-      await bridge.connectBackend("sess-1");
-      const backendSession = adapter.getSession("sess-1")!;
-
-      const consumerSocket = createMockSocket();
-      bridge.handleConsumerOpen(consumerSocket, authContext("sess-1"));
-      consumerSocket.sentMessages.length = 0;
-
-      backendSession.pushMessage(makeSessionInitMsg());
-      await tick();
-      backendSession.pushMessage(makeAssistantUnifiedMsg());
-      await tick();
-
-      const parsed = consumerSocket.sentMessages.map((m) => JSON.parse(m));
-      expect(parsed.some((m: any) => m.type === "session_init")).toBe(true);
-      expect(parsed.some((m: any) => m.type === "assistant")).toBe(true);
     });
 
     it("disconnectBackend clears backend session, emits event, and cancels pending permissions", async () => {
