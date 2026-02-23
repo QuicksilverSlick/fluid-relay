@@ -175,7 +175,7 @@ describe("E2E Real SDK-URL SessionCoordinator", () => {
     const info = coordinator.launcher.getSession(sessionId);
     expect(info).toBeDefined();
     if (!info) return;
-    info.data.state = "starting";
+    info.state = "starting";
 
     const launcherAny = coordinator.launcher as unknown as {
       getStartingSessions: () => Array<{ sessionId: string; state: string; archived?: boolean }>;
