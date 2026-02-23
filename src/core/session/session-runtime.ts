@@ -114,12 +114,41 @@ export interface SessionRuntimeDeps {
 
 export class SessionRuntime {
   private lifecycle: LifecycleState = "awaiting_backend";
+  private dirty = false;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private session: Session, // readonly removed — we reassign via spread
     private readonly deps: SessionRuntimeDeps,
   ) {
     this.hydrateSlashRegistryFromState();
+  }
+
+  /**
+   * Schedule a persist after 50 ms — multiple rapid state changes collapse
+   * into a single write.
+   */
+  private markDirty(): void {
+    this.dirty = true;
+    if (!this.persistTimer) {
+      this.persistTimer = setTimeout(() => {
+        this.persistTimer = null;
+        if (this.dirty) {
+          this.dirty = false;
+          this.deps.persistSession(this.session);
+        }
+      }, 50);
+    }
+  }
+
+  /** Flush immediately — used for critical metadata changes (adapter name, user messages). */
+  private persistNow(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    this.dirty = false;
+    this.deps.persistSession(this.session);
   }
 
   private ensureMutationAllowed(operation: string): boolean {
@@ -176,7 +205,7 @@ export class SessionRuntime {
         state: { ...this.session.data.state, adapterName: name },
       },
     };
-    this.deps.persistSession(this.session);
+    this.persistNow();
   }
 
   getLastStatus(): SessionData["lastStatus"] {
@@ -567,7 +596,7 @@ export class SessionRuntime {
         },
       };
     }
-    this.deps.persistSession(this.session);
+    this.persistNow();
     return true;
   }
 
@@ -698,7 +727,7 @@ export class SessionRuntime {
 
     if (nextData !== this.session.data) {
       this.session = { ...this.session, data: nextData };
-      this.deps.persistSession(this.session);
+      this.markDirty();
     }
 
     // Execute reducer effects (T4 broadcasts + event emissions + queue flush)
@@ -783,7 +812,7 @@ export class SessionRuntime {
     // handleControlResponse may mutate this.session via stateAccessors.setState;
     // persist the new snapshot if it changed.
     if (this.session !== sessionBefore) {
-      this.deps.persistSession(this.session);
+      this.markDirty();
     }
   }
 
