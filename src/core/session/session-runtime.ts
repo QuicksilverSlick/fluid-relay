@@ -503,7 +503,7 @@ export class SessionRuntime {
     return true;
   }
 
-  handleInboundCommand(msg: InboundCommand, ws: WebSocketLike): void {
+  private handleInboundCommand(msg: InboundCommand, ws: WebSocketLike): void {
     if (!this.ensureMutationAllowed("handleInboundCommand")) return;
     this.touchActivity();
     this.deps.onInboundObserved?.(this.session, msg);
@@ -696,7 +696,7 @@ export class SessionRuntime {
     this.sendControlRequest({ type: "set_permission_mode", mode });
   }
 
-  handlePolicyCommand(command: PolicyCommand): void {
+  private handlePolicyCommand(command: PolicyCommand): void {
     if (!this.ensureMutationAllowed("handlePolicyCommand")) return;
     switch (command.type) {
       case "reconnect_timeout":
@@ -732,7 +732,7 @@ export class SessionRuntime {
     }
   }
 
-  handleBackendMessage(msg: UnifiedMessage): void {
+  private handleBackendMessage(msg: UnifiedMessage): void {
     if (!this.ensureMutationAllowed("handleBackendMessage")) return;
     this.touchActivity();
     this.deps.onBackendMessageObserved?.(this.session, msg);
@@ -879,7 +879,9 @@ export class SessionRuntime {
     }
   }
 
-  handleSignal(signal: "backend:connected" | "backend:disconnected" | "session:closed"): void {
+  private handleSignal(
+    signal: "backend:connected" | "backend:disconnected" | "session:closed",
+  ): void {
     if (!this.ensureMutationAllowed("handleSignal")) return;
     if (signal === "backend:connected") {
       this.transitionLifecycle("active", "signal:backend:connected");
