@@ -31,6 +31,11 @@ import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "../interfaces/backend-adapter.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
 import { noopTracer } from "../messaging/message-tracer.js";
+import {
+  generateSlashRequestId,
+  generateTraceId,
+  tracedNormalizeInbound,
+} from "../messaging/message-tracing-utils.js";
 import { GitInfoTracker } from "../session/git-info-tracker.js";
 import { MessageQueueHandler } from "../session/message-queue-handler.js";
 import {
@@ -41,16 +46,9 @@ import { SessionRepository } from "../session/session-repository.js";
 import type { SessionServices } from "../session-services.js";
 import { SlashCommandRegistry } from "../slash/slash-command-registry.js";
 import { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
-import { BackendApi } from "./backend-api.js";
-import { forwardBridgeEventWithLifecycle } from "./bridge-event-forwarder.js";
-import {
-  generateSlashRequestId,
-  generateTraceId,
-  tracedNormalizeInbound,
-} from "./message-tracing-utils.js";
 import { RuntimeApi } from "./runtime-api.js";
+import type { RuntimeManager } from "./runtime-manager.js";
 import { createRuntimeManager } from "./runtime-manager-factory.js";
-import { SessionBroadcastApi } from "./session-broadcast-api.js";
 import {
   createBackendConnectorDeps,
   createCapabilitiesPolicyStateAccessors,
@@ -60,8 +58,33 @@ import {
 } from "./session-deps-factory.js";
 import { SessionInfoApi } from "./session-info-api.js";
 import { SessionLifecycleService } from "./session-lifecycle-service.js";
-import { SessionPersistenceService } from "./session-persistence-service.js";
 import { createSlashService } from "./slash-service-factory.js";
+
+// ---------------------------------------------------------------------------
+// bridge-event-forwarder (inlined — was 28 lines in its own file)
+// ---------------------------------------------------------------------------
+type LifecycleSignal = "backend:connected" | "backend:disconnected" | "session:closed";
+
+function isLifecycleSignal(type: string): type is LifecycleSignal {
+  return (
+    type === "backend:connected" || type === "backend:disconnected" || type === "session:closed"
+  );
+}
+
+function forwardBridgeEventWithLifecycle(
+  runtimeManager: Pick<RuntimeManager, "handleLifecycleSignal">,
+  emit: (type: string, payload: unknown) => void,
+  type: string,
+  payload: unknown,
+): void {
+  if (payload && typeof payload === "object" && "sessionId" in payload && isLifecycleSignal(type)) {
+    const sessionId = (payload as { sessionId?: unknown }).sessionId;
+    if (typeof sessionId === "string") {
+      runtimeManager.handleLifecycleSignal(sessionId, type);
+    }
+  }
+  emit(type, payload);
+}
 
 /** All options accepted by buildSessionServices (formerly SessionBridgeInitOptions). */
 export type SessionBridgeInitOptions = {
@@ -104,8 +127,7 @@ export function buildSessionServices(
     createRegistry: () => new SlashCommandRegistry(),
   });
 
-  // ── Persistence ───────────────────────────────────────────────────────────
-  const persistenceService = new SessionPersistenceService({ store, logger });
+  // ── Persistence (direct store calls — no wrapper needed) ──────────────────
 
   // ── Lazy refs for circular dependency resolution ───────────────────────────
   // Each lazy getter is only called AFTER all services are constructed.
@@ -133,7 +155,7 @@ export function buildSessionServices(
       backendConnector.sendToBackend(runtimeSession, message),
     tracedNormalizeInbound: (runtimeSession, inbound, trace) =>
       tracedNormalizeInbound(tracer, inbound, runtimeSession.id, trace),
-    persistSession: (runtimeSession) => persistenceService.persist(runtimeSession),
+    persistSession: (runtimeSession) => store.persist(runtimeSession),
     warnUnknownPermission: (sessionId, requestId) =>
       logger.warn(
         `Permission response for unknown request_id ${requestId} in session ${sessionId}`,
@@ -183,7 +205,7 @@ export function buildSessionServices(
       getConsumerSockets: (session) => runtimeAccessors.getConsumerSockets(session),
     },
   );
-  const broadcastApi = new SessionBroadcastApi({ store, broadcaster });
+  // broadcastApi eliminated — coordinator uses broadcaster directly
   const gatekeeper = new ConsumerGatekeeper(
     options?.authenticator ?? null,
     config,
@@ -207,7 +229,7 @@ export function buildSessionServices(
     (sessionId, content, opts) => runtimeApi.sendUserMessage(sessionId, content, opts),
     createQueueStateAccessors(
       (session) => runtimeManager.getOrCreate(session),
-      (session) => persistenceService.persistSync(session),
+      (session) => store.persistSync(session),
     ),
   );
   const lifecycleService = new SessionLifecycleService({
@@ -251,12 +273,7 @@ export function buildSessionServices(
       tracer,
     }),
   );
-  const backendApi = new BackendApi({
-    store,
-    backendConnector,
-    capabilitiesPolicy,
-    getOrCreateSession: (sessionId) => lifecycleService.getOrCreateSession(sessionId),
-  });
+  // backendApi eliminated — coordinator uses backendConnector + lifecycleService directly
 
   const consumerGateway = new ConsumerGateway(
     createConsumerGatewayDeps({
@@ -280,11 +297,10 @@ export function buildSessionServices(
     core: { logger, config, tracer, gitResolver, metrics },
     store,
     runtimeApi,
-    backendApi,
+    backendConnector,
+    capabilitiesPolicy,
     infoApi,
-    broadcastApi,
     lifecycleService,
-    persistenceService,
     consumerGateway,
     broadcaster,
   };

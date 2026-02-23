@@ -163,7 +163,10 @@ function createBridgeWithAdapter() {
     (type, payload) => emitter.emit(type, payload),
   );
   const bridge = {
-    connectBackend: (sessionId: string) => services.backendApi.connectBackend(sessionId),
+    connectBackend: (sessionId: string) => {
+      const session = services.lifecycleService.getOrCreateSession(sessionId);
+      return services.backendConnector.connectBackend(session);
+    },
     getSession: (sessionId: string) => services.infoApi.getSession(sessionId),
     on: (event: string, listener: (...args: unknown[]) => void) => emitter.on(event, listener),
   };

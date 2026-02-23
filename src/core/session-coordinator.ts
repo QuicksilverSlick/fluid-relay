@@ -168,15 +168,22 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     // Use a local `bridge` so that `renameSession` can reference
     // `bridge.broadcastNameUpdate` and be intercepted by test spies.
     const bridge: BridgeFacade = {
-      isBackendConnected: (sessionId) => this.services.backendApi.isBackendConnected(sessionId),
+      isBackendConnected: (sessionId) => {
+        const session = this.services.store.get(sessionId);
+        return session ? this.services.backendConnector.isBackendConnected(session) : false;
+      },
       getSession: (sessionId) => this.services.infoApi.getSession(sessionId),
       seedSessionState: (sessionId, params) =>
         this.services.infoApi.seedSessionState(sessionId, params),
       setAdapterName: (sessionId, name) => this.services.infoApi.setAdapterName(sessionId, name),
-      broadcastProcessOutput: (sessionId, stream, data) =>
-        this.services.broadcastApi.broadcastProcessOutput(sessionId, stream, data),
-      broadcastNameUpdate: (sessionId, name) =>
-        this.services.broadcastApi.broadcastNameUpdate(sessionId, name),
+      broadcastProcessOutput: (sessionId, stream, data) => {
+        const session = this.services.store.get(sessionId);
+        if (session) this.services.broadcaster.broadcastProcessOutput(session, stream, data);
+      },
+      broadcastNameUpdate: (sessionId, name) => {
+        const session = this.services.store.get(sessionId);
+        if (session) this.services.broadcaster.broadcastNameUpdate(session, name);
+      },
       renameSession: (sessionId, name) => {
         bridge.broadcastNameUpdate(sessionId, name);
         this._bridgeEmitter.emit("session:renamed", { sessionId, name });
@@ -216,7 +223,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       connectBackend: (
         sessionId: string,
         opts?: { resume?: boolean; adapterOptions?: Record<string, unknown> },
-      ) => this.services.backendApi.connectBackend(sessionId, opts),
+      ) => this.connectBackendForSession(sessionId, opts),
     };
 
     const bridgeLifecycle = {
@@ -230,7 +237,10 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       broadcastWatchdogState: (
         sessionId: string,
         watchdog: { gracePeriodMs: number; startedAt: number } | null,
-      ) => this.services.broadcastApi.broadcastWatchdogState(sessionId, watchdog),
+      ) => {
+        const session = this.services.store.get(sessionId);
+        if (session) this.services.broadcaster.broadcastWatchdogState(session, watchdog);
+      },
     };
 
     this.transportHub = new SessionTransportHub({
@@ -261,16 +271,24 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     this.startupRestoreService = new StartupRestoreService({
       launcher: this.launcher,
       registry: this.registry,
-      bridge: { restoreFromStorage: () => this.services.persistenceService.restoreFromStorage() },
+      bridge: {
+        restoreFromStorage: () => {
+          const count = this.services.store.restoreAll();
+          if (count > 0) this.logger.info(`Restored ${count} session(s) from disk`);
+          return count;
+        },
+      },
       logger: this.logger,
     });
     this.recoveryService = new BackendRecoveryService({
       launcher: this.launcher,
       registry: this.registry,
       bridge: {
-        isBackendConnected: (sessionId) => this.services.backendApi.isBackendConnected(sessionId),
-        connectBackend: (sessionId, opts) =>
-          this.services.backendApi.connectBackend(sessionId, opts),
+        isBackendConnected: (sessionId) => {
+          const session = this.services.store.get(sessionId);
+          return session ? this.services.backendConnector.isBackendConnected(session) : false;
+        },
+        connectBackend: (sessionId, opts) => this.connectBackendForSession(sessionId, opts),
       },
       logger: this.logger,
       relaunchDedupMs: this.config.relaunchDedupMs,
@@ -307,7 +325,8 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           this.registry.markConnected(payload.sessionId);
         },
         onProcessResumeFailed: (payload) => {
-          this.services.broadcastApi.broadcastResumeFailedToConsumers(payload.sessionId);
+          const session = this.services.store.get(payload.sessionId);
+          if (session) this.services.broadcaster.broadcastResumeFailed(session, payload.sessionId);
         },
         onProcessStdout: (payload) => {
           this.handleProcessOutput(payload.sessionId, "stdout", payload.data);
@@ -316,11 +335,9 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           this.handleProcessOutput(payload.sessionId, "stderr", payload.data);
         },
         onProcessExited: (payload) => {
-          if (payload.circuitBreaker) {
-            this.services.broadcastApi.broadcastCircuitBreakerState(
-              payload.sessionId,
-              payload.circuitBreaker,
-            );
+          const session = this.services.store.get(payload.sessionId);
+          if (session && payload.circuitBreaker) {
+            this.services.broadcaster.broadcastCircuitBreakerState(session, payload.circuitBreaker);
           }
         },
         onFirstTurnCompleted: (payload) => {
@@ -403,7 +420,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     this.services.infoApi.setAdapterName(sessionId, adapterName);
 
     try {
-      await this.services.backendApi.connectBackend(sessionId, {
+      await this.connectBackendForSession(sessionId, {
         adapterOptions: {
           cwd,
           initializeTimeoutMs: this.config.initializeTimeoutMs,
@@ -535,7 +552,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
   /** Close all sessions and flush storage (extracted from the old SessionBridge.close()). */
   private async closeSessions(): Promise<void> {
     await this.services.lifecycleService.closeAllSessions();
-    const storage = this.services.infoApi.getStorage();
+    const storage = this.services.store.getStorage();
     if (storage?.flush) {
       try {
         await storage.flush();
@@ -545,5 +562,14 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     }
     this.services.core.tracer.destroy();
     this.removeAllListeners();
+  }
+
+  /** Resolve session by ID and connect to the backend adapter. */
+  private async connectBackendForSession(
+    sessionId: string,
+    opts?: { resume?: boolean; adapterOptions?: Record<string, unknown> },
+  ): Promise<void> {
+    const session = this.services.lifecycleService.getOrCreateSession(sessionId);
+    return this.services.backendConnector.connectBackend(session, opts);
   }
 }

@@ -216,12 +216,23 @@ export function createBridgeWithAdapter(options?: {
     (type, payload) => emitter.emit(type, payload),
   );
   const bridge: BridgeTestWrapper = {
-    connectBackend: (sessionId, opts) => services.backendApi.connectBackend(sessionId, opts),
-    disconnectBackend: (sessionId) => services.backendApi.disconnectBackend(sessionId),
+    connectBackend: async (sessionId, opts) => {
+      const session = services.lifecycleService.getOrCreateSession(sessionId);
+      return services.backendConnector.connectBackend(session, opts);
+    },
+    disconnectBackend: async (sessionId) => {
+      const session = services.store.get(sessionId);
+      if (!session) return;
+      services.capabilitiesPolicy.cancelPendingInitialize(session);
+      return services.backendConnector.disconnectBackend(session);
+    },
     sendUserMessage: (sessionId, content, opts) =>
       services.runtimeApi.sendUserMessage(sessionId, content, opts as never),
     sendToBackend: (sessionId, message) => services.runtimeApi.sendToBackend(sessionId, message),
-    restoreFromStorage: () => services.persistenceService.restoreFromStorage(),
+    restoreFromStorage: () => {
+      const count = services.store.restoreAll();
+      return count;
+    },
     getOrCreateSession: (sessionId) => services.lifecycleService.getOrCreateSession(sessionId),
     removeSession: (sessionId) => services.lifecycleService.removeSession(sessionId),
     getSession: (sessionId) => services.infoApi.getSession(sessionId),
@@ -233,7 +244,7 @@ export function createBridgeWithAdapter(options?: {
       services.consumerGateway.handleConsumerClose(ws, sessionId),
     close: async () => {
       await services.lifecycleService.closeAllSessions();
-      const stor = services.infoApi.getStorage();
+      const stor = services.store.getStorage();
       if (stor?.flush) {
         try {
           await stor.flush();

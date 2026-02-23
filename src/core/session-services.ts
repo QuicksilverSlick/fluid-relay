@@ -1,5 +1,5 @@
 /**
- * SessionServices — flat registry of all services produced by the 4 compose planes.
+ * SessionServices — flat registry of all services produced by buildSessionServices.
  *
  * Replaces `SessionBridge`'s 21 private fields with a single typed object.
  * Used by `SessionCoordinator` to wire together session control, backend,
@@ -12,16 +12,15 @@ import type { GitInfoResolver } from "../interfaces/git-resolver.js";
 import type { Logger } from "../interfaces/logger.js";
 import type { MetricsCollector } from "../interfaces/metrics.js";
 import type { ResolvedConfig } from "../types/config.js";
+import type { BackendConnector } from "./backend/backend-connector.js";
+import type { CapabilitiesPolicy } from "./capabilities/capabilities-policy.js";
 import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 import type { ConsumerGateway } from "./consumer/consumer-gateway.js";
 import type { MessageTracer } from "./messaging/message-tracer.js";
 import type { SessionRepository } from "./session/session-repository.js";
-import type { BackendApi } from "./session-coordinator/backend-api.js";
 import type { RuntimeApi } from "./session-coordinator/runtime-api.js";
-import type { SessionBroadcastApi } from "./session-coordinator/session-broadcast-api.js";
 import type { SessionInfoApi } from "./session-coordinator/session-info-api.js";
 import type { SessionLifecycleService } from "./session-coordinator/session-lifecycle-service.js";
-import type { SessionPersistenceService } from "./session-coordinator/session-persistence-service.js";
 
 /** Core infra context threaded through all session services. */
 export type BridgeCoreContext = {
@@ -39,16 +38,14 @@ export interface SessionServices {
   readonly store: SessionRepository;
   /** Programmatic runtime operations (send, interrupt, slash commands, etc.). */
   readonly runtimeApi: RuntimeApi;
-  /** Backend connect/disconnect/query operations. */
-  readonly backendApi: BackendApi;
+  /** Backend connector (connect/disconnect/query). */
+  readonly backendConnector: BackendConnector;
+  /** Capabilities handshake policy. */
+  readonly capabilitiesPolicy: CapabilitiesPolicy;
   /** Session state reads and seeding. */
   readonly infoApi: SessionInfoApi;
-  /** Broadcast operations (session_update, process output, watchdog, etc.). */
-  readonly broadcastApi: SessionBroadcastApi;
   /** Session lifecycle (getOrCreate, close, remove). */
   readonly lifecycleService: SessionLifecycleService;
-  /** Session persistence (restore, persist, persistSync). */
-  readonly persistenceService: SessionPersistenceService;
   /** Consumer WebSocket gateway (open/message/close). */
   readonly consumerGateway: ConsumerGateway;
   /** Broadcaster (needed by services that broadcast to all consumers). */
