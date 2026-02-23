@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
+import { mapAssistantMessage } from "../messaging/consumer-message-mapper.js";
 import { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
 import type { SessionData } from "./session-data.js";
@@ -202,6 +204,163 @@ describe("reduceSessionData", () => {
       const buffer = new TeamToolCorrelationBuffer();
       const next = reduceSessionData(data, msg, buffer);
       expect(next.pendingPermissions.has("req-1")).toBe(false);
+    });
+  });
+
+  describe("reduceSessionData — messageHistory (assistant)", () => {
+    it("appends new assistant message to history", () => {
+      const data = baseData();
+      const msg = createUnifiedMessage({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+        metadata: {},
+      });
+      const buffer = new TeamToolCorrelationBuffer();
+      const next = reduceSessionData(data, msg, buffer);
+      expect(next.messageHistory).toHaveLength(1);
+      expect(next.messageHistory[0]).toMatchObject({ type: "assistant" });
+    });
+
+    it("appends result messages", () => {
+      const data = baseData();
+      const m = createUnifiedMessage({
+        type: "result",
+        role: "tool",
+        metadata: {
+          subtype: "success",
+          num_turns: 1,
+          is_error: false,
+        },
+      });
+      const buffer = new TeamToolCorrelationBuffer(); // Renamed from correlationBuffer
+      const next = reduceSessionData(data, m, buffer); // Renamed from state
+      expect(next.messageHistory).toHaveLength(1);
+      expect(next.messageHistory[0].type).toBe("result");
+    });
+
+    it("appends new tool use summary", () => {
+      const data = baseData();
+      const m = createUnifiedMessage({
+        type: "tool_use_summary",
+        role: "system",
+        metadata: {
+          summary: "Ran command",
+          tool_use_id: "tu-1",
+          output: "ok",
+        },
+      });
+      const buffer = new TeamToolCorrelationBuffer(); // Renamed from correlationBuffer
+      const next = reduceSessionData(data, m, buffer); // Renamed from state
+      expect(next.messageHistory).toHaveLength(1);
+      expect(next.messageHistory[0].type).toBe("tool_use_summary");
+    });
+
+    it("updates existing tool use summary with same tool_use_id", () => {
+      const initialSummary: ConsumerMessage = {
+        type: "tool_use_summary",
+        tool_use_id: "tu-1",
+        tool_use_ids: ["tu-1"],
+        summary: "Running",
+        output: "line 1",
+        status: "success",
+        is_error: false,
+      };
+      const data = { ...baseData(), messageHistory: [initialSummary] };
+
+      const m = createUnifiedMessage({
+        type: "tool_use_summary",
+        role: "system",
+        metadata: {
+          summary: "Finished",
+          tool_use_id: "tu-1",
+          tool_use_ids: ["tu-1"],
+          output: "line 1\nline 2",
+          status: "success",
+          is_error: false,
+        },
+      });
+
+      const buffer = new TeamToolCorrelationBuffer(); // Renamed from correlationBuffer
+      const next = reduceSessionData(data, m, buffer); // Renamed from state
+      expect(next.messageHistory).toHaveLength(1);
+      expect((next.messageHistory[0] as any).summary).toBe("Finished");
+      expect((next.messageHistory[0] as any).output).toBe("line 1\nline 2");
+    });
+
+    it("skips equivalent tool use summary", () => {
+      const initialSummary: ConsumerMessage = {
+        type: "tool_use_summary",
+        tool_use_id: "tu-1",
+        tool_use_ids: ["tu-1"],
+        summary: "Running",
+        output: "line 1",
+        status: "success",
+        is_error: false,
+      };
+      const data = { ...baseData(), messageHistory: [initialSummary] };
+
+      const m = createUnifiedMessage({
+        type: "tool_use_summary",
+        role: "system",
+        metadata: {
+          summary: "Running",
+          tool_use_id: "tu-1",
+          tool_use_ids: ["tu-1"],
+          output: "line 1",
+          status: "success",
+          is_error: false,
+        },
+      });
+
+      const buffer = new TeamToolCorrelationBuffer(); // Renamed from correlationBuffer
+      const next = reduceSessionData(data, m, buffer); // Renamed from state
+      expect(next).toBe(data); // Reference equality means no change
+    });
+
+    it("replaces existing message if same message.id (streaming update)", () => {
+      const messageId = "msg_abc123";
+      const first = mapAssistantMessage(
+        createUnifiedMessage({
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: "hel" }],
+          metadata: { message_id: messageId },
+        }),
+      )!;
+      const data = { ...baseData(), messageHistory: [first] };
+      const second = createUnifiedMessage({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+        metadata: { message_id: messageId },
+      });
+      const buffer = new TeamToolCorrelationBuffer();
+      const next = reduceSessionData(data, second, buffer);
+      expect(next.messageHistory).toHaveLength(1);
+      expect((next.messageHistory[0] as any).message.content[0].text).toBe("hello");
+    });
+
+    it("skips update if message content is equivalent", () => {
+      const messageId = "msg_abc123";
+      const mapped = mapAssistantMessage(
+        createUnifiedMessage({
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: "hello" }],
+          metadata: { message_id: messageId },
+        }),
+      )!;
+      const data = { ...baseData(), messageHistory: [mapped] };
+      const same = createUnifiedMessage({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+        metadata: { message_id: messageId },
+      });
+      const buffer = new TeamToolCorrelationBuffer();
+      const next = reduceSessionData(data, same, buffer);
+      expect(next.messageHistory).toBe(data.messageHistory);
     });
   });
 });

@@ -11,7 +11,13 @@
  */
 
 import type { PermissionRequest } from "../../types/cli-messages.js";
+import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
+import {
+  mapAssistantMessage,
+  mapResultMessage,
+  mapToolUseSummary,
+} from "../messaging/consumer-message-mapper.js";
 import { reduceTeamState } from "../team/team-state-reducer.js";
 import type { CorrelatedToolUse } from "../team/team-tool-correlation.js";
 import { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
@@ -42,6 +48,9 @@ export function reduceSessionData(
   const nextLastStatus = reduceLastStatus(data.lastStatus, message);
   if (nextLastStatus !== data.lastStatus) changed = true;
 
+  const nextMessageHistory = reduceMessageHistory(data.messageHistory, message);
+  if (nextMessageHistory !== data.messageHistory) changed = true;
+
   const nextBackendSessionId = reduceBackendSessionId(data.backendSessionId, message);
   if (nextBackendSessionId !== data.backendSessionId) changed = true;
 
@@ -53,6 +62,7 @@ export function reduceSessionData(
     ...data,
     state: nextState,
     lastStatus: nextLastStatus,
+    messageHistory: nextMessageHistory,
     backendSessionId: nextBackendSessionId,
     pendingPermissions: nextPendingPermissions,
   };
@@ -73,6 +83,7 @@ function reducePendingPermissions(
   message: UnifiedMessage,
 ): ReadonlyMap<string, PermissionRequest> {
   if (message.type === "permission_request" && message.metadata?.request_id) {
+    if (message.metadata.subtype && message.metadata.subtype !== "can_use_tool") return current;
     const next = new Map(current);
     next.set(
       message.metadata.request_id as string,
@@ -162,6 +173,9 @@ function reduceSessionInit(state: SessionState, msg: UnifiedMessage): SessionSta
     mcp_servers: asMcpServers(m.mcp_servers, state.mcp_servers),
     slash_commands: asStringArray(m.slash_commands, state.slash_commands),
     skills: asStringArray(m.skills, state.skills),
+    authMethods: Array.isArray(m.authMethods)
+      ? (m.authMethods as { id: string; name: string; description?: string | null }[])
+      : state.authMethods,
   };
 }
 
@@ -357,4 +371,103 @@ function reduceTeamTools(
   correlationBuffer.flush(30_000);
 
   return currentState;
+}
+
+function reduceMessageHistory(
+  current: readonly ConsumerMessage[],
+  message: UnifiedMessage,
+): readonly ConsumerMessage[] {
+  if (message.type === "assistant") {
+    const mapped = mapAssistantMessage(message);
+    if (mapped.type !== "assistant") return current;
+
+    // Find existing message by ID
+    let index = -1;
+    for (let i = current.length - 1; i >= 0; i--) {
+      const item = current[i];
+      if (
+        item.type === "assistant" &&
+        (item as Extract<ConsumerMessage, { type: "assistant" }>).message.id === mapped.message.id
+      ) {
+        index = i;
+        break;
+      }
+    }
+
+    if (index >= 0) {
+      const existing = current[index] as Extract<ConsumerMessage, { type: "assistant" }>;
+      if (assistantMessagesEquivalent(existing, mapped)) {
+        return current;
+      }
+      const next = [...current];
+      next[index] = mapped;
+      return next;
+    }
+
+    return [...current, mapped];
+  }
+
+  if (message.type === "result") {
+    const mapped = mapResultMessage(message);
+    return [...current, mapped];
+  }
+
+  if (message.type === "tool_use_summary") {
+    const mapped = mapToolUseSummary(message);
+    if (mapped.type !== "tool_use_summary") return current;
+
+    const toolUseId = mapped.tool_use_id ?? mapped.tool_use_ids[0];
+    if (toolUseId) {
+      let index = -1;
+      for (let i = current.length - 1; i >= 0; i--) {
+        const item = current[i];
+        if (item.type === "tool_use_summary") {
+          const itemToolUseId = item.tool_use_id ?? item.tool_use_ids[0];
+          if (itemToolUseId === toolUseId) {
+            index = i;
+            break;
+          }
+        }
+      }
+
+      if (index >= 0) {
+        const existing = current[index] as Extract<ConsumerMessage, { type: "tool_use_summary" }>;
+        if (toolSummariesEquivalent(existing, mapped)) {
+          return current;
+        }
+        const next = [...current];
+        next[index] = mapped;
+        return next;
+      }
+    }
+
+    return [...current, mapped];
+  }
+
+  return current;
+}
+
+function assistantMessagesEquivalent(
+  a: Extract<ConsumerMessage, { type: "assistant" }>,
+  b: Extract<ConsumerMessage, { type: "assistant" }>,
+): boolean {
+  if (a.parent_tool_use_id !== b.parent_tool_use_id) return false;
+  if (a.message.id !== b.message.id) return false;
+  if (a.message.model !== b.message.model) return false;
+  if (a.message.stop_reason !== b.message.stop_reason) return false;
+  return JSON.stringify(a.message.content) === JSON.stringify(b.message.content);
+}
+
+function toolSummariesEquivalent(
+  a: Extract<ConsumerMessage, { type: "tool_use_summary" }>,
+  b: Extract<ConsumerMessage, { type: "tool_use_summary" }>,
+): boolean {
+  return (
+    a.summary === b.summary &&
+    a.status === b.status &&
+    a.is_error === b.is_error &&
+    JSON.stringify(a.tool_use_ids) === JSON.stringify(b.tool_use_ids) &&
+    JSON.stringify(a.output) === JSON.stringify(b.output) &&
+    JSON.stringify(a.error) === JSON.stringify(b.error)
+  );
 }
