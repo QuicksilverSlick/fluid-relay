@@ -99,14 +99,15 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.handleInboundCommand(
-      {
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: {
         type: "user_message",
         content: "hello",
         session_id: "backend-1",
       },
-      createTestSocket(),
-    );
+      ws: createTestSocket(),
+    });
 
     expect(runtime.getLastStatus()).toBe("running");
     expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
@@ -146,14 +147,15 @@ describe("SessionRuntime", () => {
 
     expect(runtime.transitionLifecycle("closed", "test:force-close")).toBe(true);
 
-    runtime.handleInboundCommand(
-      {
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: {
         type: "user_message",
         content: "should-reject",
         session_id: "backend-1",
       },
-      ws,
-    );
+      ws: ws,
+    });
 
     expect(runtime.getLifecycleState()).toBe("closed");
     expect(runtime.getLastStatus()).toBeNull();
@@ -220,13 +222,14 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.handleInboundCommand(
-      {
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: {
         type: "slash_command",
         command: "/help",
       },
-      createTestSocket(),
-    );
+      ws: createTestSocket(),
+    });
 
     expect(deps.slashService.handleInbound).toHaveBeenCalledWith(
       session,
@@ -245,8 +248,9 @@ describe("SessionRuntime", () => {
       .spyOn(runtime, "sendPermissionResponse")
       .mockImplementation(() => {});
 
-    runtime.handleInboundCommand(
-      {
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: {
         type: "permission_response",
         request_id: "perm-1",
         behavior: "allow",
@@ -254,8 +258,8 @@ describe("SessionRuntime", () => {
         updated_permissions: [{ type: "setMode", mode: "plan", destination: "session" }],
         message: "ok",
       },
-      createTestSocket(),
-    );
+      ws: createTestSocket(),
+    });
 
     expect(sendPermissionResponse).toHaveBeenCalledWith("perm-1", "allow", {
       updatedInput: { key: "value" },
@@ -270,7 +274,11 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, deps);
     const sendInterrupt = vi.spyOn(runtime, "sendInterrupt").mockImplementation(() => {});
 
-    runtime.handleInboundCommand({ type: "interrupt" }, createTestSocket());
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: { type: "interrupt" },
+      ws: createTestSocket(),
+    });
 
     expect(sendInterrupt).toHaveBeenCalledTimes(1);
   });
@@ -281,13 +289,14 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, deps);
     const sendSetModel = vi.spyOn(runtime, "sendSetModel").mockImplementation(() => {});
 
-    runtime.handleInboundCommand(
-      {
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: {
         type: "set_model",
         model: "claude-opus",
       },
-      createTestSocket(),
-    );
+      ws: createTestSocket(),
+    });
 
     expect(sendSetModel).toHaveBeenCalledWith("claude-opus");
   });
@@ -300,13 +309,14 @@ describe("SessionRuntime", () => {
       .spyOn(runtime, "sendSetPermissionMode")
       .mockImplementation(() => {});
 
-    runtime.handleInboundCommand(
-      {
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: {
         type: "set_permission_mode",
         mode: "plan",
       },
-      createTestSocket(),
-    );
+      ws: createTestSocket(),
+    });
 
     expect(sendSetPermissionMode).toHaveBeenCalledWith("plan");
   });
@@ -317,39 +327,19 @@ describe("SessionRuntime", () => {
     const ws = createTestSocket();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.handleInboundCommand(
-      {
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: {
         type: "set_adapter",
         adapter: "codex",
       },
-      ws,
-    );
+      ws: ws,
+    });
 
     expect(deps.broadcaster.sendTo).toHaveBeenCalledWith(
       ws,
       expect.objectContaining({ type: "error" }),
     );
-  });
-
-  it("invokes backend message callbacks in order", () => {
-    const session = createMockSession({ id: "s1" });
-    const calls: string[] = [];
-    const deps = makeDeps({
-      onBackendMessageObserved: () => calls.push("observed"),
-      onBackendMessageHandled: () => calls.push("handled"),
-    });
-    const runtime = new SessionRuntime(session, deps);
-
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
-        type: "status_change",
-        role: "system",
-        metadata: { status: "idle" },
-      }),
-    );
-
-    expect(calls).toEqual(["observed", "handled"]);
-    expect(runtime.getLifecycleState()).toBe("idle");
   });
 
   it("derives lifecycle transitions from backend status/stream/result messages", () => {
@@ -358,17 +348,19 @@ describe("SessionRuntime", () => {
 
     expect(runtime.getLifecycleState()).toBe("awaiting_backend");
 
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "status_change",
         role: "system",
         metadata: { status: "idle" },
       }),
-    );
+    });
     expect(runtime.getLifecycleState()).toBe("idle");
 
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "stream_event",
         role: "system",
         metadata: {
@@ -376,11 +368,12 @@ describe("SessionRuntime", () => {
           parent_tool_use_id: null,
         },
       }),
-    );
+    });
     expect(runtime.getLifecycleState()).toBe("active");
 
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "result",
         role: "system",
         metadata: {
@@ -389,20 +382,8 @@ describe("SessionRuntime", () => {
           num_turns: 1,
         },
       }),
-    );
+    });
     expect(runtime.getLifecycleState()).toBe("idle");
-  });
-
-  it("invokes signal callback", () => {
-    const session = createMockSession({ id: "s1" });
-    const onSignal = vi.fn();
-    const deps = makeDeps({ onSignal });
-    const runtime = new SessionRuntime(session, deps);
-
-    runtime.handleSignal("backend:connected");
-
-    expect(runtime.getLifecycleState()).toBe("active");
-    expect(onSignal).toHaveBeenCalledWith(session, "backend:connected");
   });
 
   it("warns on permission response for unknown request id", () => {
@@ -459,13 +440,14 @@ describe("SessionRuntime", () => {
       registerSkills: vi.fn(),
     } as any;
 
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "session_init",
         role: "system",
         metadata: { model: "claude" },
       }),
-    );
+    });
 
     expect(clearDynamic).toHaveBeenCalled();
     expect(deps.gitTracker.resetAttempt).toHaveBeenCalledWith("s1");
@@ -484,13 +466,14 @@ describe("SessionRuntime", () => {
       { type: "user_message", content: "first message" } as any,
     ];
 
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "result",
         role: "assistant",
         metadata: { num_turns: 1, is_error: false },
       }),
-    );
+    });
 
     expect(deps.emitEvent).toHaveBeenCalledWith("session:first_turn_completed", expect.anything());
     expect(deps.gitTracker.refreshGitInfo).toHaveBeenCalledWith(
@@ -506,13 +489,14 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "status_change",
         role: "system",
         metadata: { status: "idle" },
       }),
-    );
+    });
 
     expect(deps.queueHandler.autoSendQueuedMessage).toHaveBeenCalledWith(
       expect.objectContaining({ id: "s1" }),
@@ -525,8 +509,9 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, deps);
 
     // 1. Create team via tool_use in assistant message
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "assistant",
         role: "assistant",
         content: [
@@ -538,7 +523,7 @@ describe("SessionRuntime", () => {
           },
         ],
       }),
-    );
+    });
 
     expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
       expect.objectContaining({ id: "s1" }),
@@ -550,8 +535,9 @@ describe("SessionRuntime", () => {
     expect(deps.emitEvent).toHaveBeenCalledWith("team:created", expect.anything());
 
     // 2. Dissolve team via tool_use
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "assistant",
         role: "assistant",
         content: [
@@ -563,7 +549,7 @@ describe("SessionRuntime", () => {
           },
         ],
       }),
-    );
+    });
 
     expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
       expect.objectContaining({ id: "s1" }),
@@ -577,8 +563,9 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "permission_request",
         role: "assistant",
         metadata: {
@@ -588,7 +575,7 @@ describe("SessionRuntime", () => {
           tool_use_id: "tu-1",
         },
       }),
-    );
+    });
 
     expect(deps.emitEvent).toHaveBeenCalledWith(
       "permission:requested",
@@ -601,13 +588,14 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.handleBackendMessage(
-      createUnifiedMessage({
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
         type: "auth_status",
         role: "assistant",
         metadata: { isAuthenticating: true, output: ["Authenticating..."] },
       }),
-    );
+    });
 
     expect(deps.emitEvent).toHaveBeenCalledWith(
       "auth_status",
@@ -770,8 +758,8 @@ describe("SessionRuntime", () => {
     const session = createMockSession({ id: "s1" });
     const runtime = new SessionRuntime(session, makeDeps());
 
-    runtime.handleSignal("backend:connected");
-    runtime.handlePolicyCommand({ type: "reconnect_timeout" });
+    runtime.process({ type: "LIFECYCLE_SIGNAL", signal: "backend:connected" });
+    runtime.process({ type: "POLICY_COMMAND", command: { type: "reconnect_timeout" } });
 
     expect(runtime.getLifecycleState()).toBe("degraded");
   });
@@ -780,7 +768,7 @@ describe("SessionRuntime", () => {
     const session = createMockSession({ id: "s1" });
     const runtime = new SessionRuntime(session, makeDeps());
 
-    runtime.handlePolicyCommand({ type: "idle_reap" });
+    runtime.process({ type: "POLICY_COMMAND", command: { type: "idle_reap" } });
 
     expect(runtime.getLifecycleState()).toBe("closing");
   });
@@ -851,7 +839,7 @@ describe("SessionRuntime", () => {
     const ws = createTestSocket();
     runtime.addConsumer(ws, { userId: "u1", displayName: "U1", role: "participant" });
 
-    runtime.handleInboundCommand({ type: "presence_query" }, ws);
+    runtime.process({ type: "INBOUND_COMMAND", command: { type: "presence_query" }, ws: ws });
 
     expect(deps.broadcaster.broadcastPresence).toHaveBeenCalledWith(session);
   });
@@ -1129,7 +1117,9 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, deps);
 
     // Should not throw or change state
-    expect(() => runtime.handlePolicyCommand({ type: "capabilities_timeout" })).not.toThrow();
+    expect(() =>
+      runtime.process({ type: "POLICY_COMMAND", command: { type: "capabilities_timeout" } }),
+    ).not.toThrow();
   });
 
   it("blocks mutating commands when lease check denies ownership", () => {
@@ -1143,14 +1133,15 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, deps);
 
     const accepted = runtime.sendUserMessage("blocked");
-    runtime.handleInboundCommand(
-      {
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: {
         type: "user_message",
         content: "blocked-2",
         session_id: "backend-1",
       },
-      createTestSocket(),
-    );
+      ws: createTestSocket(),
+    });
 
     expect(accepted).toBe(false);
     expect(send).not.toHaveBeenCalled();
@@ -1250,11 +1241,14 @@ describe("SessionRuntime", () => {
     runtime.sendInterrupt();
     runtime.sendSetModel("m2");
     runtime.sendSetPermissionMode("plan");
-    runtime.handlePolicyCommand({ type: "reconnect_timeout" });
+    runtime.process({ type: "POLICY_COMMAND", command: { type: "reconnect_timeout" } });
     await runtime.executeSlashCommand("/help");
     runtime.sendToBackend(createUnifiedMessage({ type: "interrupt", role: "system" }));
-    runtime.handleBackendMessage(createUnifiedMessage({ type: "result", role: "assistant" }));
-    runtime.handleSignal("backend:connected");
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({ type: "result", role: "assistant" }),
+    });
+    runtime.process({ type: "LIFECYCLE_SIGNAL", signal: "backend:connected" });
 
     // Basic sanity: guard callback was exercised heavily.
     expect(onMutationRejected).toHaveBeenCalled();

@@ -95,14 +95,6 @@ export interface SessionRuntimeDeps {
     to: LifecycleState;
     reason: string;
   }) => void;
-  onInboundObserved?: (session: Session, msg: InboundCommand) => void;
-  onInboundHandled?: (session: Session, msg: InboundCommand) => void;
-  onBackendMessageObserved?: (session: Session, msg: UnifiedMessage) => void;
-  onBackendMessageHandled?: (session: Session, msg: UnifiedMessage) => void;
-  onSignal?: (
-    session: Session,
-    signal: "backend:connected" | "backend:disconnected" | "session:closed",
-  ) => void;
   canMutateSession?: (sessionId: string, operation: string) => boolean;
   onMutationRejected?: (sessionId: string, operation: string) => void;
 
@@ -506,7 +498,6 @@ export class SessionRuntime {
   private handleInboundCommand(msg: InboundCommand, ws: WebSocketLike): void {
     if (!this.ensureMutationAllowed("handleInboundCommand")) return;
     this.touchActivity();
-    this.deps.onInboundObserved?.(this.session, msg);
     switch (msg.type) {
       case "user_message":
         // Preserve legacy optimistic running behavior for queue decisions.
@@ -568,7 +559,6 @@ export class SessionRuntime {
         });
         break;
     }
-    this.deps.onInboundHandled?.(this.session, msg);
   }
 
   sendUserMessage(content: string, options?: RuntimeSendUserMessageOptions): boolean {
@@ -735,7 +725,6 @@ export class SessionRuntime {
   private handleBackendMessage(msg: UnifiedMessage): void {
     if (!this.ensureMutationAllowed("handleBackendMessage")) return;
     this.touchActivity();
-    this.deps.onBackendMessageObserved?.(this.session, msg);
 
     const prevData = this.session.data;
     let [nextData, effects] = reduceSessionData(
@@ -776,7 +765,6 @@ export class SessionRuntime {
     this.emitTeamEvents(prevData.state.team);
 
     this.applyLifecycleFromBackendMessage(msg);
-    this.deps.onBackendMessageHandled?.(this.session, msg);
   }
 
   private orchestrateSessionInit(msg: UnifiedMessage): void {
@@ -890,7 +878,6 @@ export class SessionRuntime {
     } else if (signal === "session:closed") {
       this.transitionLifecycle("closed", "signal:session:closed");
     }
-    this.deps.onSignal?.(this.session, signal);
   }
 
   private handleSlashCommand(msg: Extract<InboundCommand, { type: "slash_command" }>): void {
