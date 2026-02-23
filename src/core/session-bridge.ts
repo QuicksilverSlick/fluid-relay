@@ -95,6 +95,21 @@ export class SessionBridge extends TypedEventEmitter<BridgeEventMap> {
       getPersistenceService: () => this.persistenceService,
       getGitTracker: () => this.gitTracker,
       getMessageRouter: () => this.messageRouter,
+      // Lazy — both this.capabilitiesPolicy and this.runtimeManager are
+      // assigned from the planes below, but only called when the first
+      // session runtime is created (well after constructor returns).
+      getCapabilitiesPolicy: () => this.capabilitiesPolicy,
+      emitEvent: (type, payload) =>
+        forwardBridgeEventWithLifecycle(
+          this.runtimeManager,
+          (eventType, eventPayload) =>
+            this.emit(
+              eventType as keyof BridgeEventMap,
+              eventPayload as BridgeEventMap[keyof BridgeEventMap],
+            ),
+          type,
+          payload,
+        ),
     });
     this.store = runtimePlane.store;
     this.runtimeManager = runtimePlane.runtimeManager;

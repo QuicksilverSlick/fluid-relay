@@ -29,6 +29,18 @@ function makeFactoryDeps(overrides?: Record<string, unknown>) {
     onSessionSeeded: vi.fn(),
     onInvalidLifecycleTransition: vi.fn(),
     routeBackendMessage: vi.fn(),
+    emitEvent: vi.fn(),
+    getGitTracker: vi.fn(() => ({
+      resetAttempt: vi.fn(),
+      resolveGitInfo: vi.fn(),
+      refreshGitInfo: vi.fn().mockReturnValue(null),
+    })),
+    gitResolver: null,
+    getCapabilitiesPolicy: vi.fn(() => ({
+      sendInitializeRequest: vi.fn(),
+      applyCapabilities: vi.fn(),
+      handleControlResponse: vi.fn(),
+    })),
     ...overrides,
   };
 }

@@ -13,6 +13,7 @@ import { vi } from "vitest";
 import type { SessionData } from "../core/session/session-data.js";
 import type { Session } from "../core/session/session-repository.js";
 import { makeDefaultState } from "../core/session/session-repository.js";
+import { TeamToolCorrelationBuffer } from "../core/team/team-tool-correlation.js";
 import type { AuthContext } from "../interfaces/auth.js";
 import type { WebSocketLike } from "../interfaces/transport.js";
 import type { PermissionRequest } from "../types/cli-messages.js";
@@ -131,10 +132,7 @@ export function createMockSession(
     anonymousCounter: 0,
     lastActivity: Date.now(),
     pendingInitialize: null,
-    teamCorrelationBuffer: {
-      queue: vi.fn(),
-      flush: vi.fn(),
-    } as any,
+    teamCorrelationBuffer: new TeamToolCorrelationBuffer(),
     registry: {
       registerFromCLI: vi.fn(),
       registerSkills: vi.fn(),

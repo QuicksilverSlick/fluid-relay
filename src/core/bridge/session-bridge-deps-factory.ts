@@ -5,7 +5,7 @@ import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { InitializeCommand } from "../../types/cli-messages.js";
 import type { BridgeEventMap } from "../../types/events.js";
 import type { BackendConnectorDeps } from "../backend/backend-connector.js";
-import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
+
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { ConsumerGatekeeper } from "../consumer/consumer-gatekeeper.js";
 import type { ConsumerGatewayDeps } from "../consumer/consumer-gateway.js";
@@ -15,7 +15,7 @@ import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { UnifiedMessageRouterDeps } from "../messaging/unified-message-router.js";
 import type { GitInfoTracker } from "../session/git-info-tracker.js";
-import type { MessageQueueHandler } from "../session/message-queue-handler.js";
+
 import type { SessionData } from "../session/session-data.js";
 import type { Session, SessionRepository } from "../session/session-repository.js";
 import type { SessionRuntime } from "../session/session-runtime.js";
@@ -125,41 +125,11 @@ export function createConsumerPlaneRuntimeAccessors(
 
 export function createUnifiedMessageRouterDeps(params: {
   broadcaster: ConsumerBroadcaster;
-  capabilitiesPolicy: CapabilitiesPolicy;
-  queueHandler: MessageQueueHandler;
-  gitTracker: GitInfoTracker;
-  gitResolver: UnifiedMessageRouterDeps["gitResolver"];
-  emitEvent: (type: string, payload: unknown) => void;
-  persistSession: (session: Session) => void;
-  maxMessageHistoryLength: number;
   tracer: MessageTracer;
-  runtime: (session: Session) => SessionRuntime;
 }): UnifiedMessageRouterDeps {
   return {
     broadcaster: params.broadcaster,
-    capabilitiesPolicy: params.capabilitiesPolicy,
-    queueHandler: params.queueHandler,
-    gitTracker: params.gitTracker,
-    gitResolver: params.gitResolver,
-    emitEvent: params.emitEvent,
-    persistSession: params.persistSession,
-    maxMessageHistoryLength: params.maxMessageHistoryLength,
     tracer: params.tracer,
-    getState: (session: Session) => params.runtime(session).getState(),
-    setState: (session: Session, state: SessionData["state"]) =>
-      params.runtime(session).setState(state),
-
-    getMessageHistory: (session: Session) => params.runtime(session).getMessageHistory(),
-    setMessageHistory: (session: Session, history: SessionData["messageHistory"]) =>
-      params.runtime(session).setMessageHistory(history),
-    getLastStatus: (session: Session) => params.runtime(session).getLastStatus(),
-
-    clearDynamicSlashRegistry: (session: Session) =>
-      params.runtime(session).clearDynamicSlashRegistry(),
-    registerCLICommands: (session: Session, commands) =>
-      params.runtime(session).registerCLICommands(commands),
-    registerSkillCommands: (session: Session, skills: string[]) =>
-      params.runtime(session).registerSkillCommands(skills),
   };
 }
 

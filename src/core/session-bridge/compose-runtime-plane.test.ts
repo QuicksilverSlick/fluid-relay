@@ -27,6 +27,12 @@ describe("composeRuntimePlane", () => {
     const getBackendConnector = vi.fn(() => ({ sendToBackend }));
     const getMessageRouter = vi.fn(() => ({ route }));
     const getGitTracker = vi.fn(() => ({ resolveGitInfo }));
+    const getCapabilitiesPolicy = vi.fn(() => ({
+      sendInitializeRequest: vi.fn(),
+      applyCapabilities: vi.fn(),
+      handleControlResponse: vi.fn(),
+    }));
+    const emitEvent = vi.fn();
 
     let runtimePlane: ReturnType<typeof composeRuntimePlane>;
     runtimePlane = composeRuntimePlane({
@@ -42,6 +48,8 @@ describe("composeRuntimePlane", () => {
       getPersistenceService: () => runtimePlane.persistenceService,
       getGitTracker,
       getMessageRouter,
+      getCapabilitiesPolicy,
+      emitEvent,
     });
 
     expect(runtimePlane.core.config.maxMessageHistoryLength).toBe(222);
@@ -72,7 +80,9 @@ describe("composeRuntimePlane", () => {
     expect(getSlashService).toHaveBeenCalledTimes(1);
     expect(getBackendConnector).toHaveBeenCalledTimes(1);
     expect(getMessageRouter).toHaveBeenCalledTimes(1);
-    expect(getGitTracker).toHaveBeenCalledTimes(1);
+    // getGitTracker is called once for the runtime's gitTracker dep and once inside onSessionSeeded
+    expect(getGitTracker).toHaveBeenCalledTimes(2);
+    expect(getCapabilitiesPolicy).toHaveBeenCalledTimes(1);
     expect(sendToBackend).toHaveBeenCalledWith(session, { type: "noop" });
     expect(route).toHaveBeenCalledWith(session, { type: "backend_noop" }, undefined);
     expect(resolveGitInfo).toHaveBeenCalledWith(session);

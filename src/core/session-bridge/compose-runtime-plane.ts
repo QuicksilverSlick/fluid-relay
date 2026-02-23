@@ -39,6 +39,8 @@ type ComposeRuntimePlaneOptions = {
   getPersistenceService: () => SessionPersistenceService;
   getGitTracker: () => GitInfoTracker;
   getMessageRouter: () => UnifiedMessageRouter;
+  getCapabilitiesPolicy: () => import("../capabilities/capabilities-policy.js").CapabilitiesPolicy;
+  emitEvent: (type: string, payload: unknown) => void;
 };
 
 export type RuntimePlane = {
@@ -63,6 +65,8 @@ export function composeRuntimePlane({
   getPersistenceService,
   getGitTracker,
   getMessageRouter,
+  getCapabilitiesPolicy,
+  emitEvent,
 }: ComposeRuntimePlaneOptions): RuntimePlane {
   const store = new SessionRepository(options?.storage ?? null, {
     createCorrelationBuffer: () => new TeamToolCorrelationBuffer(),
@@ -104,12 +108,11 @@ export function composeRuntimePlane({
       getMessageRouter().route(runtimeSession, unified, prevData),
     canMutateSession: (sessionId) => leaseCoordinator.ensureLease(sessionId, leaseOwnerId),
     onMutationRejected: (sessionId, operation) =>
-      logger.warn("Session mutation blocked: lease not owned by this runtime", {
-        sessionId,
-        operation,
-        leaseOwnerId,
-        currentLeaseOwner: leaseCoordinator.currentOwner(sessionId),
-      }),
+      logger.warn(`Mutation rejected for session ${sessionId}: ${operation}`),
+    emitEvent,
+    getGitTracker,
+    gitResolver,
+    getCapabilitiesPolicy,
   });
 
   const runtimeApi = new RuntimeApi({

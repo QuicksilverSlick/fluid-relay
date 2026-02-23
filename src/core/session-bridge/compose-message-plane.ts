@@ -64,9 +64,9 @@ export function composeMessagePlane({
   store,
   runtimeManager,
   tracer,
-  gitResolver,
+  gitResolver: _gitResolver, // moved to SessionRuntime.orchestrateSessionInit
   broadcaster,
-  gitTracker,
+  gitTracker: _gitTracker, // moved to SessionRuntime.orchestrateSessionInit
   persistenceService,
   runtime,
   emitEvent,
@@ -120,15 +120,7 @@ export function composeMessagePlane({
   const messageRouter = new UnifiedMessageRouter(
     createUnifiedMessageRouterDeps({
       broadcaster,
-      capabilitiesPolicy,
-      queueHandler,
-      gitTracker,
-      gitResolver,
-      emitEvent,
-      persistSession: (session) => persistenceService.persist(session),
-      maxMessageHistoryLength: config.maxMessageHistoryLength,
       tracer,
-      runtime: (session) => runtime(session),
     }),
   );
 

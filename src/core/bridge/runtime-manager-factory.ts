@@ -18,6 +18,10 @@ export interface RuntimeManagerFactoryDeps {
   routeBackendMessage: SessionRuntimeDeps["routeBackendMessage"];
   canMutateSession?: SessionRuntimeDeps["canMutateSession"];
   onMutationRejected?: SessionRuntimeDeps["onMutationRejected"];
+  emitEvent: SessionRuntimeDeps["emitEvent"];
+  getGitTracker: () => SessionRuntimeDeps["gitTracker"];
+  gitResolver: SessionRuntimeDeps["gitResolver"];
+  getCapabilitiesPolicy: () => SessionRuntimeDeps["capabilitiesPolicy"];
 }
 
 export function createRuntimeManager(deps: RuntimeManagerFactoryDeps): RuntimeManager {
@@ -39,6 +43,10 @@ export function createRuntimeManager(deps: RuntimeManagerFactoryDeps): RuntimeMa
         routeBackendMessage: deps.routeBackendMessage,
         canMutateSession: deps.canMutateSession,
         onMutationRejected: deps.onMutationRejected,
+        emitEvent: deps.emitEvent,
+        gitTracker: deps.getGitTracker(),
+        gitResolver: deps.gitResolver,
+        capabilitiesPolicy: deps.getCapabilitiesPolicy(),
       }),
   );
 }
