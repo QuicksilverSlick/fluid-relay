@@ -21,6 +21,7 @@ function makeDeps(overrides?: Partial<SessionRuntimeDeps>): SessionRuntimeDeps {
       handleQueueMessage: vi.fn(),
       handleUpdateQueuedMessage: vi.fn(),
       handleCancelQueuedMessage: vi.fn(),
+      autoSendQueuedMessage: vi.fn(),
     },
     slashService: {
       handleInbound: vi.fn(),
@@ -32,6 +33,20 @@ function makeDeps(overrides?: Partial<SessionRuntimeDeps>): SessionRuntimeDeps {
     warnUnknownPermission: vi.fn(),
     emitPermissionResolved: vi.fn(),
     onInvalidLifecycleTransition: vi.fn(),
+
+    gitTracker: {
+      resetAttempt: vi.fn(),
+      refreshGitInfo: vi.fn(() => null),
+    } as any,
+    gitResolver: null,
+    emitEvent: vi.fn(),
+    capabilitiesPolicy: {
+      initialize: vi.fn(),
+      applyCapabilities: vi.fn(),
+      sendInitializeRequest: vi.fn(),
+      handleControlResponse: vi.fn(),
+    } as any,
+
     ...overrides,
   };
 }
@@ -431,6 +446,173 @@ describe("SessionRuntime", () => {
       }),
     );
     expect(runtime.getPendingPermissions().find((p) => p.request_id === "perm-1")).toBeUndefined();
+  });
+
+  it("orchestrates session_init (registry reset, git reset, caps initialize)", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+    const clearDynamic = vi.fn();
+    session.registry = {
+      clearDynamic,
+      registerFromCLI: vi.fn(),
+      registerSkills: vi.fn(),
+    } as any;
+
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "session_init",
+        role: "system",
+        metadata: { model: "claude" },
+      }),
+    );
+
+    expect(clearDynamic).toHaveBeenCalled();
+    expect(deps.gitTracker.resetAttempt).toHaveBeenCalledWith("s1");
+    expect(deps.capabilitiesPolicy.sendInitializeRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+    );
+  });
+
+  it("orchestrates result (auto-naming, git refresh, queue check)", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    // Mock history for auto-naming
+    (session.data as any).messageHistory = [
+      { type: "user_message", content: "first message" } as any,
+    ];
+
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "result",
+        role: "assistant",
+        metadata: { num_turns: 1, is_error: false },
+      }),
+    );
+
+    expect(deps.emitEvent).toHaveBeenCalledWith("session:first_turn_completed", expect.anything());
+    expect(deps.gitTracker.refreshGitInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+    );
+    expect(deps.queueHandler.autoSendQueuedMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+    );
+  });
+
+  it("orchestrates status_change to idle (queue check)", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "status_change",
+        role: "system",
+        metadata: { status: "idle" },
+      }),
+    );
+
+    expect(deps.queueHandler.autoSendQueuedMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+    );
+  });
+
+  it("orchestrates team events when team state changes", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    // 1. Create team via tool_use in assistant message
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "assistant",
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu1",
+            name: "TeamCreate",
+            input: { team_name: "team1" },
+          },
+        ],
+      }),
+    );
+
+    expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+      expect.objectContaining({
+        type: "session_update",
+        session: { team: expect.objectContaining({ name: "team1" }) },
+      }),
+    );
+    expect(deps.emitEvent).toHaveBeenCalledWith("team:created", expect.anything());
+
+    // 2. Dissolve team via tool_use
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "assistant",
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu2",
+            name: "TeamDelete",
+            input: {},
+          },
+        ],
+      }),
+    );
+
+    expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+      expect.objectContaining({ type: "session_update", session: { team: null } }),
+    );
+    expect(deps.emitEvent).toHaveBeenCalledWith("team:deleted", expect.anything());
+  });
+
+  it("orchestrates permission_request (emits permission:requested event)", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "permission_request",
+        role: "assistant",
+        metadata: {
+          request_id: "perm-1",
+          tool_name: "Bash",
+          input: { command: "ls" },
+          tool_use_id: "tu-1",
+        },
+      }),
+    );
+
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      "permission:requested",
+      expect.objectContaining({ sessionId: "s1" }),
+    );
+  });
+
+  it("orchestrates auth_status (emits auth_status event)", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.handleBackendMessage(
+      createUnifiedMessage({
+        type: "auth_status",
+        role: "assistant",
+        metadata: { isAuthenticating: true, output: ["Authenticating..."] },
+      }),
+    );
+
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      "auth_status",
+      expect.objectContaining({ sessionId: "s1", isAuthenticating: true }),
+    );
   });
 
   it("includes updated_permissions in permission response metadata", () => {
