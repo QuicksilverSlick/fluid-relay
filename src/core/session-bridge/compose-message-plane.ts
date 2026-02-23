@@ -80,7 +80,6 @@ export function composeMessagePlane({
     logger,
     broadcaster,
     emitEvent,
-    (session) => persistenceService.persist(session),
     createCapabilitiesPolicyStateAccessors((session) => runtime(session)),
   );
   const queueHandler = new MessageQueueHandler(

@@ -27,7 +27,6 @@ import type { UnifiedMessage } from "../types/unified-message.js";
 // ─── Dependency contracts ────────────────────────────────────────────────────
 
 type EmitEvent = (type: string, payload: unknown) => void;
-type PersistSession = (session: Session) => void;
 type CapabilitiesStateAccessors = {
   getState: (session: Session) => SessionData["state"];
   setState: (session: Session, state: SessionData["state"]) => void;
@@ -47,7 +46,6 @@ export class CapabilitiesPolicy {
     private logger: Logger,
     private broadcaster: ConsumerBroadcaster,
     private emitEvent: EmitEvent,
-    private persistSession: PersistSession,
     stateAccessors: CapabilitiesStateAccessors,
   ) {
     this.stateAccessors = stateAccessors;
@@ -187,6 +185,5 @@ export class CapabilitiesPolicy {
       skills: this.getState(session).skills,
     });
     this.emitEvent("capabilities:ready", { sessionId: session.id, commands, models, account });
-    this.persistSession(session);
   }
 }

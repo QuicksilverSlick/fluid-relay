@@ -12,31 +12,24 @@ describe("CapabilitiesPolicy", () => {
       sendTo: vi.fn(),
     } as unknown as ConsumerBroadcaster;
 
-    const policy = new CapabilitiesPolicy(
-      DEFAULT_CONFIG,
-      noopLogger,
-      broadcaster,
-      vi.fn(),
-      vi.fn(),
-      {
-        getState: (session) => session.data.state,
-        setState: (session, state) => {
-          session.data.state = state;
-        },
-        getPendingInitialize: (session) => session.pendingInitialize,
-        setPendingInitialize: (session, pendingInitialize) => {
-          session.pendingInitialize = pendingInitialize;
-        },
-        trySendRawToBackend: (session, ndjson) => {
-          if (!session.backendSession) return "no_backend";
-          session.backendSession.sendRaw?.(ndjson);
-          return "sent";
-        },
-        registerCLICommands: (session, commands) => {
-          session.registry.registerFromCLI(commands);
-        },
+    const policy = new CapabilitiesPolicy(DEFAULT_CONFIG, noopLogger, broadcaster, vi.fn(), {
+      getState: (session) => session.data.state,
+      setState: (session, state) => {
+        session.data.state = state;
       },
-    );
+      getPendingInitialize: (session) => session.pendingInitialize,
+      setPendingInitialize: (session, pendingInitialize) => {
+        session.pendingInitialize = pendingInitialize;
+      },
+      trySendRawToBackend: (session, ndjson) => {
+        if (!session.backendSession) return "no_backend";
+        session.backendSession.sendRaw?.(ndjson);
+        return "sent";
+      },
+      registerCLICommands: (session, commands) => {
+        session.registry.registerFromCLI(commands);
+      },
+    });
 
     const session = createMockSession();
     const sendRaw = vi.fn();

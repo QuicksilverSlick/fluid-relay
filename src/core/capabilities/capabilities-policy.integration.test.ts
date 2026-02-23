@@ -26,7 +26,6 @@ function createDeps(
     sendTo: vi.fn(),
   } as unknown as ConsumerBroadcaster;
   const emitEvent = vi.fn();
-  const persistSession = vi.fn();
   const defaultStateAccessors = {
     getState: (session: any) => session.data.state,
     setState: (session: any, state: any) => {
@@ -56,11 +55,10 @@ function createDeps(
     noopLogger,
     broadcaster,
     emitEvent,
-    persistSession,
     resolvedStateAccessors,
   );
 
-  return { protocol, config, broadcaster, emitEvent, persistSession };
+  return { protocol, config, broadcaster, emitEvent };
 }
 
 function createMockBackendSession() {
@@ -201,7 +199,7 @@ describe("CapabilitiesPolicy", () => {
 
   describe("handleControlResponse", () => {
     it("applies capabilities on successful response", () => {
-      const { protocol, broadcaster, emitEvent, persistSession } = createDeps();
+      const { protocol, broadcaster, emitEvent } = createDeps();
       const session = createMockSession();
 
       protocol.sendInitializeRequest(session);
@@ -248,9 +246,6 @@ describe("CapabilitiesPolicy", () => {
           commands: expect.arrayContaining([expect.objectContaining({ name: "/help" })]),
         }),
       );
-
-      // Session persisted
-      expect(persistSession).toHaveBeenCalledWith(session);
 
       // Pending cleared
       expect(session.pendingInitialize).toBeNull();

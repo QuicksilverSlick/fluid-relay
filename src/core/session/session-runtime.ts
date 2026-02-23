@@ -799,7 +799,13 @@ export class SessionRuntime {
   }
 
   private orchestrateControlResponse(msg: UnifiedMessage): void {
+    const sessionBefore = this.session;
     this.deps.capabilitiesPolicy.handleControlResponse(this.session, msg);
+    // handleControlResponse may mutate this.session via stateAccessors.setState;
+    // persist the new snapshot if it changed.
+    if (this.session !== sessionBefore) {
+      this.deps.persistSession(this.session);
+    }
   }
 
   private orchestrateResult(msg: UnifiedMessage): void {
