@@ -9,6 +9,7 @@
 import type { ConsumerIdentity } from "../../interfaces/auth.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import type { SessionData } from "../session/session-data.js";
 import type { QueuedMessage, Session } from "./session-repository.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -22,8 +23,8 @@ type SendUserMessage = (
 ) => void;
 
 type QueueStateAccessors = {
-  getLastStatus: (session: Session) => Session["lastStatus"];
-  setLastStatus: (session: Session, status: Session["lastStatus"]) => void;
+  getLastStatus: (session: Session) => SessionData["lastStatus"];
+  setLastStatus: (session: Session, status: SessionData["lastStatus"]) => void;
   getQueuedMessage: (session: Session) => QueuedMessage | null;
   setQueuedMessage: (session: Session, queued: QueuedMessage | null) => void;
   getConsumerIdentity: (session: Session, ws: WebSocketLike) => ConsumerIdentity | undefined;
@@ -42,11 +43,11 @@ export class MessageQueueHandler {
     this.queueState = queueState;
   }
 
-  private getLastStatus(session: Session): Session["lastStatus"] {
+  private getLastStatus(session: Session): SessionData["lastStatus"] {
     return this.queueState.getLastStatus(session);
   }
 
-  private setLastStatus(session: Session, status: Session["lastStatus"]): void {
+  private setLastStatus(session: Session, status: SessionData["lastStatus"]): void {
     this.queueState.setLastStatus(session, status);
   }
 

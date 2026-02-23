@@ -7,6 +7,7 @@ import type { PermissionRequest } from "../../types/cli-messages.js";
 import type { BridgeEventMap } from "../../types/events.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { GitInfoTracker } from "../session/git-info-tracker.js";
+import type { SessionData } from "../session/session-data.js";
 import type { Session } from "../session/session-repository.js";
 import type { InboundCommand } from "./runtime-commands.js";
 
@@ -45,10 +46,10 @@ export interface ConsumerTransportCoordinatorDeps {
   checkRateLimit: (session: Session, ws: WebSocketLike) => boolean;
   getConsumerIdentity: (session: Session, ws: WebSocketLike) => ConsumerIdentity | undefined;
   getConsumerCount: (session: Session) => number;
-  getState: (session: Session) => Session["state"];
-  getMessageHistory: (session: Session) => Session["messageHistory"];
+  getState: (session: Session) => SessionData["state"];
+  getMessageHistory: (session: Session) => SessionData["messageHistory"];
   getPendingPermissions: (session: Session) => PermissionRequest[];
-  getQueuedMessage: (session: Session) => Session["queuedMessage"];
+  getQueuedMessage: (session: Session) => SessionData["queuedMessage"];
   isBackendConnected: (session: Session) => boolean;
   registerConsumer: (session: Session, ws: WebSocketLike, identity: ConsumerIdentity) => void;
   unregisterConsumer: (session: Session, ws: WebSocketLike) => ConsumerIdentity | undefined;

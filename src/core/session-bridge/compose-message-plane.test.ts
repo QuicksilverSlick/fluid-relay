@@ -31,9 +31,9 @@ describe("composeMessagePlane", () => {
     let lastStatus: "compacting" | "idle" | "running" | null = null;
     let queuedMessage: Session["queuedMessage"] = null;
     const runtime = {
-      getState: vi.fn(() => session.state),
+      getState: vi.fn(() => session.data.state),
       setState: vi.fn((state) => {
-        session.state = state;
+        session.data.state = state;
       }),
       getPendingInitialize: vi.fn(() => session.pendingInitialize),
       setPendingInitialize: vi.fn((pending) => {
@@ -56,9 +56,9 @@ describe("composeMessagePlane", () => {
       })),
       enqueuePendingPassthrough: vi.fn(),
       setBackendSessionId: vi.fn(),
-      getMessageHistory: vi.fn(() => session.messageHistory),
+      getMessageHistory: vi.fn(() => session.data.messageHistory),
       setMessageHistory: vi.fn((history) => {
-        session.messageHistory = history;
+        session.data.messageHistory = history;
       }),
       storePendingPermission: vi.fn(),
       clearDynamicSlashRegistry: vi.fn(),
@@ -137,9 +137,9 @@ describe("composeMessagePlane", () => {
     let lastStatus: "compacting" | "idle" | "running" | null = "running";
     let queuedMessage: Session["queuedMessage"] = null;
     const runtime = {
-      getState: vi.fn(() => session.state),
+      getState: vi.fn(() => session.data.state),
       setState: vi.fn((state) => {
-        session.state = state;
+        session.data.state = state;
       }),
       getPendingInitialize: vi.fn(() => session.pendingInitialize),
       setPendingInitialize: vi.fn((pending) => {
@@ -158,9 +158,9 @@ describe("composeMessagePlane", () => {
       getConsumerIdentity: vi.fn((incomingWs) => session.consumerSockets.get(incomingWs)),
       enqueuePendingPassthrough: vi.fn(),
       setBackendSessionId: vi.fn(),
-      getMessageHistory: vi.fn(() => session.messageHistory),
+      getMessageHistory: vi.fn(() => session.data.messageHistory),
       setMessageHistory: vi.fn((history) => {
-        session.messageHistory = history;
+        session.data.messageHistory = history;
       }),
       storePendingPermission: vi.fn(),
       clearDynamicSlashRegistry: vi.fn(),

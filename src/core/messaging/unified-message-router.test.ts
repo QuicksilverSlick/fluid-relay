@@ -52,12 +52,17 @@ function createMockSession(id = "sess-1", stateOverrides: Record<string, unknown
     consumerSockets: new Map(),
     consumerRateLimiters: new Map(),
     anonymousCounter: 0,
-    state,
-    pendingPermissions: new Map(),
-    messageHistory: [],
-    pendingMessages: [],
-    queuedMessage: null,
-    lastStatus: null,
+    data: {
+      state,
+      pendingPermissions: new Map(),
+      messageHistory: [],
+      pendingMessages: [],
+      queuedMessage: null,
+      lastStatus: null,
+      adapterSupportsSlashPassthrough: false,
+      adapterName: undefined,
+      backendSessionId: undefined,
+    },
     lastActivity: Date.now(),
     pendingInitialize: null,
     teamCorrelationBuffer: {
@@ -74,9 +79,7 @@ function createMockSession(id = "sess-1", stateOverrides: Record<string, unknown
       registerSkills: vi.fn(),
     } as any,
     pendingPassthroughs: [],
-    adapterName: undefined,
     adapterSlashExecutor: null,
-    adapterSupportsSlashPassthrough: false,
   };
 }
 
@@ -91,23 +94,23 @@ function createDeps(overrides: Partial<UnifiedMessageRouterDeps> = {}): UnifiedM
     persistSession: vi.fn(),
     maxMessageHistoryLength: 100,
     tracer: noopTracer,
-    getState: (session) => session.state,
+    getState: (session) => session.data.state,
     setState: (session, state) => {
-      session.state = state;
+      session.data.state = state;
     },
     setBackendSessionId: (session, backendSessionId) => {
-      session.backendSessionId = backendSessionId;
+      session.data.backendSessionId = backendSessionId;
     },
-    getMessageHistory: (session) => session.messageHistory,
+    getMessageHistory: (session) => session.data.messageHistory,
     setMessageHistory: (session, history) => {
-      session.messageHistory = history;
+      session.data.messageHistory = history;
     },
-    getLastStatus: (session) => session.lastStatus,
+    getLastStatus: (session) => session.data.lastStatus,
     setLastStatus: (session, status) => {
-      session.lastStatus = status;
+      session.data.lastStatus = status;
     },
     storePendingPermission: (session, requestId, request) => {
-      session.pendingPermissions.set(requestId, request);
+      session.data.pendingPermissions.set(requestId, request);
     },
     clearDynamicSlashRegistry: (session) => {
       session.registry.clearDynamic();
@@ -153,7 +156,7 @@ describe("UnifiedMessageRouter", () => {
       const m = msg("session_init", { session_id: "backend-42", model: "claude" });
       router.route(session, m);
 
-      expect(session.backendSessionId).toBe("backend-42");
+      expect(session.data.backendSessionId).toBe("backend-42");
       expect(deps.emitEvent).toHaveBeenCalledWith("backend:session_id", {
         sessionId: "sess-1",
         backendSessionId: "backend-42",
@@ -169,11 +172,11 @@ describe("UnifiedMessageRouter", () => {
       router.route(session, m);
 
       expect(setBackendSessionId).toHaveBeenCalledWith(session, "backend-42");
-      expect(session.backendSessionId).toBeUndefined();
+      expect(session.data.backendSessionId).toBeUndefined();
     });
 
     it("uses getState/setState callbacks for authMethods updates", () => {
-      let state = session.state;
+      let state = session.data.state;
       deps = createDeps({
         getState: () => state,
         setState: (_session, next) => {
@@ -189,7 +192,7 @@ describe("UnifiedMessageRouter", () => {
       router.route(session, m);
 
       expect(state.authMethods).toEqual(["device_code"]);
-      expect(session.state.authMethods).toBeUndefined();
+      expect(session.data.state.authMethods).toBeUndefined();
     });
 
     it("sends initialize request when no capabilities in metadata", () => {
@@ -230,7 +233,7 @@ describe("UnifiedMessageRouter", () => {
     });
 
     it("resolves git info when cwd is set", () => {
-      session.state.cwd = "/projects/test";
+      session.data.state.cwd = "/projects/test";
       const gitResolver = createMockGitResolver();
       gitResolver.resolve.mockReturnValue({
         branch: "main",
@@ -249,8 +252,8 @@ describe("UnifiedMessageRouter", () => {
     });
 
     it("registers slash commands and skills from session state", () => {
-      session.state.slash_commands = ["/help", "/clear"];
-      session.state.skills = ["golang-testing"];
+      session.data.state.slash_commands = ["/help", "/clear"];
+      session.data.state.skills = ["golang-testing"];
 
       const m = msg("session_init", {
         slash_commands: ["/help", "/clear"],
@@ -271,7 +274,7 @@ describe("UnifiedMessageRouter", () => {
       const m = msg("status_change", { status: "running" });
       router.route(session, m);
 
-      expect(session.lastStatus).toBe("running");
+      expect(session.data.lastStatus).toBe("running");
       expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
         session,
         expect.objectContaining({ type: "status_change", status: "running" }),
@@ -293,7 +296,7 @@ describe("UnifiedMessageRouter", () => {
     });
 
     it("broadcasts permissionMode change when present", () => {
-      session.state.permissionMode = "bypassPermissions";
+      session.data.state.permissionMode = "bypassPermissions";
       const m = msg("status_change", { status: "idle", permissionMode: "bypassPermissions" });
       router.route(session, m);
 
@@ -354,7 +357,7 @@ describe("UnifiedMessageRouter", () => {
       });
       router.route(session, m);
 
-      expect(session.messageHistory).toHaveLength(1);
+      expect(session.data.messageHistory).toHaveLength(1);
       expect(deps.broadcaster.broadcast).toHaveBeenCalled();
       expect(deps.persistSession).toHaveBeenCalledWith(session);
     });
@@ -389,7 +392,7 @@ describe("UnifiedMessageRouter", () => {
       router.route(session, m);
 
       expect(history).toHaveLength(1);
-      expect(session.messageHistory).toHaveLength(0);
+      expect(session.data.messageHistory).toHaveLength(0);
     });
 
     it("trims message history when exceeding max length", () => {
@@ -418,7 +421,7 @@ describe("UnifiedMessageRouter", () => {
         router.route(session, m);
       }
 
-      expect(session.messageHistory).toHaveLength(2);
+      expect(session.data.messageHistory).toHaveLength(2);
     });
 
     it("preserves empty assistant content without stream backfill", () => {
@@ -449,7 +452,7 @@ describe("UnifiedMessageRouter", () => {
       });
       router.route(session, emptyAssistant);
 
-      const last = session.messageHistory[session.messageHistory.length - 1];
+      const last = session.data.messageHistory[session.data.messageHistory.length - 1];
       expect(last.type).toBe("assistant");
       if (last.type === "assistant") {
         expect(last.message.content).toEqual([]);
@@ -478,7 +481,7 @@ describe("UnifiedMessageRouter", () => {
       router.route(session, m);
       router.route(session, m);
 
-      expect(session.messageHistory).toHaveLength(1);
+      expect(session.data.messageHistory).toHaveLength(1);
       expect(deps.broadcaster.broadcast).toHaveBeenCalledTimes(1);
     });
 
@@ -521,8 +524,8 @@ describe("UnifiedMessageRouter", () => {
       router.route(session, first);
       router.route(session, second);
 
-      expect(session.messageHistory).toHaveLength(1);
-      const item = session.messageHistory[0];
+      expect(session.data.messageHistory).toHaveLength(1);
+      const item = session.data.messageHistory[0];
       expect(item.type).toBe("assistant");
       if (item.type === "assistant") {
         expect(item.message.id).toBe("msg-update");
@@ -544,13 +547,13 @@ describe("UnifiedMessageRouter", () => {
       });
       router.route(session, m);
 
-      expect(session.lastStatus).toBe("idle");
+      expect(session.data.lastStatus).toBe("idle");
       expect(deps.queueHandler.autoSendQueuedMessage).toHaveBeenCalledWith(session);
     });
 
     it("emits first_turn_completed on first non-error turn", () => {
       // Add a user message to history
-      session.messageHistory.push({
+      session.data.messageHistory.push({
         type: "user_message",
         content: "What is Vitest?",
       } as any);
@@ -570,7 +573,7 @@ describe("UnifiedMessageRouter", () => {
     });
 
     it("does not emit first_turn_completed on error", () => {
-      session.messageHistory.push({
+      session.data.messageHistory.push({
         type: "user_message",
         content: "Hello",
       } as any);
@@ -678,9 +681,9 @@ describe("UnifiedMessageRouter", () => {
         }),
       );
 
-      expect(session.messageHistory).toHaveLength(2);
-      expect(session.messageHistory[0].type).toBe("assistant");
-      expect(session.messageHistory[1].type).toBe("result");
+      expect(session.data.messageHistory).toHaveLength(2);
+      expect(session.data.messageHistory[0].type).toBe("assistant");
+      expect(session.data.messageHistory[1].type).toBe("result");
     });
   });
 
@@ -694,7 +697,7 @@ describe("UnifiedMessageRouter", () => {
       });
       router.route(session, m);
 
-      expect(session.lastStatus).toBe("running");
+      expect(session.data.lastStatus).toBe("running");
       expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
         session,
         expect.objectContaining({ type: "status_change", status: "running" }),
@@ -708,7 +711,7 @@ describe("UnifiedMessageRouter", () => {
       });
       router.route(session, m);
 
-      expect(session.lastStatus).not.toBe("running");
+      expect(session.data.lastStatus).not.toBe("running");
     });
 
     it("does not set running for non-message_start events", () => {
@@ -717,7 +720,7 @@ describe("UnifiedMessageRouter", () => {
       });
       router.route(session, m);
 
-      expect(session.lastStatus).not.toBe("running");
+      expect(session.data.lastStatus).not.toBe("running");
     });
   });
 
@@ -733,7 +736,7 @@ describe("UnifiedMessageRouter", () => {
       });
       router.route(session, m);
 
-      expect(session.pendingPermissions.has("perm-1")).toBe(true);
+      expect(session.data.pendingPermissions.has("perm-1")).toBe(true);
       expect(deps.broadcaster.broadcastToParticipants).toHaveBeenCalled();
       expect(deps.emitEvent).toHaveBeenCalledWith(
         "permission:requested",
@@ -752,7 +755,7 @@ describe("UnifiedMessageRouter", () => {
       });
       router.route(session, m);
 
-      expect(session.pendingPermissions.has("perm-1")).toBe(false);
+      expect(session.data.pendingPermissions.has("perm-1")).toBe(false);
       expect(deps.broadcaster.broadcastToParticipants).not.toHaveBeenCalled();
     });
 
@@ -778,7 +781,7 @@ describe("UnifiedMessageRouter", () => {
           tool_use_id: "tu-1",
         }),
       );
-      expect(session.pendingPermissions.has("perm-1")).toBe(false);
+      expect(session.data.pendingPermissions.has("perm-1")).toBe(false);
     });
   });
 
@@ -823,8 +826,8 @@ describe("UnifiedMessageRouter", () => {
       });
       router.route(session, m);
 
-      expect(session.messageHistory).toHaveLength(1);
-      expect(session.messageHistory[0]).toEqual(
+      expect(session.data.messageHistory).toHaveLength(1);
+      expect(session.data.messageHistory[0]).toEqual(
         expect.objectContaining({
           type: "tool_use_summary",
           tool_use_id: "tu-1",
@@ -849,7 +852,7 @@ describe("UnifiedMessageRouter", () => {
       router.route(session, m);
       router.route(session, m);
 
-      expect(session.messageHistory).toHaveLength(1);
+      expect(session.data.messageHistory).toHaveLength(1);
       expect(deps.broadcaster.broadcast).toHaveBeenCalledTimes(1);
     });
 
@@ -870,8 +873,8 @@ describe("UnifiedMessageRouter", () => {
       router.route(session, first);
       router.route(session, second);
 
-      expect(session.messageHistory).toHaveLength(1);
-      expect(session.messageHistory[0]).toEqual(
+      expect(session.data.messageHistory).toHaveLength(1);
+      expect(session.data.messageHistory[0]).toEqual(
         expect.objectContaining({
           type: "tool_use_summary",
           tool_use_id: "tu-update",
@@ -994,7 +997,7 @@ describe("UnifiedMessageRouter", () => {
   describe("emitTeamEvents", () => {
     it("skips broadcast when team state is unchanged (same reference)", () => {
       const teamState = { name: "team-1", role: "lead" as const, members: [], tasks: [] };
-      session.state.team = teamState;
+      session.data.state.team = teamState;
 
       // Route a message that doesn't change team state
       const m = msg("status_change", { status: "idle" });
@@ -1011,12 +1014,12 @@ describe("UnifiedMessageRouter", () => {
 
     it("broadcasts session_update with team:null when team is removed", () => {
       // Pre-set team state so the diff path detects deletion
-      session.state.team = { name: "team-1", role: "lead" as const, members: [], tasks: [] };
+      session.data.state.team = { name: "team-1", role: "lead" as const, members: [], tasks: [] };
 
-      // Intercept the `session.state = reducedState` assignment inside route()
+      // Intercept the `session.data.state = reducedState` assignment inside route()
       // to simulate the reducer producing a state without team.
-      const currentState = session.state;
-      Object.defineProperty(session, "state", {
+      const currentState = session.data.state;
+      Object.defineProperty(session.data, "state", {
         get() {
           return currentState;
         },
@@ -1024,7 +1027,7 @@ describe("UnifiedMessageRouter", () => {
           // Clear team on the reduced state, simulating a team deletion
           newState.team = undefined;
           // Replace with normal writable property for subsequent reads
-          Object.defineProperty(session, "state", {
+          Object.defineProperty(session.data, "state", {
             value: newState,
             writable: true,
             configurable: true,

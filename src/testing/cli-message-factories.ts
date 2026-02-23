@@ -10,6 +10,7 @@
  */
 
 import { vi } from "vitest";
+import type { SessionData } from "../core/session/session-data.js";
 import type { Session } from "../core/session/session-repository.js";
 import { makeDefaultState } from "../core/session/session-repository.js";
 import type { AuthContext } from "../interfaces/auth.js";
@@ -66,20 +67,68 @@ export function authContext(
 
 // ─── Session Factory ────────────────────────────────────────────────────────
 
-export function createMockSession(overrides?: Partial<Session>): Session {
-  return {
-    id: "sess-1",
-    backendSession: null,
-    backendAbort: null,
-    consumerSockets: new Map(),
-    consumerRateLimiters: new Map(),
-    anonymousCounter: 0,
-    state: makeDefaultState("sess-1"),
+/**
+ * Creates a mock Session with sensible defaults.
+ *
+ * Data fields (state, messageHistory, etc.) are passed via the `data` key
+ * as Partial<SessionData>. Handle fields (backendSession, consumerSockets,
+ * etc.) are passed at the top level.
+ *
+ * Example:
+ *   createMockSession({ id: "s1", data: { lastStatus: "running" } })
+ *   createMockSession({ backendSession: mockBackend })
+ */
+export function createMockSession(
+  overrides?: any, // Accept any to support legacy flat structures from tests
+): Session {
+  const id = overrides?.id ?? "sess-1";
+
+  // Extract SessionData properties from either top-level or data object
+  const dataProps = overrides?.data || {};
+  const dataKeys = [
+    "state",
+    "pendingPermissions",
+    "messageHistory",
+    "pendingMessages",
+    "queuedMessage",
+    "lastStatus",
+    "adapterSupportsSlashPassthrough",
+    "adapterName",
+    "backendSessionId",
+  ];
+
+  for (const key of dataKeys) {
+    if (overrides && key in overrides) {
+      dataProps[key] = overrides[key];
+    }
+  }
+
+  const defaultData: SessionData = {
+    state: makeDefaultState(id),
     pendingPermissions: new Map<string, PermissionRequest>(),
     messageHistory: [] as ConsumerMessage[],
     pendingMessages: [],
     queuedMessage: null,
     lastStatus: null,
+    adapterSupportsSlashPassthrough: false,
+    ...dataProps,
+  };
+
+  const { data: _dataOverrides, ...handleOverrides } = overrides ?? {};
+
+  // Remove data keys from handle overrides so they aren't incorrectly spread onto the root session
+  for (const key of dataKeys) {
+    delete handleOverrides[key];
+  }
+
+  return {
+    id,
+    data: defaultData,
+    backendSession: null,
+    backendAbort: null,
+    consumerSockets: new Map(),
+    consumerRateLimiters: new Map(),
+    anonymousCounter: 0,
     lastActivity: Date.now(),
     pendingInitialize: null,
     teamCorrelationBuffer: {
@@ -93,8 +142,7 @@ export function createMockSession(overrides?: Partial<Session>): Session {
     } as any,
     pendingPassthroughs: [],
     adapterSlashExecutor: null,
-    adapterSupportsSlashPassthrough: false,
-    ...overrides,
+    ...handleOverrides,
   };
 }
 

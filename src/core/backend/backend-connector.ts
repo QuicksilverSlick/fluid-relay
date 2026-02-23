@@ -382,15 +382,15 @@ export class BackendConnector {
 
   /** Resolve the adapter for a session, falling back to the global adapter. */
   private resolveAdapter(session: Session): BackendAdapter | null {
-    if (session.adapterName && this.adapterResolver) {
+    if (session.data.adapterName && this.adapterResolver) {
       // Validate adapter name before resolving (defends against corrupted persisted data)
-      if (!CLI_ADAPTER_NAMES.includes(session.adapterName as CliAdapterName)) {
+      if (!CLI_ADAPTER_NAMES.includes(session.data.adapterName as CliAdapterName)) {
         this.logger.warn(
-          `Invalid adapter name "${session.adapterName}" on session ${session.id}, falling back to global`,
+          `Invalid adapter name "${session.data.adapterName}" on session ${session.id}, falling back to global`,
         );
         return this.adapter;
       }
-      return this.adapterResolver.resolve(session.adapterName as CliAdapterName);
+      return this.adapterResolver.resolve(session.data.adapterName as CliAdapterName);
     }
     return this.adapter;
   }

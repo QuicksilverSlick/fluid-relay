@@ -11,6 +11,7 @@
 
 import type { GitInfo, GitInfoResolver } from "../../interfaces/git-resolver.js";
 import type { SessionState } from "../../types/session-state.js";
+import type { SessionData } from "../session/session-data.js";
 import type { Session } from "./session-repository.js";
 
 // ─── Standalone helper ──────────────────────────────────────────────────────
@@ -30,8 +31,8 @@ export function applyGitInfo(state: SessionState, gitInfo: GitInfo): SessionStat
 // ─── GitInfoTracker ─────────────────────────────────────────────────────────
 
 type GitStateAccessors = {
-  getState: (session: Session) => Session["state"];
-  setState: (session: Session, state: Session["state"]) => void;
+  getState: (session: Session) => SessionData["state"];
+  setState: (session: Session, state: SessionData["state"]) => void;
 };
 
 export class GitInfoTracker {
@@ -45,11 +46,11 @@ export class GitInfoTracker {
 
   private readonly gitResolver: GitInfoResolver | null;
 
-  private getState(session: Session): Session["state"] {
+  private getState(session: Session): SessionData["state"] {
     return this.stateAccessors.getState(session);
   }
 
-  private setState(session: Session, state: Session["state"]): void {
+  private setState(session: Session, state: SessionData["state"]): void {
     this.stateAccessors.setState(session, state);
   }
 

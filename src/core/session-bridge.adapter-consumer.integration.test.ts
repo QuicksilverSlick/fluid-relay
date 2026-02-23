@@ -381,8 +381,8 @@ describe("Adapter → SessionBridge → Consumer Integration", () => {
 
       expect(s1.id).toBe(sessionId);
       expect(s2.id).toBe(sessionId2);
-      expect(s1.state.session_id).toBe(sessionId);
-      expect(s2.state.session_id).toBe(sessionId2);
+      expect((s1.data?.state || s1.state).session_id).toBe(sessionId);
+      expect((s2.data?.state || s2.state).session_id).toBe(sessionId2);
     });
 
     it("consumer counts are independent per session", () => {

@@ -263,7 +263,7 @@ describe("AdapterNativeHandler", () => {
 describe("PassthroughHandler", () => {
   it("handles any command when adapter supports passthrough", () => {
     const session = createMockSession();
-    session.adapterSupportsSlashPassthrough = true;
+    session.data.adapterSupportsSlashPassthrough = true;
     const handler = new PassthroughHandler({
       broadcaster: new ConsumerBroadcaster(noopLogger),
       emitEvent: vi.fn(),
@@ -277,7 +277,7 @@ describe("PassthroughHandler", () => {
 
   it("does not handle when adapter does not support passthrough", () => {
     const session = createMockSession();
-    session.adapterSupportsSlashPassthrough = false;
+    session.data.adapterSupportsSlashPassthrough = false;
     const handler = new PassthroughHandler({
       broadcaster: new ConsumerBroadcaster(noopLogger),
       emitEvent: vi.fn(),
@@ -292,7 +292,7 @@ describe("PassthroughHandler", () => {
   it("pushes to pendingPassthroughs queue and calls sendUserMessage", () => {
     const sendUserMessage = vi.fn();
     const session = createMockSession();
-    session.adapterSupportsSlashPassthrough = true;
+    session.data.adapterSupportsSlashPassthrough = true;
     const handler = new PassthroughHandler({
       broadcaster: new ConsumerBroadcaster(noopLogger),
       emitEvent: vi.fn(),
@@ -320,7 +320,7 @@ describe("PassthroughHandler", () => {
     const sendUserMessage = vi.fn();
     const registerPendingPassthrough = vi.fn();
     const session = createMockSession();
-    session.adapterSupportsSlashPassthrough = true;
+    session.data.adapterSupportsSlashPassthrough = true;
     const handler = new PassthroughHandler({
       broadcaster: new ConsumerBroadcaster(noopLogger),
       emitEvent: vi.fn(),

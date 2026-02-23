@@ -511,7 +511,7 @@ describe("team event emission (Phase 5.7)", () => {
   });
 
   describe("session state sync", () => {
-    it("updates session.state.team alongside events", async () => {
+    it("updates session.data.state.team alongside events", async () => {
       const backend = await connectSession();
 
       // Create team
@@ -524,7 +524,7 @@ describe("team event emission (Phase 5.7)", () => {
       expect(snapshot?.state.team?.role).toBe("lead");
     });
 
-    it("clears session.state.team on TeamDelete", async () => {
+    it("clears session.data.state.team on TeamDelete", async () => {
       const backend = await connectSession();
 
       pushTeamToolPair(backend, "TeamCreate", "tu-1", { team_name: "alpha" });

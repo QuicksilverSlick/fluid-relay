@@ -22,6 +22,7 @@ import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionSnapshot } from "../../types/session-state.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { InboundCommand, PolicyCommand } from "../interfaces/runtime-commands.js";
+import type { SessionData } from "../session/session-data.js";
 import type { SlashCommandService } from "../slash/slash-command-service.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import type { MessageQueueHandler } from "./message-queue-handler.js";
@@ -95,7 +96,7 @@ export class SessionRuntime {
   private lifecycle: LifecycleState = "awaiting_backend";
 
   constructor(
-    private readonly session: Session,
+    private session: Session, // readonly removed — we reassign via spread
     private readonly deps: SessionRuntimeDeps,
   ) {
     this.hydrateSlashRegistryFromState();
@@ -117,7 +118,7 @@ export class SessionRuntime {
   getSessionSnapshot(): SessionSnapshot {
     return {
       id: this.session.id,
-      state: this.session.state,
+      state: this.session.data.state,
       lifecycle: this.lifecycle,
       cliConnected: this.session.backendSession !== null,
       consumerCount: this.session.consumerSockets.size,
@@ -126,75 +127,81 @@ export class SessionRuntime {
         displayName: id.displayName,
         role: id.role,
       })),
-      pendingPermissions: Array.from(this.session.pendingPermissions.values()),
-      messageHistoryLength: this.session.messageHistory.length,
+      pendingPermissions: Array.from(this.session.data.pendingPermissions.values()),
+      messageHistoryLength: this.session.data.messageHistory.length,
       lastActivity: this.session.lastActivity,
-      lastStatus: this.session.lastStatus,
+      lastStatus: this.session.data.lastStatus,
     };
   }
 
   getSupportedModels(): InitializeModel[] {
-    return this.session.state.capabilities?.models ?? [];
+    return this.session.data.state.capabilities?.models ?? [];
   }
 
   getSupportedCommands(): InitializeCommand[] {
-    return this.session.state.capabilities?.commands ?? [];
+    return this.session.data.state.capabilities?.commands ?? [];
   }
 
   getAccountInfo(): InitializeAccount | null {
-    return this.session.state.capabilities?.account ?? null;
+    return this.session.data.state.capabilities?.account ?? null;
   }
 
   setAdapterName(name: string): void {
     if (!this.ensureMutationAllowed("setAdapterName")) return;
-    this.session.adapterName = name;
-    this.session.state.adapterName = name;
+    this.session = {
+      ...this.session,
+      data: {
+        ...this.session.data,
+        adapterName: name,
+        state: { ...this.session.data.state, adapterName: name },
+      },
+    };
     this.deps.persistSession(this.session);
   }
 
-  getLastStatus(): Session["lastStatus"] {
-    return this.session.lastStatus;
+  getLastStatus(): SessionData["lastStatus"] {
+    return this.session.data.lastStatus;
   }
 
-  getState(): Session["state"] {
-    return this.session.state;
+  getState(): SessionData["state"] {
+    return this.session.data.state;
   }
 
-  setLastStatus(status: Session["lastStatus"]): void {
+  setLastStatus(status: SessionData["lastStatus"]): void {
     if (!this.ensureMutationAllowed("setLastStatus")) return;
-    this.session.lastStatus = status;
+    this.session = { ...this.session, data: { ...this.session.data, lastStatus: status } };
   }
 
-  setState(state: Session["state"]): void {
+  setState(state: SessionData["state"]): void {
     if (!this.ensureMutationAllowed("setState")) return;
-    this.session.state = state;
+    this.session = { ...this.session, data: { ...this.session.data, state } };
   }
 
   setBackendSessionId(sessionId: string | undefined): void {
     if (!this.ensureMutationAllowed("setBackendSessionId")) return;
-    this.session.backendSessionId = sessionId;
+    this.session = { ...this.session, data: { ...this.session.data, backendSessionId: sessionId } };
   }
 
-  getMessageHistory(): Session["messageHistory"] {
-    return this.session.messageHistory;
+  getMessageHistory(): SessionData["messageHistory"] {
+    return this.session.data.messageHistory;
   }
 
-  setMessageHistory(history: Session["messageHistory"]): void {
+  setMessageHistory(history: SessionData["messageHistory"]): void {
     if (!this.ensureMutationAllowed("setMessageHistory")) return;
-    this.session.messageHistory = history;
+    this.session = { ...this.session, data: { ...this.session.data, messageHistory: history } };
   }
 
-  getQueuedMessage(): Session["queuedMessage"] {
-    return this.session.queuedMessage;
+  getQueuedMessage(): SessionData["queuedMessage"] {
+    return this.session.data.queuedMessage;
   }
 
-  setQueuedMessage(queued: Session["queuedMessage"]): void {
+  setQueuedMessage(queued: SessionData["queuedMessage"]): void {
     if (!this.ensureMutationAllowed("setQueuedMessage")) return;
-    this.session.queuedMessage = queued;
+    this.session = { ...this.session, data: { ...this.session.data, queuedMessage: queued } };
   }
 
   getPendingPermissions(): PermissionRequest[] {
-    return Array.from(this.session.pendingPermissions.values());
+    return Array.from(this.session.data.pendingPermissions.values());
   }
 
   getPendingInitialize(): Session["pendingInitialize"] {
@@ -265,8 +272,15 @@ export class SessionRuntime {
 
   seedSessionState(params: { cwd?: string; model?: string }): void {
     if (!this.ensureMutationAllowed("seedSessionState")) return;
-    if (params.cwd) this.session.state.cwd = params.cwd;
-    if (params.model) this.session.state.model = params.model;
+    const patch: Partial<SessionData["state"]> = {};
+    if (params.cwd) patch.cwd = params.cwd;
+    if (params.model) patch.model = params.model;
+    if (Object.keys(patch).length > 0) {
+      this.session = {
+        ...this.session,
+        data: { ...this.session.data, state: { ...this.session.data.state, ...patch } },
+      };
+    }
     this.deps.onSessionSeeded?.(this.session);
   }
 
@@ -323,35 +337,52 @@ export class SessionRuntime {
     if (!this.ensureMutationAllowed("attachBackendConnection")) return;
     this.session.backendSession = params.backendSession;
     this.session.backendAbort = params.backendAbort;
-    this.session.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
     this.session.adapterSlashExecutor = params.slashExecutor;
+    this.session = {
+      ...this.session,
+      data: {
+        ...this.session.data,
+        adapterSupportsSlashPassthrough: params.supportsSlashPassthrough,
+      },
+    };
   }
 
   resetBackendConnectionState(): void {
     if (!this.ensureMutationAllowed("resetBackendConnectionState")) return;
     this.clearBackendConnection();
-    this.session.backendSessionId = undefined;
-    this.session.adapterSupportsSlashPassthrough = false;
+    this.session = {
+      ...this.session,
+      data: {
+        ...this.session.data,
+        backendSessionId: undefined,
+        adapterSupportsSlashPassthrough: false,
+      },
+    };
     this.session.adapterSlashExecutor = null;
   }
 
   drainPendingMessages(): UnifiedMessage[] {
     if (!this.ensureMutationAllowed("drainPendingMessages")) return [];
-    const pending = this.session.pendingMessages;
-    this.session.pendingMessages = [];
+    const pending = Array.from(this.session.data.pendingMessages);
+    this.session = { ...this.session, data: { ...this.session.data, pendingMessages: [] } };
     return pending;
   }
 
   drainPendingPermissionIds(): string[] {
     if (!this.ensureMutationAllowed("drainPendingPermissionIds")) return [];
-    const ids = Array.from(this.session.pendingPermissions.keys());
-    this.session.pendingPermissions.clear();
+    const ids = Array.from(this.session.data.pendingPermissions.keys());
+    this.session = {
+      ...this.session,
+      data: { ...this.session.data, pendingPermissions: new Map() },
+    };
     return ids;
   }
 
   storePendingPermission(requestId: string, request: PermissionRequest): void {
     if (!this.ensureMutationAllowed("storePendingPermission")) return;
-    this.session.pendingPermissions.set(requestId, request);
+    const updated = new Map(this.session.data.pendingPermissions);
+    updated.set(requestId, request);
+    this.session = { ...this.session, data: { ...this.session.data, pendingPermissions: updated } };
   }
 
   enqueuePendingPassthrough(entry: Session["pendingPassthroughs"][number]): void {
@@ -404,14 +435,17 @@ export class SessionRuntime {
       case "user_message":
         // Preserve legacy optimistic running behavior for queue decisions.
         {
-          const previousStatus = this.session.lastStatus;
-          this.session.lastStatus = "running";
+          const previousStatus = this.session.data.lastStatus;
+          this.session = { ...this.session, data: { ...this.session.data, lastStatus: "running" } };
           const accepted = this.sendUserMessage(msg.content, {
             sessionIdOverride: msg.session_id,
             images: msg.images,
           });
           if (!accepted) {
-            this.session.lastStatus = previousStatus;
+            this.session = {
+              ...this.session,
+              data: { ...this.session.data, lastStatus: previousStatus },
+            };
             this.deps.broadcaster.sendTo(ws, {
               type: "error",
               message: "Session is closing or closed and cannot accept new messages.",
@@ -468,7 +502,7 @@ export class SessionRuntime {
       {
         type: "user_message",
         content,
-        session_id: options?.sessionIdOverride || this.session.backendSessionId || "",
+        session_id: options?.sessionIdOverride || this.session.data.backendSessionId || "",
         images: options?.images,
       },
       {
@@ -492,14 +526,26 @@ export class SessionRuntime {
       content,
       timestamp: this.deps.now(),
     };
-    this.session.messageHistory.push(userMsg);
+    this.session = {
+      ...this.session,
+      data: {
+        ...this.session.data,
+        messageHistory: [...this.session.data.messageHistory, userMsg],
+      },
+    };
     this.trimMessageHistory();
     this.deps.broadcaster.broadcast(this.session, userMsg);
 
     if (backendSession) {
       backendSession.send(unified);
     } else {
-      this.session.pendingMessages.push(unified);
+      this.session = {
+        ...this.session,
+        data: {
+          ...this.session.data,
+          pendingMessages: [...this.session.data.pendingMessages, unified],
+        },
+      };
     }
     this.deps.persistSession(this.session);
     return true;
@@ -507,8 +553,12 @@ export class SessionRuntime {
 
   private trimMessageHistory(): void {
     const maxLength = this.deps.maxMessageHistoryLength;
-    if (this.session.messageHistory.length > maxLength) {
-      this.session.messageHistory = this.session.messageHistory.slice(-maxLength);
+    const history = this.session.data.messageHistory;
+    if (history.length > maxLength) {
+      this.session = {
+        ...this.session,
+        data: { ...this.session.data, messageHistory: history.slice(-maxLength) },
+      };
     }
   }
 
@@ -518,12 +568,17 @@ export class SessionRuntime {
     options?: RuntimeSendPermissionOptions,
   ): void {
     if (!this.ensureMutationAllowed("sendPermissionResponse")) return;
-    const pending = this.session.pendingPermissions.get(requestId);
+    const pending = this.session.data.pendingPermissions.get(requestId);
     if (!pending) {
       this.deps.warnUnknownPermission(this.session.id, requestId);
       return;
     }
-    this.session.pendingPermissions.delete(requestId);
+    const updatedPerms = new Map(this.session.data.pendingPermissions);
+    updatedPerms.delete(requestId);
+    this.session = {
+      ...this.session,
+      data: { ...this.session.data, pendingPermissions: updatedPerms },
+    };
     this.deps.emitPermissionResolved(this.session.id, requestId, behavior);
 
     if (!this.session.backendSession) return;
@@ -551,7 +606,10 @@ export class SessionRuntime {
     this.sendControlRequest({ type: "set_model", model });
     // Optimistically update session state — the backend never sends a
     // configuration_change back, so we must reflect the change ourselves.
-    this.session.state = { ...this.session.state, model };
+    this.session = {
+      ...this.session,
+      data: { ...this.session.data, state: { ...this.session.data.state, model } },
+    };
     this.deps.broadcaster.broadcast(this.session, {
       type: "session_update",
       session: { model },
@@ -653,7 +711,7 @@ export class SessionRuntime {
 
   private hydrateSlashRegistryFromState(): void {
     this.clearDynamicSlashRegistry();
-    this.registerSlashCommandNames(this.session.state.slash_commands ?? []);
-    this.registerSkillCommands(this.session.state.skills ?? []);
+    this.registerSlashCommandNames(this.session.data.state.slash_commands ?? []);
+    this.registerSkillCommands(this.session.data.state.skills ?? []);
   }
 }

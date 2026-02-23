@@ -14,13 +14,13 @@ function setup() {
   const broadcaster = new ConsumerBroadcaster(noopLogger);
   const sendUserMessage = vi.fn();
   const handler = new MessageQueueHandler(broadcaster, sendUserMessage, {
-    getLastStatus: (session) => session.lastStatus,
+    getLastStatus: (session) => session.data.lastStatus,
     setLastStatus: (session, status) => {
-      session.lastStatus = status;
+      session.data.lastStatus = status;
     },
-    getQueuedMessage: (session) => session.queuedMessage,
+    getQueuedMessage: (session) => session.data.queuedMessage,
     setQueuedMessage: (session, queued) => {
-      session.queuedMessage = queued;
+      session.data.queuedMessage = queued;
     },
     getConsumerIdentity: (session, ws) => session.consumerSockets.get(ws),
   });
@@ -71,7 +71,7 @@ describe("MessageQueueHandler", () => {
 
       expect(sendUserMessage).not.toHaveBeenCalled();
       expect(queued).toEqual(expect.objectContaining({ content: "queued text" }));
-      expect(session.queuedMessage).toBeNull();
+      expect(session.data.queuedMessage).toBeNull();
 
       queued = null;
       status = null;
@@ -92,7 +92,7 @@ describe("MessageQueueHandler", () => {
 
     it("sends immediately when session status is idle", () => {
       const { handler, sendUserMessage, session, ws } = setup();
-      session.lastStatus = "idle";
+      session.data.lastStatus = "idle";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "hello" }, ws);
 
@@ -104,20 +104,20 @@ describe("MessageQueueHandler", () => {
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "hello" }, ws);
 
-      expect(session.lastStatus).toBe("running");
+      expect(session.data.lastStatus).toBe("running");
     });
 
     it("queues message and broadcasts message_queued when session is running", () => {
       const { handler, sendUserMessage, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "queued text" }, ws);
 
       expect(sendUserMessage).not.toHaveBeenCalled();
-      expect(session.queuedMessage).not.toBeNull();
-      expect(session.queuedMessage!.content).toBe("queued text");
-      expect(session.queuedMessage!.consumerId).toBe("user-1");
-      expect(session.queuedMessage!.displayName).toBe("Alice");
+      expect(session.data.queuedMessage).not.toBeNull();
+      expect(session.data.queuedMessage!.content).toBe("queued text");
+      expect(session.data.queuedMessage!.consumerId).toBe("user-1");
+      expect(session.data.queuedMessage!.displayName).toBe("Alice");
 
       const queued = findMessage(ws, "message_queued");
       expect(queued).toBeDefined();
@@ -129,7 +129,7 @@ describe("MessageQueueHandler", () => {
 
     it("queues message when session is compacting", () => {
       const { handler, sendUserMessage, session, ws } = setup();
-      session.lastStatus = "compacting";
+      session.data.lastStatus = "compacting";
 
       handler.handleQueueMessage(
         session,
@@ -138,12 +138,12 @@ describe("MessageQueueHandler", () => {
       );
 
       expect(sendUserMessage).not.toHaveBeenCalled();
-      expect(session.queuedMessage).not.toBeNull();
+      expect(session.data.queuedMessage).not.toBeNull();
     });
 
     it("rejects with error when a message is already queued", () => {
       const { handler, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       // Queue first message
       handler.handleQueueMessage(session, { type: "queue_message", content: "first" }, ws);
@@ -157,13 +157,13 @@ describe("MessageQueueHandler", () => {
       expect(error.message).toContain("already queued");
 
       // Original message should be unchanged
-      expect(session.queuedMessage!.content).toBe("first");
+      expect(session.data.queuedMessage!.content).toBe("first");
     });
 
     it("rejects when a message is already queued even if status is idle", () => {
       const { handler, sendUserMessage, session, ws } = setup();
-      session.lastStatus = "idle";
-      session.queuedMessage = {
+      session.data.lastStatus = "idle";
+      session.data.queuedMessage = {
         consumerId: "user-1",
         displayName: "Alice",
         content: "existing",
@@ -176,12 +176,12 @@ describe("MessageQueueHandler", () => {
       const error = findMessage(ws, "error");
       expect(error).toBeDefined();
       expect(error.message).toContain("already queued");
-      expect(session.queuedMessage.content).toBe("existing");
+      expect(session.data.queuedMessage.content).toBe("existing");
     });
 
     it("is a silent no-op when ws has no identity", () => {
       const { handler, sendUserMessage, session } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       const unknownWs = createTestSocket();
       // unknownWs is NOT in session.consumerSockets
@@ -189,13 +189,13 @@ describe("MessageQueueHandler", () => {
       handler.handleQueueMessage(session, { type: "queue_message", content: "ghost" }, unknownWs);
 
       expect(sendUserMessage).not.toHaveBeenCalled();
-      expect(session.queuedMessage).toBeNull();
+      expect(session.data.queuedMessage).toBeNull();
       expect(unknownWs.sentMessages).toHaveLength(0);
     });
 
     it("includes images in the queued message and broadcast", () => {
       const { handler, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       const images = [{ media_type: "image/png", data: "base64data" }];
       handler.handleQueueMessage(
@@ -204,7 +204,7 @@ describe("MessageQueueHandler", () => {
         ws,
       );
 
-      expect(session.queuedMessage!.images).toEqual(images);
+      expect(session.data.queuedMessage!.images).toEqual(images);
       const queued = findMessage(ws, "message_queued");
       expect(queued.images).toEqual(images);
     });
@@ -226,7 +226,7 @@ describe("MessageQueueHandler", () => {
   describe("handleUpdateQueuedMessage", () => {
     it("updates content and broadcasts queued_message_updated", () => {
       const { handler, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "original" }, ws);
       ws.sentMessages.length = 0;
@@ -237,7 +237,7 @@ describe("MessageQueueHandler", () => {
         ws,
       );
 
-      expect(session.queuedMessage!.content).toBe("updated");
+      expect(session.data.queuedMessage!.content).toBe("updated");
       const updated = findMessage(ws, "queued_message_updated");
       expect(updated).toBeDefined();
       expect(updated.content).toBe("updated");
@@ -245,7 +245,7 @@ describe("MessageQueueHandler", () => {
 
     it("updates images when provided", () => {
       const { handler, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "text" }, ws);
       ws.sentMessages.length = 0;
@@ -257,12 +257,12 @@ describe("MessageQueueHandler", () => {
         ws,
       );
 
-      expect(session.queuedMessage!.images).toEqual(newImages);
+      expect(session.data.queuedMessage!.images).toEqual(newImages);
     });
 
     it("rejects update from a different user", () => {
       const { handler, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "mine" }, ws);
 
@@ -284,12 +284,12 @@ describe("MessageQueueHandler", () => {
       const error = findMessage(ws2, "error");
       expect(error).toBeDefined();
       expect(error.message).toContain("Only the message author");
-      expect(session.queuedMessage!.content).toBe("mine"); // unchanged
+      expect(session.data.queuedMessage!.content).toBe("mine"); // unchanged
     });
 
     it("rejects update from unregistered socket", () => {
       const { handler, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "mine" }, ws);
 
@@ -321,21 +321,21 @@ describe("MessageQueueHandler", () => {
   describe("handleCancelQueuedMessage", () => {
     it("clears queue and broadcasts queued_message_cancelled", () => {
       const { handler, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "to cancel" }, ws);
       ws.sentMessages.length = 0;
 
       handler.handleCancelQueuedMessage(session, ws);
 
-      expect(session.queuedMessage).toBeNull();
+      expect(session.data.queuedMessage).toBeNull();
       const cancelled = findMessage(ws, "queued_message_cancelled");
       expect(cancelled).toBeDefined();
     });
 
     it("rejects cancel from a different user", () => {
       const { handler, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "mine" }, ws);
 
@@ -352,12 +352,12 @@ describe("MessageQueueHandler", () => {
       const error = findMessage(ws2, "error");
       expect(error).toBeDefined();
       expect(error.message).toContain("Only the message author");
-      expect(session.queuedMessage).not.toBeNull(); // still queued
+      expect(session.data.queuedMessage).not.toBeNull(); // still queued
     });
 
     it("rejects cancel from unregistered socket", () => {
       const { handler, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "mine" }, ws);
 
@@ -381,7 +381,7 @@ describe("MessageQueueHandler", () => {
   describe("autoSendQueuedMessage", () => {
     it("sends the queued message and broadcasts queued_message_sent", () => {
       const { handler, sendUserMessage, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "auto-send me" }, ws);
       sendUserMessage.mockClear();
@@ -392,7 +392,7 @@ describe("MessageQueueHandler", () => {
       expect(sendUserMessage).toHaveBeenCalledWith("sess-1", "auto-send me", {
         images: undefined,
       });
-      expect(session.queuedMessage).toBeNull();
+      expect(session.data.queuedMessage).toBeNull();
 
       const sent = findMessage(ws, "queued_message_sent");
       expect(sent).toBeDefined();
@@ -400,7 +400,7 @@ describe("MessageQueueHandler", () => {
 
     it("includes images when the queued message has images", () => {
       const { handler, sendUserMessage, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       const images = [{ media_type: "image/png", data: "base64img" }];
       handler.handleQueueMessage(
@@ -425,14 +425,14 @@ describe("MessageQueueHandler", () => {
 
     it("clears queuedMessage before calling sendUserMessage", () => {
       const { handler, sendUserMessage, session, ws } = setup();
-      session.lastStatus = "running";
+      session.data.lastStatus = "running";
 
       handler.handleQueueMessage(session, { type: "queue_message", content: "race check" }, ws);
 
       // Capture the session state at the moment sendUserMessage is called
       let queuedAtSendTime: unknown = "not-called";
       sendUserMessage.mockImplementation(() => {
-        queuedAtSendTime = session.queuedMessage;
+        queuedAtSendTime = session.data.queuedMessage;
       });
 
       handler.autoSendQueuedMessage(session);

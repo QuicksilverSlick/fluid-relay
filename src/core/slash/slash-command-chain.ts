@@ -92,7 +92,7 @@ export class LocalHandler implements CommandHandler {
       },
     );
     this.deps.executor
-      .executeLocal(session.state, command, session.registry)
+      .executeLocal(session.data.state, command, session.registry)
       .then((result) => {
         this.deps.broadcaster.broadcast(session, {
           type: "slash_command_result",
@@ -147,7 +147,7 @@ export class LocalHandler implements CommandHandler {
   /** Call directly for the programmatic executeSlashCommand() path. */
   async executeLocal(ctx: CommandHandlerContext): Promise<{ content: string; source: "emulated" }> {
     const result = await this.deps.executor.executeLocal(
-      ctx.session.state,
+      ctx.session.data.state,
       ctx.command,
       ctx.session.registry,
     );
@@ -277,7 +277,7 @@ export class PassthroughHandler implements CommandHandler {
   }
 
   handles(ctx: CommandHandlerContext): boolean {
-    return ctx.session.adapterSupportsSlashPassthrough;
+    return ctx.session.data.adapterSupportsSlashPassthrough;
   }
 
   execute(ctx: CommandHandlerContext): void {

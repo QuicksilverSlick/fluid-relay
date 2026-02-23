@@ -19,9 +19,9 @@ describe("CapabilitiesPolicy", () => {
       vi.fn(),
       vi.fn(),
       {
-        getState: (session) => session.state,
+        getState: (session) => session.data.state,
         setState: (session, state) => {
-          session.state = state;
+          session.data.state = state;
         },
         getPendingInitialize: (session) => session.pendingInitialize,
         setPendingInitialize: (session, pendingInitialize) => {

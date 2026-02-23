@@ -47,34 +47,34 @@ describe("BackendConnector per-session adapter", () => {
     onBackendConnectedState: (session: any, params: any) => {
       session.backendSession = params.backendSession;
       session.backendAbort = params.backendAbort;
-      session.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
+      session.data.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
       session.adapterSlashExecutor = params.slashExecutor;
     },
     onBackendDisconnectedState: (session: any) => {
       session.backendSession = null;
       session.backendAbort = null;
-      session.backendSessionId = undefined;
-      session.adapterSupportsSlashPassthrough = false;
+      session.data.backendSessionId = undefined;
+      session.data.adapterSupportsSlashPassthrough = false;
       session.adapterSlashExecutor = null;
     },
     getBackendSession: (session: any) => session.backendSession ?? null,
     getBackendAbort: (session: any) => session.backendAbort ?? null,
     drainPendingMessages: (session: any) => {
-      const pending = session.pendingMessages ?? [];
-      session.pendingMessages = [];
+      const pending = session.data.pendingMessages ?? [];
+      session.data.pendingMessages = [];
       return pending;
     },
     drainPendingPermissionIds: (session: any) => {
-      const pendingPermissions = session.pendingPermissions ?? new Map();
+      const pendingPermissions = session.data.pendingPermissions ?? new Map();
       const ids = Array.from(pendingPermissions.keys());
       pendingPermissions.clear();
-      session.pendingPermissions = pendingPermissions;
+      session.data.pendingPermissions = pendingPermissions;
       return ids;
     },
     peekPendingPassthrough: (session: any) => session.pendingPassthroughs?.[0],
     shiftPendingPassthrough: (session: any) => session.pendingPassthroughs?.shift(),
     setSlashCommandsState: (session: any, commands: string[]) => {
-      session.state = { ...(session.state ?? {}), slash_commands: commands };
+      session.data.state = { ...(session.data.state ?? {}), slash_commands: commands };
     },
     registerCLICommands: (session: any, commands: string[]) => {
       session.registry?.registerFromCLI?.(
@@ -83,7 +83,7 @@ describe("BackendConnector per-session adapter", () => {
     },
   };
 
-  it("resolves adapter from resolver using session.adapterName", async () => {
+  it("resolves adapter from resolver using session.data.adapterName", async () => {
     const codex = mockAdapter("codex");
     const resolver = mockResolver({ codex, claude: mockAdapter("claude") });
     const blm = new BackendConnector({
@@ -99,6 +99,7 @@ describe("BackendConnector per-session adapter", () => {
       backendAbort: null,
       pendingMessages: [],
     } as any;
+    session.data = session;
 
     await blm.connectBackend(session);
     expect(resolver.resolve).toHaveBeenCalledWith("codex");
@@ -120,6 +121,7 @@ describe("BackendConnector per-session adapter", () => {
       backendAbort: null,
       pendingMessages: [],
     } as any;
+    session.data = session;
 
     await blm.connectBackend(session);
     expect(globalAdapter.connect).toHaveBeenCalled();
@@ -140,6 +142,7 @@ describe("BackendConnector per-session adapter", () => {
       backendAbort: null,
       pendingMessages: [],
     } as any;
+    session.data = session;
 
     await blm.connectBackend(session);
     expect(globalAdapter.connect).toHaveBeenCalled();
@@ -161,6 +164,7 @@ describe("BackendConnector per-session adapter", () => {
       backendAbort: null,
       pendingMessages: [],
     } as any;
+    session.data = session;
 
     await blm.connectBackend(session);
     expect(baseDeps.logger.warn).toHaveBeenCalledWith(
@@ -210,6 +214,7 @@ describe("BackendConnector per-session adapter", () => {
       backendAbort: null,
       pendingMessages: [],
     } as any;
+    session.data = session;
 
     await expect(blm.connectBackend(session)).rejects.toThrow("No BackendAdapter configured");
   });
@@ -259,11 +264,12 @@ describe("BackendConnector per-session adapter", () => {
       state: { slash_commands: [] },
       registry: { registerFromCLI: vi.fn() },
     } as any;
+    session.data = session;
 
     await blm.connectBackend(session);
 
     expect(setSlashCommandsState).toHaveBeenCalledWith(session, ["/compact", "/status"]);
-    expect(session.state.slash_commands).toEqual([]);
+    expect(session.data.state.slash_commands).toEqual([]);
     expect(session.registry.registerFromCLI).toHaveBeenCalledWith([
       { name: "/compact", description: "" },
       { name: "/status", description: "" },

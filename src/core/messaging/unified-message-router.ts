@@ -24,6 +24,7 @@ import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js"
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import { applyGitInfo, type GitInfoTracker } from "../session/git-info-tracker.js";
 import type { MessageQueueHandler } from "../session/message-queue-handler.js";
+import type { SessionData } from "../session/session-data.js";
 import type { Session } from "../session/session-repository.js";
 import { reduce as reduceState } from "../session/session-state-reducer.js";
 import { diffTeamState } from "../team/team-event-differ.js";
@@ -66,13 +67,13 @@ export interface UnifiedMessageRouterDeps {
   persistSession: PersistSession;
   maxMessageHistoryLength: number;
   tracer: MessageTracer;
-  getState: (session: Session) => Session["state"];
-  setState: (session: Session, state: Session["state"]) => void;
+  getState: (session: Session) => SessionData["state"];
+  setState: (session: Session, state: SessionData["state"]) => void;
   setBackendSessionId: (session: Session, backendSessionId: string | undefined) => void;
-  getMessageHistory: (session: Session) => Session["messageHistory"];
-  setMessageHistory: (session: Session, history: Session["messageHistory"]) => void;
-  getLastStatus: (session: Session) => Session["lastStatus"];
-  setLastStatus: (session: Session, status: Session["lastStatus"]) => void;
+  getMessageHistory: (session: Session) => SessionData["messageHistory"];
+  setMessageHistory: (session: Session, history: SessionData["messageHistory"]) => void;
+  getLastStatus: (session: Session) => SessionData["lastStatus"];
+  setLastStatus: (session: Session, status: SessionData["lastStatus"]) => void;
   storePendingPermission: (session: Session, requestId: string, request: PermissionRequest) => void;
   clearDynamicSlashRegistry: (session: Session) => void;
   registerCLICommands: (session: Session, commands: InitializeCommand[]) => void;
@@ -126,11 +127,11 @@ export class UnifiedMessageRouter {
     this.registerSkillCommandsAccessor = deps.registerSkillCommands;
   }
 
-  private getState(session: Session): Session["state"] {
+  private getState(session: Session): SessionData["state"] {
     return this.getStateAccessor(session);
   }
 
-  private setState(session: Session, state: Session["state"]): void {
+  private setState(session: Session, state: SessionData["state"]): void {
     this.setStateAccessor(session, state);
   }
 
@@ -138,19 +139,19 @@ export class UnifiedMessageRouter {
     this.setBackendSessionIdAccessor(session, backendSessionId);
   }
 
-  private getMessageHistory(session: Session): Session["messageHistory"] {
+  private getMessageHistory(session: Session): SessionData["messageHistory"] {
     return this.getMessageHistoryAccessor(session);
   }
 
-  private setMessageHistory(session: Session, history: Session["messageHistory"]): void {
+  private setMessageHistory(session: Session, history: SessionData["messageHistory"]): void {
     this.setMessageHistoryAccessor(session, history);
   }
 
-  private getLastStatus(session: Session): Session["lastStatus"] {
+  private getLastStatus(session: Session): SessionData["lastStatus"] {
     return this.getLastStatusAccessor(session);
   }
 
-  private setLastStatus(session: Session, status: Session["lastStatus"]): void {
+  private setLastStatus(session: Session, status: SessionData["lastStatus"]): void {
     this.setLastStatusAccessor(session, status);
   }
 
@@ -589,7 +590,9 @@ export class UnifiedMessageRouter {
     this.setMessageHistory(session, next);
   }
 
-  private trimMessageHistory(history: Session["messageHistory"]): Session["messageHistory"] {
+  private trimMessageHistory(
+    history: SessionData["messageHistory"],
+  ): SessionData["messageHistory"] {
     if (history.length <= this.maxMessageHistoryLength) return history;
     return history.slice(-this.maxMessageHistoryLength);
   }

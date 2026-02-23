@@ -140,7 +140,7 @@ class TestAdapter implements BackendAdapter {
 }
 
 function createSession(overrides?: Partial<Session>): Session {
-  return {
+  const s = {
     id: "sess-1",
     name: "test",
     state: "idle",
@@ -152,7 +152,9 @@ function createSession(overrides?: Partial<Session>): Session {
     consumers: new Set(),
     lastActivity: Date.now(),
     ...overrides,
-  } as Session;
+  } as any;
+  if (!s.data) s.data = s;
+  return s as Session;
 }
 
 function tick(ms = 10): Promise<void> {
@@ -297,7 +299,7 @@ describe("BackendConnector", () => {
       await mgr.connectBackend(session);
 
       expect(testSession.sentMessages).toEqual([msg1, msg2]);
-      expect(session.pendingMessages).toEqual([]);
+      expect(session.data.pendingMessages).toEqual([]);
     });
 
     it("sets up passthrough handler when session supports it", async () => {
@@ -384,7 +386,7 @@ describe("BackendConnector", () => {
       const manager = new BackendConnector(deps);
       const session = createSession();
       await manager.connectBackend(session);
-      expect(session.adapterSupportsSlashPassthrough).toBe(true);
+      expect(session.data.adapterSupportsSlashPassthrough).toBe(true);
     });
 
     it("sets adapterSupportsSlashPassthrough false when adapter capabilities.slashCommands is false", async () => {
@@ -392,7 +394,7 @@ describe("BackendConnector", () => {
       const manager = new BackendConnector(deps);
       const session = createSession();
       await manager.connectBackend(session);
-      expect(session.adapterSupportsSlashPassthrough).toBe(false);
+      expect(session.data.adapterSupportsSlashPassthrough).toBe(false);
     });
   });
 
@@ -446,7 +448,7 @@ describe("BackendConnector", () => {
       expect(testSession.closed).toBe(true);
       expect(session.backendSession).toBeNull();
       expect(session.backendAbort).toBeNull();
-      expect(session.pendingPermissions.size).toBe(0);
+      expect(session.data.pendingPermissions.size).toBe(0);
       expect(deps.broadcaster.broadcastToParticipants).toHaveBeenCalledWith(
         session,
         expect.objectContaining({ type: "permission_cancelled" }),
@@ -489,9 +491,9 @@ describe("BackendConnector", () => {
       const manager = new BackendConnector(deps);
       const session = createSession();
       await manager.connectBackend(session);
-      expect(session.adapterSupportsSlashPassthrough).toBe(true);
+      expect(session.data.adapterSupportsSlashPassthrough).toBe(true);
       await manager.disconnectBackend(session);
-      expect(session.adapterSupportsSlashPassthrough).toBe(false);
+      expect(session.data.adapterSupportsSlashPassthrough).toBe(false);
     });
 
     it("clears backendSessionId on disconnect to avoid stale resume ids", async () => {
@@ -504,7 +506,7 @@ describe("BackendConnector", () => {
       });
 
       await manager.disconnectBackend(session);
-      expect(session.backendSessionId).toBeUndefined();
+      expect(session.data.backendSessionId).toBeUndefined();
     });
   });
 
@@ -793,7 +795,7 @@ describe("BackendConnector", () => {
       testSession.endStream();
       await tick(50);
 
-      expect(session.backendSessionId).toBeUndefined();
+      expect(session.data.backendSessionId).toBeUndefined();
     });
 
     it("emits backendConsumption error when backend stream iterator throws", async () => {

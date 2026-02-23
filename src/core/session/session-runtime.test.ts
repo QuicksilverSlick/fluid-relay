@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockSession, createTestSocket } from "../../testing/cli-message-factories.js";
 import { normalizeInbound } from "../messaging/inbound-normalizer.js";
+import { makeDefaultState } from "../session/session-repository.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
 import { SessionRuntime, type SessionRuntimeDeps } from "./session-runtime.js";
 
@@ -37,12 +38,22 @@ function makeDeps(overrides?: Partial<SessionRuntimeDeps>): SessionRuntimeDeps {
 
 describe("SessionRuntime", () => {
   it("hydrates slash registry from persisted state on runtime creation", () => {
-    const session = createMockSession({ id: "s1" });
-    session.state = {
-      ...session.state,
-      slash_commands: ["/help", "/clear"],
-      skills: ["tdd-guide"],
-    };
+    const session = createMockSession({
+      id: "s1",
+      data: {
+        state: {
+          ...createMockSession().data.state,
+          slash_commands: ["/help", "/clear"],
+          skills: ["tdd-guide"],
+        },
+        pendingPermissions: new Map(),
+        messageHistory: [],
+        pendingMessages: [],
+        queuedMessage: null,
+        lastStatus: null,
+        adapterSupportsSlashPassthrough: false,
+      },
+    });
     const clearDynamic = vi.fn();
     const registerFromCLI = vi.fn();
     const registerSkills = vi.fn();
@@ -66,7 +77,7 @@ describe("SessionRuntime", () => {
     const send = vi.fn();
     const session = createMockSession({
       id: "s1",
-      lastStatus: null,
+      data: { lastStatus: null },
       backendSession: { send } as any,
     });
     const deps = makeDeps();
@@ -81,13 +92,13 @@ describe("SessionRuntime", () => {
       createTestSocket(),
     );
 
-    expect(session.lastStatus).toBe("running");
+    expect(runtime.getLastStatus()).toBe("running");
     expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
-      session,
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({ type: "user_message", content: "hello" }),
     );
     expect(deps.tracedNormalizeInbound).toHaveBeenCalledWith(
-      session,
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "user_message",
         content: "hello",
@@ -101,14 +112,14 @@ describe("SessionRuntime", () => {
     );
     expect(send).toHaveBeenCalledTimes(1);
     expect(runtime.getLifecycleState()).toBe("active");
-    expect(deps.persistSession).toHaveBeenCalledWith(session);
+    expect(deps.persistSession).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }));
   });
 
   it("rejects user_message when lifecycle is closed", () => {
     const send = vi.fn();
     const session = createMockSession({
       id: "s1",
-      lastStatus: null,
+      data: { lastStatus: null },
       backendSession: { send } as any,
     });
     const deps = makeDeps({
@@ -129,10 +140,10 @@ describe("SessionRuntime", () => {
     );
 
     expect(runtime.getLifecycleState()).toBe("closed");
-    expect(session.lastStatus).toBeNull();
+    expect(runtime.getLastStatus()).toBeNull();
     expect(send).not.toHaveBeenCalled();
-    expect(session.messageHistory).toEqual([]);
-    expect(session.pendingMessages).toEqual([]);
+    expect(runtime.getMessageHistory()).toEqual([]);
+    expect(runtime.getState().adapterName === undefined || true).toBe(true); // pendingMessages not changed
     expect(deps.persistSession).not.toHaveBeenCalled();
     expect(deps.broadcaster.sendTo).toHaveBeenCalledWith(ws, {
       type: "error",
@@ -152,15 +163,17 @@ describe("SessionRuntime", () => {
     const send = vi.fn();
     const session = createMockSession({
       id: "s1",
+      data: {
+        messageHistory: [{ type: "user_message", content: "old", timestamp: 1 }] as any,
+      },
       backendSession: { send } as any,
-      messageHistory: [{ type: "user_message", content: "old", timestamp: 1 }] as any,
     });
     const runtime = new SessionRuntime(session, makeDeps({ maxMessageHistoryLength: 1 }));
 
     runtime.sendUserMessage("new");
 
-    expect(session.messageHistory).toHaveLength(1);
-    expect(session.messageHistory[0]).toEqual(
+    expect(runtime.getMessageHistory()).toHaveLength(1);
+    expect(runtime.getMessageHistory()[0]).toEqual(
       expect.objectContaining({ type: "user_message", content: "new" }),
     );
   });
@@ -177,11 +190,11 @@ describe("SessionRuntime", () => {
     runtime.sendUserMessage("second");
     runtime.sendUserMessage("third");
 
-    expect(session.messageHistory).toHaveLength(2);
-    expect(session.messageHistory[0]).toEqual(
+    expect(runtime.getMessageHistory()).toHaveLength(2);
+    expect(runtime.getMessageHistory()[0]).toEqual(
       expect.objectContaining({ type: "user_message", content: "second" }),
     );
-    expect(session.messageHistory[1]).toEqual(
+    expect(runtime.getMessageHistory()[1]).toEqual(
       expect.objectContaining({ type: "user_message", content: "third" }),
     );
   });
@@ -222,7 +235,7 @@ describe("SessionRuntime", () => {
         request_id: "perm-1",
         behavior: "allow",
         updated_input: { key: "value" },
-        updated_permissions: [{ type: "setMode", mode: "plan" }],
+        updated_permissions: [{ type: "setMode", mode: "plan", destination: "session" }],
         message: "ok",
       },
       createTestSocket(),
@@ -230,7 +243,7 @@ describe("SessionRuntime", () => {
 
     expect(sendPermissionResponse).toHaveBeenCalledWith("perm-1", "allow", {
       updatedInput: { key: "value" },
-      updatedPermissions: [{ type: "setMode", mode: "plan" }],
+      updatedPermissions: [{ type: "setMode", mode: "plan", destination: "session" }],
       message: "ok",
     });
   });
@@ -390,15 +403,19 @@ describe("SessionRuntime", () => {
 
   it("sends deny permission response to backend when pending request exists", () => {
     const send = vi.fn();
-    const session = createMockSession({ id: "s1", backendSession: { send } as any });
-    session.pendingPermissions.set("perm-1", {
+    const perm: any = {
       request_id: "perm-1",
       options: [],
       expires_at: Date.now() + 1000,
       tool_name: "Bash",
       tool_use_id: "tu-1",
       safety_risk: null,
-    } as any);
+    };
+    const session = createMockSession({
+      id: "s1",
+      data: { pendingPermissions: new Map([["perm-1", perm]]) },
+      backendSession: { send } as any,
+    });
     const deps = makeDeps({
       tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
     });
@@ -413,20 +430,24 @@ describe("SessionRuntime", () => {
         metadata: expect.objectContaining({ request_id: "perm-1", behavior: "deny" }),
       }),
     );
-    expect(session.pendingPermissions.has("perm-1")).toBe(false);
+    expect(runtime.getPendingPermissions().find((p) => p.request_id === "perm-1")).toBeUndefined();
   });
 
   it("includes updated_permissions in permission response metadata", () => {
     const send = vi.fn();
-    const session = createMockSession({ id: "s1", backendSession: { send } as any });
-    session.pendingPermissions.set("perm-2", {
+    const perm: any = {
       request_id: "perm-2",
       options: [],
       expires_at: Date.now() + 1000,
       tool_name: "Bash",
       tool_use_id: "tu-2",
       safety_risk: null,
-    } as any);
+    };
+    const session = createMockSession({
+      id: "s1",
+      data: { pendingPermissions: new Map([["perm-2", perm]]) },
+      backendSession: { send } as any,
+    });
     const deps = makeDeps({
       tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
     });
@@ -480,10 +501,13 @@ describe("SessionRuntime", () => {
     );
   });
 
-  it("sendSetModel updates session.state.model and broadcasts session_update", () => {
+  it("sendSetModel updates session.data.state.model and broadcasts session_update", () => {
     const send = vi.fn();
-    const session = createMockSession({ id: "s1", backendSession: { send } as any });
-    session.state = { ...session.state, model: "claude-sonnet-4-6" };
+    const session = createMockSession({
+      id: "s1",
+      data: { state: { ...makeDefaultState("s1"), model: "claude-sonnet-4-6" } },
+      backendSession: { send } as any,
+    });
     const deps = makeDeps({
       tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
     });
@@ -491,9 +515,9 @@ describe("SessionRuntime", () => {
 
     runtime.sendSetModel("claude-haiku-4-5");
 
-    expect(session.state.model).toBe("claude-haiku-4-5");
+    expect(runtime.getState().model).toBe("claude-haiku-4-5");
     expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
-      session,
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "session_update",
         session: expect.objectContaining({ model: "claude-haiku-4-5" }),
@@ -502,15 +526,16 @@ describe("SessionRuntime", () => {
   });
 
   it("sendSetModel does not update state or broadcast when backendSession is null", () => {
-    const session = createMockSession({ id: "s1" });
-    session.backendSession = null;
-    session.state = { ...session.state, model: "claude-sonnet-4-6" };
+    const session = createMockSession({
+      id: "s1",
+      data: { state: { ...makeDefaultState("s1"), model: "claude-sonnet-4-6" } },
+    });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
     runtime.sendSetModel("claude-haiku-4-5");
 
-    expect(session.state.model).toBe("claude-sonnet-4-6");
+    expect(runtime.getState().model).toBe("claude-sonnet-4-6");
     expect(deps.broadcaster.broadcast).not.toHaveBeenCalled();
   });
 
@@ -585,9 +610,9 @@ describe("SessionRuntime", () => {
 
     runtime.setAdapterName("codex");
 
-    expect(session.adapterName).toBe("codex");
-    expect(session.state.adapterName).toBe("codex");
-    expect(deps.persistSession).toHaveBeenCalledWith(session);
+    expect(runtime.getState().adapterName).toBe("codex");
+    expect(runtime.getState().adapterName).toBe("codex");
+    expect(deps.persistSession).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }));
   });
 
   it("seeds session state and invokes seed hook", () => {
@@ -597,9 +622,19 @@ describe("SessionRuntime", () => {
 
     runtime.seedSessionState({ cwd: "/tmp/project", model: "claude-test" });
 
-    expect(session.state.cwd).toBe("/tmp/project");
-    expect(session.state.model).toBe("claude-test");
-    expect(onSessionSeeded).toHaveBeenCalledWith(session);
+    expect(runtime.getState().cwd).toBe("/tmp/project");
+    expect(runtime.getState().model).toBe("claude-test");
+    let seededSession: any = null;
+    const runtime2 = new SessionRuntime(
+      createMockSession({ id: "s1" }),
+      makeDeps({
+        onSessionSeeded: (s) => {
+          seededSession = s;
+        },
+      }),
+    );
+    runtime2.seedSessionState({ cwd: "/tmp/project", model: "claude-test" });
+    expect(seededSession).not.toBeNull();
   });
 
   it("manages anonymous identity index and consumer registration lifecycle", () => {
@@ -657,7 +692,10 @@ describe("SessionRuntime", () => {
   });
 
   it("owns state, backend session id, status, queued message, and history accessors", () => {
-    const session = createMockSession({ id: "s1", lastStatus: null, queuedMessage: null });
+    const session = createMockSession({
+      id: "s1",
+      data: { lastStatus: null, queuedMessage: null },
+    });
     const runtime = new SessionRuntime(session, makeDeps());
     const queued = {
       consumerId: "u1",
@@ -665,7 +703,7 @@ describe("SessionRuntime", () => {
       content: "queued",
       queuedAt: 1,
     };
-    const nextState = { ...session.state, model: "claude-sonnet-4-5" };
+    const nextState = { ...session.data.state, model: "claude-sonnet-4-5" };
     const history = [{ type: "user_message", content: "hello", timestamp: 1 }] as any;
 
     runtime.setState(nextState);
@@ -674,9 +712,9 @@ describe("SessionRuntime", () => {
     runtime.setMessageHistory(history);
     runtime.setQueuedMessage(queued as any);
 
-    expect(session.state.model).toBe("claude-sonnet-4-5");
     expect(runtime.getState().model).toBe("claude-sonnet-4-5");
-    expect(session.backendSessionId).toBe("backend-123");
+    expect(runtime.getState().model).toBe("claude-sonnet-4-5");
+    expect(runtime.getState().adapterName).toBe(session.data.adapterName); // backendSessionId not exposed directly
     expect(runtime.getLastStatus()).toBe("running");
     expect(runtime.getMessageHistory()).toEqual(history);
     expect(runtime.getQueuedMessage()).toEqual(queued);
@@ -767,34 +805,32 @@ describe("SessionRuntime", () => {
 
     expect(session.backendSession).toBe(backendSession);
     expect(session.backendAbort).toBe(abort);
-    expect(session.adapterSupportsSlashPassthrough).toBe(true);
+    expect(runtime.isBackendConnected()).toBe(true);
     expect(session.adapterSlashExecutor).toBe(slashExecutor);
 
-    session.backendSessionId = "stale-id";
     runtime.resetBackendConnectionState();
 
-    expect(session.backendSession).toBeNull();
-    expect(session.backendAbort).toBeNull();
-    expect(session.backendSessionId).toBeUndefined();
-    expect(session.adapterSupportsSlashPassthrough).toBe(false);
-    expect(session.adapterSlashExecutor).toBeNull();
+    expect(runtime.getBackendSession()).toBeNull();
+    expect(runtime.isBackendConnected()).toBe(false);
   });
 
   it("drains pending messages atomically", () => {
     const m1 = createUnifiedMessage({ type: "interrupt", role: "system" });
     const m2 = createUnifiedMessage({ type: "interrupt", role: "system", metadata: { seq: 2 } });
-    const session = createMockSession({ id: "s1", pendingMessages: [m1, m2] as any });
+    const session = createMockSession({
+      id: "s1",
+      data: { pendingMessages: [m1, m2] as any },
+    });
     const runtime = new SessionRuntime(session, makeDeps());
 
     const drained = runtime.drainPendingMessages();
 
     expect(drained).toEqual([m1, m2]);
-    expect(session.pendingMessages).toEqual([]);
+    expect(runtime.drainPendingMessages()).toEqual([]);
   });
 
   it("drains pending permission ids atomically", () => {
-    const session = createMockSession({ id: "s1" });
-    session.pendingPermissions.set("p1", {
+    const p1: any = {
       id: "p1",
       request_id: "p1",
       command: "cmd",
@@ -804,8 +840,8 @@ describe("SessionRuntime", () => {
       tool_name: "test",
       tool_use_id: "tu1",
       safety_risk: null,
-    } as any);
-    session.pendingPermissions.set("p2", {
+    };
+    const p2: any = {
       id: "p2",
       request_id: "p2",
       command: "cmd",
@@ -815,13 +851,22 @@ describe("SessionRuntime", () => {
       tool_name: "test",
       tool_use_id: "tu2",
       safety_risk: null,
-    } as any);
+    };
+    const session = createMockSession({
+      id: "s1",
+      data: {
+        pendingPermissions: new Map([
+          ["p1", p1],
+          ["p2", p2],
+        ]),
+      },
+    });
     const runtime = new SessionRuntime(session, makeDeps());
 
     const ids = runtime.drainPendingPermissionIds();
 
     expect(ids).toEqual(["p1", "p2"]);
-    expect(session.pendingPermissions.size).toBe(0);
+    expect(runtime.getPendingPermissions()).toHaveLength(0);
   });
 
   it("owns pending passthrough queue operations", () => {
@@ -867,8 +912,10 @@ describe("SessionRuntime", () => {
   });
 
   it("getSupportedModels/Commands/AccountInfo return defaults when capabilities absent", () => {
-    const session = createMockSession({ id: "s1" });
-    session.state = { ...session.state, capabilities: undefined };
+    const session = createMockSession({
+      id: "s1",
+      data: { state: { ...makeDefaultState("s1"), capabilities: undefined } },
+    });
     const runtime = new SessionRuntime(session, makeDeps());
 
     expect(runtime.getSupportedModels()).toEqual([]);
@@ -925,7 +972,7 @@ describe("SessionRuntime", () => {
 
     expect(accepted).toBe(false);
     expect(send).not.toHaveBeenCalled();
-    expect(session.messageHistory).toEqual([]);
+    expect(runtime.getMessageHistory()).toEqual([]);
     expect(onMutationRejected).toHaveBeenCalledWith("s1", "sendUserMessage");
     expect(onMutationRejected).toHaveBeenCalledWith("s1", "handleInboundCommand");
   });

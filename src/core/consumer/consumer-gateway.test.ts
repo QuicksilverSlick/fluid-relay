@@ -75,13 +75,13 @@ describe("ConsumerGateway", () => {
     queuedMessage?: Session["queuedMessage"];
   }) {
     const session = createMockSession({ id: "s1" });
-    if (options?.state) session.state = options.state;
-    if (options?.history) session.messageHistory = options.history;
-    if (options?.queuedMessage !== undefined) session.queuedMessage = options.queuedMessage;
+    if (options?.state) session.data.state = options.state;
+    if (options?.history) session.data.messageHistory = options.history;
+    if (options?.queuedMessage !== undefined) session.data.queuedMessage = options.queuedMessage;
     if (options?.pendingPermissions) {
-      session.pendingPermissions.clear();
+      session.data.pendingPermissions.clear();
       for (const p of options.pendingPermissions) {
-        session.pendingPermissions.set(p.request_id, p);
+        session.data.pendingPermissions.set(p.request_id, p);
       }
     }
 
@@ -112,10 +112,10 @@ describe("ConsumerGateway", () => {
       checkRateLimit: vi.fn(() => !(options?.rateLimited ?? false)),
       getConsumerIdentity: vi.fn((_, ws) => sockets.get(ws)),
       getConsumerCount: vi.fn(() => sockets.size),
-      getState: vi.fn((s) => s.state),
-      getMessageHistory: vi.fn((s) => s.messageHistory),
-      getPendingPermissions: vi.fn((s) => Array.from(s.pendingPermissions.values())),
-      getQueuedMessage: vi.fn((s) => s.queuedMessage),
+      getState: vi.fn((s) => s.data.state),
+      getMessageHistory: vi.fn((s) => s.data.messageHistory),
+      getPendingPermissions: vi.fn((s) => Array.from(s.data.pendingPermissions.values())),
+      getQueuedMessage: vi.fn((s) => s.data.queuedMessage),
       isBackendConnected: vi.fn(() => options?.backendConnected ?? false),
       registerConsumer: vi.fn((_, ws, acceptedIdentity) => {
         sockets.set(ws, acceptedIdentity);

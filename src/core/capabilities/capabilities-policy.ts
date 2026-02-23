@@ -20,6 +20,7 @@ import type {
 } from "../../types/cli-messages.js";
 import type { ResolvedConfig } from "../../types/config.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import type { SessionData } from "../session/session-data.js";
 import type { Session } from "../session/session-repository.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 
@@ -28,8 +29,8 @@ import type { UnifiedMessage } from "../types/unified-message.js";
 type EmitEvent = (type: string, payload: unknown) => void;
 type PersistSession = (session: Session) => void;
 type CapabilitiesStateAccessors = {
-  getState: (session: Session) => Session["state"];
-  setState: (session: Session, state: Session["state"]) => void;
+  getState: (session: Session) => SessionData["state"];
+  setState: (session: Session, state: SessionData["state"]) => void;
   getPendingInitialize: (session: Session) => Session["pendingInitialize"];
   setPendingInitialize: (session: Session, pendingInitialize: Session["pendingInitialize"]) => void;
   trySendRawToBackend: (session: Session, ndjson: string) => "sent" | "unsupported" | "no_backend";
@@ -52,11 +53,11 @@ export class CapabilitiesPolicy {
     this.stateAccessors = stateAccessors;
   }
 
-  private getState(session: Session): Session["state"] {
+  private getState(session: Session): SessionData["state"] {
     return this.stateAccessors.getState(session);
   }
 
-  private setState(session: Session, state: Session["state"]): void {
+  private setState(session: Session, state: SessionData["state"]): void {
     this.stateAccessors.setState(session, state);
   }
 

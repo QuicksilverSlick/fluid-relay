@@ -16,6 +16,7 @@ import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { UnifiedMessageRouterDeps } from "../messaging/unified-message-router.js";
 import type { GitInfoTracker } from "../session/git-info-tracker.js";
 import type { MessageQueueHandler } from "../session/message-queue-handler.js";
+import type { SessionData } from "../session/session-data.js";
 import type { Session, SessionRepository } from "../session/session-repository.js";
 import type { SessionRuntime } from "../session/session-runtime.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
@@ -26,8 +27,8 @@ type EmitBridgeEvent = (
 ) => void;
 
 type CapabilitiesPolicyStateAccessors = {
-  getState: (session: Session) => Session["state"];
-  setState: (session: Session, state: Session["state"]) => void;
+  getState: (session: Session) => SessionData["state"];
+  setState: (session: Session, state: SessionData["state"]) => void;
   getPendingInitialize: (session: Session) => Session["pendingInitialize"];
   setPendingInitialize: (session: Session, pendingInitialize: Session["pendingInitialize"]) => void;
   trySendRawToBackend: (session: Session, ndjson: string) => "sent" | "unsupported" | "no_backend";
@@ -35,10 +36,10 @@ type CapabilitiesPolicyStateAccessors = {
 };
 
 type QueueStateAccessors = {
-  getLastStatus: (session: Session) => Session["lastStatus"];
-  setLastStatus: (session: Session, status: Session["lastStatus"]) => void;
-  getQueuedMessage: (session: Session) => Session["queuedMessage"];
-  setQueuedMessage: (session: Session, queued: Session["queuedMessage"]) => void;
+  getLastStatus: (session: Session) => SessionData["lastStatus"];
+  setLastStatus: (session: Session, status: SessionData["lastStatus"]) => void;
+  getQueuedMessage: (session: Session) => SessionData["queuedMessage"];
+  setQueuedMessage: (session: Session, queued: SessionData["queuedMessage"]) => void;
   getConsumerIdentity: (session: Session, ws: WebSocketLike) => ConsumerIdentity | undefined;
 };
 
@@ -47,8 +48,8 @@ export type ConsumerPlaneRuntimeAccessors = {
   getConsumerSockets: (
     session: Session,
   ) => ReadonlyMap<WebSocketLike, ConsumerIdentity> | Map<WebSocketLike, ConsumerIdentity>;
-  getState: (session: Session) => Session["state"];
-  setState: (session: Session, state: Session["state"]) => void;
+  getState: (session: Session) => SessionData["state"];
+  setState: (session: Session, state: SessionData["state"]) => void;
   allocateAnonymousIdentityIndex: (session: Session) => number;
   checkRateLimit: (
     session: Session,
@@ -57,9 +58,9 @@ export type ConsumerPlaneRuntimeAccessors = {
   ) => boolean;
   getConsumerIdentity: (session: Session, ws: WebSocketLike) => ConsumerIdentity | undefined;
   getConsumerCount: (session: Session) => number;
-  getMessageHistory: (session: Session) => Session["messageHistory"];
+  getMessageHistory: (session: Session) => SessionData["messageHistory"];
   getPendingPermissions: (session: Session) => ReturnType<SessionRuntime["getPendingPermissions"]>;
-  getQueuedMessage: (session: Session) => Session["queuedMessage"];
+  getQueuedMessage: (session: Session) => SessionData["queuedMessage"];
   isBackendConnected: (session: Session) => boolean;
   addConsumer: (session: Session, ws: WebSocketLike, identity: ConsumerIdentity) => void;
 };
@@ -69,7 +70,7 @@ export function createCapabilitiesPolicyStateAccessors(
 ): CapabilitiesPolicyStateAccessors {
   return {
     getState: (session: Session) => runtime(session).getState(),
-    setState: (session: Session, state: Session["state"]) => runtime(session).setState(state),
+    setState: (session: Session, state: SessionData["state"]) => runtime(session).setState(state),
     getPendingInitialize: (session: Session) => runtime(session).getPendingInitialize(),
     setPendingInitialize: (session: Session, pendingInitialize: Session["pendingInitialize"]) =>
       runtime(session).setPendingInitialize(pendingInitialize),
@@ -86,10 +87,10 @@ export function createQueueStateAccessors(
 ): QueueStateAccessors {
   return {
     getLastStatus: (session: Session) => runtime(session).getLastStatus(),
-    setLastStatus: (session: Session, status: Session["lastStatus"]) =>
+    setLastStatus: (session: Session, status: SessionData["lastStatus"]) =>
       runtime(session).setLastStatus(status),
     getQueuedMessage: (session: Session) => runtime(session).getQueuedMessage(),
-    setQueuedMessage: (session: Session, queued: Session["queuedMessage"]) => {
+    setQueuedMessage: (session: Session, queued: SessionData["queuedMessage"]) => {
       runtime(session).setQueuedMessage(queued);
       onQueuedMessageSet?.(session);
     },
@@ -105,7 +106,7 @@ export function createConsumerPlaneRuntimeAccessors(
     removeConsumer: (session: Session, ws: WebSocketLike) => runtime(session).removeConsumer(ws),
     getConsumerSockets: (session: Session) => runtime(session).getConsumerSockets(),
     getState: (session: Session) => runtime(session).getState(),
-    setState: (session: Session, state: Session["state"]) => runtime(session).setState(state),
+    setState: (session: Session, state: SessionData["state"]) => runtime(session).setState(state),
     allocateAnonymousIdentityIndex: (session: Session) =>
       runtime(session).allocateAnonymousIdentityIndex(),
     checkRateLimit: (session: Session, ws: WebSocketLike, createLimiter) =>
@@ -145,15 +146,15 @@ export function createUnifiedMessageRouterDeps(params: {
     maxMessageHistoryLength: params.maxMessageHistoryLength,
     tracer: params.tracer,
     getState: (session: Session) => params.runtime(session).getState(),
-    setState: (session: Session, state: Session["state"]) =>
+    setState: (session: Session, state: SessionData["state"]) =>
       params.runtime(session).setState(state),
     setBackendSessionId: (session: Session, backendSessionId: string | undefined) =>
       params.runtime(session).setBackendSessionId(backendSessionId),
     getMessageHistory: (session: Session) => params.runtime(session).getMessageHistory(),
-    setMessageHistory: (session: Session, history: Session["messageHistory"]) =>
+    setMessageHistory: (session: Session, history: SessionData["messageHistory"]) =>
       params.runtime(session).setMessageHistory(history),
     getLastStatus: (session: Session) => params.runtime(session).getLastStatus(),
-    setLastStatus: (session: Session, status: Session["lastStatus"]) =>
+    setLastStatus: (session: Session, status: SessionData["lastStatus"]) =>
       params.runtime(session).setLastStatus(status),
     storePendingPermission: (session: Session, requestId: string, request) =>
       params.runtime(session).storePendingPermission(requestId, request),

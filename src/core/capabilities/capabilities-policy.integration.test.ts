@@ -28,9 +28,9 @@ function createDeps(
   const emitEvent = vi.fn();
   const persistSession = vi.fn();
   const defaultStateAccessors = {
-    getState: (session: any) => session.state,
+    getState: (session: any) => session.data.state,
     setState: (session: any, state: any) => {
-      session.state = state;
+      session.data.state = state;
     },
     getPendingInitialize: (session: any) => session.pendingInitialize,
     setPendingInitialize: (session: any, pendingInitialize: any) => {
@@ -224,10 +224,10 @@ describe("CapabilitiesPolicy", () => {
       protocol.handleControlResponse(session, msg);
 
       // Capabilities stored
-      expect(session.state.capabilities).toBeDefined();
-      expect(session.state.capabilities!.commands).toHaveLength(1);
-      expect(session.state.capabilities!.models).toHaveLength(1);
-      expect(session.state.capabilities!.account).toEqual({ email: "user@test.com" });
+      expect(session.data.state.capabilities).toBeDefined();
+      expect(session.data.state.capabilities!.commands).toHaveLength(1);
+      expect(session.data.state.capabilities!.models).toHaveLength(1);
+      expect(session.data.state.capabilities!.account).toEqual({ email: "user@test.com" });
 
       // Broadcast sent
       expect(broadcaster.broadcast).toHaveBeenCalledWith(
@@ -327,7 +327,7 @@ describe("CapabilitiesPolicy", () => {
 
       protocol.handleControlResponse(session, msg);
 
-      expect(session.state.capabilities).toBeUndefined();
+      expect(session.data.state.capabilities).toBeUndefined();
       expect(broadcaster.broadcast).not.toHaveBeenCalled();
       expect(emitEvent).not.toHaveBeenCalledWith("capabilities:ready", expect.anything());
     });
@@ -371,14 +371,14 @@ describe("CapabilitiesPolicy", () => {
       protocol.handleControlResponse(session, msg);
 
       // No capabilities set (no slash_commands to synthesize from)
-      expect(session.state.capabilities).toBeUndefined();
+      expect(session.data.state.capabilities).toBeUndefined();
       expect(session.pendingInitialize).toBeNull();
     });
 
     it("synthesizes capabilities from slash_commands on error fallback", () => {
       const { protocol, broadcaster, emitEvent } = createDeps();
       const session = createMockSession();
-      session.state.slash_commands = ["/help", "/compact"];
+      session.data.state.slash_commands = ["/help", "/compact"];
 
       protocol.sendInitializeRequest(session);
       const requestId = session.pendingInitialize!.requestId;
@@ -396,13 +396,13 @@ describe("CapabilitiesPolicy", () => {
       protocol.handleControlResponse(session, msg);
 
       // Capabilities synthesized from slash_commands
-      expect(session.state.capabilities).toBeDefined();
-      expect(session.state.capabilities!.commands).toEqual([
+      expect(session.data.state.capabilities).toBeDefined();
+      expect(session.data.state.capabilities!.commands).toEqual([
         { name: "/help", description: "" },
         { name: "/compact", description: "" },
       ]);
-      expect(session.state.capabilities!.models).toEqual([]);
-      expect(session.state.capabilities!.account).toBeNull();
+      expect(session.data.state.capabilities!.models).toEqual([]);
+      expect(session.data.state.capabilities!.account).toBeNull();
 
       // Broadcast and emit still fire
       expect(broadcaster.broadcast).toHaveBeenCalled();
@@ -412,7 +412,7 @@ describe("CapabilitiesPolicy", () => {
     it("golden: Already initialized synthesizes capabilities from slash_commands", () => {
       const { protocol } = createDeps();
       const session = createMockSession();
-      session.state.slash_commands = ["/help", "/compact"];
+      session.data.state.slash_commands = ["/help", "/compact"];
 
       protocol.sendInitializeRequest(session);
       const requestId = session.pendingInitialize!.requestId;
@@ -431,9 +431,9 @@ describe("CapabilitiesPolicy", () => {
 
       const golden = {
         error: msg.metadata.error,
-        commands: session.state.capabilities?.commands ?? [],
-        models: session.state.capabilities?.models ?? [],
-        account: session.state.capabilities?.account ?? null,
+        commands: session.data.state.capabilities?.commands ?? [],
+        models: session.data.state.capabilities?.models ?? [],
+        account: session.data.state.capabilities?.account ?? null,
       };
       expect(golden).toMatchInlineSnapshot(`
         {
@@ -457,8 +457,8 @@ describe("CapabilitiesPolicy", () => {
     it("does not synthesize on error if capabilities already exist", () => {
       const { protocol, broadcaster } = createDeps();
       const session = createMockSession();
-      session.state.slash_commands = ["/help"];
-      session.state.capabilities = {
+      session.data.state.slash_commands = ["/help"];
+      session.data.state.capabilities = {
         commands: [{ name: "/existing", description: "Existing" }],
         models: [],
         account: null,
@@ -481,7 +481,7 @@ describe("CapabilitiesPolicy", () => {
       protocol.handleControlResponse(session, msg);
 
       // Original capabilities remain unchanged
-      expect(session.state.capabilities!.commands).toEqual([
+      expect(session.data.state.capabilities!.commands).toEqual([
         { name: "/existing", description: "Existing" },
       ]);
       expect(broadcaster.broadcast).not.toHaveBeenCalled();
@@ -506,7 +506,7 @@ describe("CapabilitiesPolicy", () => {
 
       protocol.handleControlResponse(session, msg);
 
-      expect(session.state.capabilities).toBeUndefined();
+      expect(session.data.state.capabilities).toBeUndefined();
       expect(broadcaster.broadcast).not.toHaveBeenCalled();
       expect(session.pendingInitialize).toBeNull();
     });
@@ -533,9 +533,9 @@ describe("CapabilitiesPolicy", () => {
 
       protocol.handleControlResponse(session, msg);
 
-      expect(session.state.capabilities!.commands).toHaveLength(1);
-      expect(session.state.capabilities!.models).toEqual([]);
-      expect(session.state.capabilities!.account).toBeNull();
+      expect(session.data.state.capabilities!.commands).toHaveLength(1);
+      expect(session.data.state.capabilities!.models).toEqual([]);
+      expect(session.data.state.capabilities!.account).toBeNull();
     });
   });
 
@@ -549,14 +549,14 @@ describe("CapabilitiesPolicy", () => {
 
       protocol.applyCapabilities(session, [{ name: "/test", description: "Test" }], [], null);
 
-      expect(session.state.capabilities!.receivedAt).toBeGreaterThanOrEqual(before);
-      expect(session.state.capabilities!.receivedAt).toBeLessThanOrEqual(Date.now());
+      expect(session.data.state.capabilities!.receivedAt).toBeGreaterThanOrEqual(before);
+      expect(session.data.state.capabilities!.receivedAt).toBeLessThanOrEqual(Date.now());
     });
 
     it("includes skills from session state in broadcast", () => {
       const { protocol, broadcaster } = createDeps();
       const session = createMockSession();
-      session.state.skills = ["commit", "review-pr"];
+      session.data.state.skills = ["commit", "review-pr"];
 
       protocol.applyCapabilities(session, [], [], null);
 
@@ -583,7 +583,7 @@ describe("CapabilitiesPolicy", () => {
 
       expect(state.capabilities).toBeDefined();
       expect(state.capabilities!.commands).toEqual([{ name: "/help", description: "Help" }]);
-      expect(session.state.capabilities).toBeUndefined();
+      expect(session.data.state.capabilities).toBeUndefined();
       expect(broadcaster.broadcast).toHaveBeenCalledWith(
         session,
         expect.objectContaining({ skills: ["commit"] }),

@@ -21,6 +21,7 @@ import type { AdapterSlashExecutor, BackendSession } from "../interfaces/backend
 import type { SlashCommandRegistry } from "../slash/slash-command-registry.js";
 import type { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
+import type { SessionData } from "./session-data.js";
 
 export type { AdapterSlashExecutor };
 
@@ -33,8 +34,13 @@ export interface QueuedMessage {
 }
 
 export interface Session {
-  id: string;
-  backendSessionId?: string;
+  // ── Immutable lookup key ────────────────────────────────────────────────
+  readonly id: string;
+
+  // ── Serializable state (sole ownership: SessionRuntime) ─────────────────
+  readonly data: SessionData;
+
+  // ── Runtime handles (mutable, non-serializable) ──────────────────────────
   /** BackendSession from BackendAdapter. */
   backendSession: BackendSession | null;
   /** AbortController for the backend message consumption loop. */
@@ -42,14 +48,6 @@ export interface Session {
   consumerSockets: Map<WebSocketLike, ConsumerIdentity>;
   consumerRateLimiters: Map<WebSocketLike, RateLimiter>;
   anonymousCounter: number;
-  state: SessionState;
-  pendingPermissions: Map<string, PermissionRequest>;
-  messageHistory: ConsumerMessage[];
-  pendingMessages: UnifiedMessage[];
-  /** Single-slot queue: a user message waiting to be sent when the session becomes idle. */
-  queuedMessage: QueuedMessage | null;
-  /** Last known CLI status (idle, running, compacting, or null if unknown). */
-  lastStatus: "compacting" | "idle" | "running" | null;
   lastActivity: number;
   pendingInitialize: {
     requestId: string;
@@ -67,12 +65,8 @@ export interface Session {
     traceId: string;
     startedAtMs: number;
   }>;
-  /** Backend adapter name for this session. */
-  adapterName?: string;
   /** Adapter-specific slash command executor (e.g. Codex JSON-RPC translation). */
   adapterSlashExecutor: AdapterSlashExecutor | null;
-  /** True if the connected adapter supports CLI passthrough for slash commands. */
-  adapterSupportsSlashPassthrough: boolean;
 }
 
 export function makeDefaultState(sessionId: string): SessionState {
@@ -149,19 +143,19 @@ export class SessionRepository {
     if (!session) return undefined;
     return {
       id: session.id,
-      state: session.state,
+      state: session.data.state,
       cliConnected: session.backendSession !== null,
       consumerCount: session.consumerSockets.size,
       consumers: Array.from(session.consumerSockets.values()).map(toPresenceEntry),
-      pendingPermissions: Array.from(session.pendingPermissions.values()),
-      messageHistoryLength: session.messageHistory.length,
+      pendingPermissions: Array.from(session.data.pendingPermissions.values()),
+      messageHistoryLength: session.data.messageHistory.length,
       lastActivity: session.lastActivity,
-      lastStatus: session.lastStatus,
+      lastStatus: session.data.lastStatus,
     };
   }
 
   getAllStates(): SessionState[] {
-    return Array.from(this.sessions.values()).map((s) => s.state);
+    return Array.from(this.sessions.values()).map((s) => s.data.state);
   }
 
   isCliConnected(id: string): boolean {
@@ -184,7 +178,7 @@ export class SessionRepository {
   }
 
   /** Create a new disconnected session with the given state. */
-  private createSession(
+  createSession(
     id: string,
     state: SessionState,
     overrides?: {
@@ -196,53 +190,57 @@ export class SessionRepository {
   ): Session {
     return {
       id,
+      data: {
+        state,
+        pendingPermissions: overrides?.pendingPermissions ?? new Map(),
+        messageHistory: overrides?.messageHistory ?? [],
+        pendingMessages: overrides?.pendingMessages ?? [],
+        queuedMessage: overrides?.queuedMessage ?? null,
+        lastStatus: null,
+        adapterName: state.adapterName,
+        adapterSupportsSlashPassthrough: false,
+      },
       backendSession: null,
       backendAbort: null,
       consumerSockets: new Map(),
       consumerRateLimiters: new Map(),
       anonymousCounter: 0,
-      state,
-      pendingPermissions: overrides?.pendingPermissions ?? new Map(),
-      messageHistory: overrides?.messageHistory ?? [],
-      pendingMessages: overrides?.pendingMessages ?? [],
-      queuedMessage: overrides?.queuedMessage ?? null,
-      lastStatus: null,
       lastActivity: Date.now(),
       pendingInitialize: null,
       teamCorrelationBuffer: this.factories.createCorrelationBuffer(),
       registry: this.factories.createRegistry(),
       pendingPassthroughs: [],
-      adapterName: state.adapterName,
       adapterSlashExecutor: null,
-      adapterSupportsSlashPassthrough: false,
     };
   }
 
   /** Persist a session snapshot to disk. */
   persist(session: Session): void {
+    this.sessions.set(session.id, session);
     if (!this.storage) return;
     this.storage.save({
       id: session.id,
-      state: session.state,
-      messageHistory: session.messageHistory,
-      pendingMessages: session.pendingMessages,
-      pendingPermissions: Array.from(session.pendingPermissions.entries()),
-      queuedMessage: session.queuedMessage,
-      adapterName: session.adapterName,
+      state: session.data.state,
+      messageHistory: Array.from(session.data.messageHistory),
+      pendingMessages: Array.from(session.data.pendingMessages),
+      pendingPermissions: Array.from(session.data.pendingPermissions.entries()),
+      queuedMessage: session.data.queuedMessage,
+      adapterName: session.data.adapterName,
     });
   }
 
   /** Persist a session snapshot to disk synchronously (critical state writes). */
   persistSync(session: Session): void {
+    this.sessions.set(session.id, session);
     if (!this.storage) return;
     this.storage.saveSync({
       id: session.id,
-      state: session.state,
-      messageHistory: session.messageHistory,
-      pendingMessages: session.pendingMessages,
-      pendingPermissions: Array.from(session.pendingPermissions.entries()),
-      queuedMessage: session.queuedMessage,
-      adapterName: session.adapterName,
+      state: session.data.state,
+      messageHistory: Array.from(session.data.messageHistory),
+      pendingMessages: Array.from(session.data.pendingMessages),
+      pendingPermissions: Array.from(session.data.pendingPermissions.entries()),
+      queuedMessage: session.data.queuedMessage,
+      adapterName: session.data.adapterName,
     });
   }
 
