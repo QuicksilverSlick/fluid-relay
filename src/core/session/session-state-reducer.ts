@@ -33,9 +33,47 @@ export function reduceSessionData(
   message: UnifiedMessage,
   correlationBuffer: TeamToolCorrelationBuffer,
 ): SessionData {
+  let changed = false;
+
   const nextState = reduce(data.state, message, correlationBuffer);
-  if (nextState === data.state) return data; // nothing changed
-  return { ...data, state: nextState };
+  if (nextState !== data.state) changed = true;
+
+  const nextLastStatus = reduceLastStatus(data.lastStatus, message);
+  if (nextLastStatus !== data.lastStatus) changed = true;
+
+  if (!changed) return data;
+  return {
+    ...data,
+    state: nextState,
+    lastStatus: nextLastStatus,
+  };
+}
+
+function reduceLastStatus(
+  current: SessionData["lastStatus"],
+  message: UnifiedMessage,
+): SessionData["lastStatus"] {
+  switch (message.type) {
+    case "status_change": {
+      const status = message.metadata?.status;
+      if (status === "running" || status === "idle" || status === "compacting") {
+        return status;
+      }
+      return current;
+    }
+    case "result":
+      return "idle";
+    case "stream_event": {
+      const event = message.metadata?.event as { type?: string } | undefined;
+      const parent_tool_use_id = message.metadata?.parent_tool_use_id;
+      if (event?.type === "message_start" && !parent_tool_use_id) {
+        return "running";
+      }
+      return current;
+    }
+    default:
+      return current;
+  }
 }
 
 /**
@@ -91,16 +129,25 @@ function reduceSessionInit(state: SessionState, msg: UnifiedMessage): SessionSta
 function reduceStatusChange(state: SessionState, msg: UnifiedMessage): SessionState {
   const m = msg.metadata;
   const status = m.status as string | null | undefined;
-  const newState = {
-    ...state,
-    is_compacting: status === "compacting",
-  };
 
-  if (m.permissionMode !== undefined && m.permissionMode !== null) {
-    newState.permissionMode = m.permissionMode as string;
+  let changed = false;
+  const newState = { ...state };
+
+  if (newState.is_compacting !== (status === "compacting")) {
+    newState.is_compacting = status === "compacting";
+    changed = true;
   }
 
-  return newState;
+  if (
+    m.permissionMode !== undefined &&
+    m.permissionMode !== null &&
+    newState.permissionMode !== m.permissionMode
+  ) {
+    newState.permissionMode = m.permissionMode as string;
+    changed = true;
+  }
+
+  return changed ? newState : state;
 }
 
 function reduceResult(state: SessionState, msg: UnifiedMessage): SessionState {

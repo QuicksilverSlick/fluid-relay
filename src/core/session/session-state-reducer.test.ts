@@ -124,4 +124,41 @@ describe("reduceSessionData", () => {
     const next = reduceSessionData(data, msg, buffer);
     expect(next).toBe(data);
   });
+
+  it("sets lastStatus to running on status_change running", () => {
+    const data = baseData();
+    const msg = createUnifiedMessage({
+      type: "status_change",
+      role: "assistant",
+      metadata: { status: "running" },
+    });
+    const buffer = new TeamToolCorrelationBuffer();
+    const next = reduceSessionData(data, msg, buffer);
+    expect(next.lastStatus).toBe("running");
+    expect(next).not.toBe(data);
+  });
+
+  it("sets lastStatus to idle on result message", () => {
+    const data = { ...baseData(), lastStatus: "running" as const };
+    const msg = createUnifiedMessage({
+      type: "result",
+      role: "assistant",
+      metadata: { subtype: "success" },
+    });
+    const buffer = new TeamToolCorrelationBuffer();
+    const next = reduceSessionData(data, msg, buffer);
+    expect(next.lastStatus).toBe("idle");
+  });
+
+  it("returns same reference when status unchanged", () => {
+    const data = { ...baseData(), lastStatus: "idle" as const };
+    const msg = createUnifiedMessage({
+      type: "status_change",
+      role: "assistant",
+      metadata: { status: "idle" },
+    });
+    const buffer = new TeamToolCorrelationBuffer();
+    const next = reduceSessionData(data, msg, buffer);
+    expect(next).toBe(data); // no change, same ref
+  });
 });

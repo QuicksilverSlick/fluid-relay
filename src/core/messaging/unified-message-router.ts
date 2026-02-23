@@ -26,7 +26,7 @@ import { applyGitInfo, type GitInfoTracker } from "../session/git-info-tracker.j
 import type { MessageQueueHandler } from "../session/message-queue-handler.js";
 import type { SessionData } from "../session/session-data.js";
 import type { Session } from "../session/session-repository.js";
-import { reduce as reduceState } from "../session/session-state-reducer.js";
+
 import { diffTeamState } from "../team/team-event-differ.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
@@ -73,7 +73,6 @@ export interface UnifiedMessageRouterDeps {
   getMessageHistory: (session: Session) => SessionData["messageHistory"];
   setMessageHistory: (session: Session, history: SessionData["messageHistory"]) => void;
   getLastStatus: (session: Session) => SessionData["lastStatus"];
-  setLastStatus: (session: Session, status: SessionData["lastStatus"]) => void;
   storePendingPermission: (session: Session, requestId: string, request: PermissionRequest) => void;
   clearDynamicSlashRegistry: (session: Session) => void;
   registerCLICommands: (session: Session, commands: InitializeCommand[]) => void;
@@ -98,7 +97,6 @@ export class UnifiedMessageRouter {
   private getMessageHistoryAccessor: UnifiedMessageRouterDeps["getMessageHistory"];
   private setMessageHistoryAccessor: UnifiedMessageRouterDeps["setMessageHistory"];
   private getLastStatusAccessor: UnifiedMessageRouterDeps["getLastStatus"];
-  private setLastStatusAccessor: UnifiedMessageRouterDeps["setLastStatus"];
   private storePendingPermissionAccessor: UnifiedMessageRouterDeps["storePendingPermission"];
   private clearDynamicSlashRegistryAccessor: UnifiedMessageRouterDeps["clearDynamicSlashRegistry"];
   private registerCLICommandsAccessor: UnifiedMessageRouterDeps["registerCLICommands"];
@@ -120,7 +118,6 @@ export class UnifiedMessageRouter {
     this.getMessageHistoryAccessor = deps.getMessageHistory;
     this.setMessageHistoryAccessor = deps.setMessageHistory;
     this.getLastStatusAccessor = deps.getLastStatus;
-    this.setLastStatusAccessor = deps.setLastStatus;
     this.storePendingPermissionAccessor = deps.storePendingPermission;
     this.clearDynamicSlashRegistryAccessor = deps.clearDynamicSlashRegistry;
     this.registerCLICommandsAccessor = deps.registerCLICommands;
@@ -151,10 +148,6 @@ export class UnifiedMessageRouter {
     return this.getLastStatusAccessor(session);
   }
 
-  private setLastStatus(session: Session, status: SessionData["lastStatus"]): void {
-    this.setLastStatusAccessor(session, status);
-  }
-
   private storePendingPermission(
     session: Session,
     requestId: string,
@@ -176,7 +169,7 @@ export class UnifiedMessageRouter {
   }
 
   /** Route a UnifiedMessage through state reduction and the appropriate handler. */
-  route(session: Session, msg: UnifiedMessage): void {
+  route(session: Session, msg: UnifiedMessage, prevData?: SessionData): void {
     const { traceId, requestId, command } = extractTraceContext(msg.metadata);
     const trace: RouteTrace = {
       sessionId: session.id,
@@ -189,10 +182,9 @@ export class UnifiedMessageRouter {
     this.tracer.recv("bridge", msg.type, msg, trace);
 
     // Capture previous team state for event diffing
-    const prevTeam = this.getState(session).team;
+    const prevTeam = prevData ? prevData.state.team : this.getState(session).team;
 
     // Apply state reduction (pure function — no side effects, includes team state)
-    this.setState(session, reduceState(this.getState(session), msg, session.teamCorrelationBuffer));
 
     // Emit team events by diffing previous and new team state
     this.emitTeamEvents(session, prevTeam);
@@ -334,8 +326,6 @@ export class UnifiedMessageRouter {
 
   private handleStatusChange(session: Session, msg: UnifiedMessage, trace: RouteTrace): void {
     const status = msg.metadata.status as string | null | undefined;
-    const nextStatus = (status ?? null) as "compacting" | "idle" | "running" | null;
-    this.setLastStatus(session, nextStatus);
     const { status: _s, ...rest } = msg.metadata;
     const filtered = Object.fromEntries(Object.entries(rest).filter(([, v]) => v != null));
     const statusMsg = {
@@ -394,7 +384,6 @@ export class UnifiedMessageRouter {
 
     // Mark session idle — the CLI only sends status_change for "compacting" | null,
     // so the bridge must infer "idle" from result messages (mirrors frontend logic).
-    this.setLastStatus(session, "idle");
     this.queueHandler.autoSendQueuedMessage(session);
 
     // Trigger auto-naming after first turn
@@ -438,7 +427,6 @@ export class UnifiedMessageRouter {
     // due to false positives from sub-agent streams. See ISSUE 3 in
     // docs/unified-message-protocol.md.
     if (event?.type === "message_start" && !m.parent_tool_use_id) {
-      this.setLastStatus(session, "running");
       this.broadcaster.broadcast(session, {
         type: "status_change",
         status: this.getLastStatus(session),

@@ -154,8 +154,6 @@ export function createUnifiedMessageRouterDeps(params: {
     setMessageHistory: (session: Session, history: SessionData["messageHistory"]) =>
       params.runtime(session).setMessageHistory(history),
     getLastStatus: (session: Session) => params.runtime(session).getLastStatus(),
-    setLastStatus: (session: Session, status: SessionData["lastStatus"]) =>
-      params.runtime(session).setLastStatus(status),
     storePendingPermission: (session: Session, requestId: string, request) =>
       params.runtime(session).storePendingPermission(requestId, request),
     clearDynamicSlashRegistry: (session: Session) =>

@@ -100,8 +100,8 @@ export function composeRuntimePlane({
         next: to,
         reason,
       }),
-    routeBackendMessage: (runtimeSession, unified) =>
-      getMessageRouter().route(runtimeSession, unified),
+    routeBackendMessage: (runtimeSession, unified, prevData) =>
+      getMessageRouter().route(runtimeSession, unified, prevData),
     canMutateSession: (sessionId) => leaseCoordinator.ensureLease(sessionId, leaseOwnerId),
     onMutationRejected: (sessionId, operation) =>
       logger.warn("Session mutation blocked: lease not owned by this runtime", {

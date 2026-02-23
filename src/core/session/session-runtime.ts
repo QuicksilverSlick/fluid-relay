@@ -83,7 +83,7 @@ export interface SessionRuntimeDeps {
   onInboundObserved?: (session: Session, msg: InboundCommand) => void;
   onInboundHandled?: (session: Session, msg: InboundCommand) => void;
   onBackendMessageObserved?: (session: Session, msg: UnifiedMessage) => void;
-  routeBackendMessage?: (session: Session, msg: UnifiedMessage) => void;
+  routeBackendMessage?: (session: Session, msg: UnifiedMessage, prevData?: SessionData) => void;
   onBackendMessageHandled?: (session: Session, msg: UnifiedMessage) => void;
   onSignal?: (
     session: Session,
@@ -662,6 +662,7 @@ export class SessionRuntime {
     this.touchActivity();
     this.deps.onBackendMessageObserved?.(this.session, msg);
 
+    const prevData = this.session.data;
     const nextData = reduceSessionData(this.session.data, msg, this.session.teamCorrelationBuffer);
     if (nextData !== this.session.data) {
       this.session = { ...this.session, data: nextData };
@@ -669,7 +670,7 @@ export class SessionRuntime {
     }
 
     this.applyLifecycleFromBackendMessage(msg);
-    this.deps.routeBackendMessage?.(this.session, msg);
+    this.deps.routeBackendMessage?.(this.session, msg, prevData);
     this.deps.onBackendMessageHandled?.(this.session, msg);
   }
 
