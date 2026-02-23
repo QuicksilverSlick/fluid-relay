@@ -11,8 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 
+import { EventEmitter } from "node:events";
 import { MemoryStorage } from "../../adapters/memory-storage.js";
 import type { AuthContext } from "../../interfaces/auth.js";
+import type { Logger } from "../../interfaces/logger.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import { tick } from "../../testing/adapter-test-helpers.js";
 import type {
@@ -21,7 +23,7 @@ import type {
   BackendSession,
   ConnectOptions,
 } from "../interfaces/backend-adapter.js";
-import { SessionBridge } from "../session-bridge.js";
+import { buildSessionServices } from "../session-coordinator/build-services.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
 
@@ -155,12 +157,16 @@ function _authContext(sessionId: string): AuthContext {
 function createBridgeWithAdapter() {
   const storage = new MemoryStorage();
   const adapter = new MockBackendAdapter();
-  const bridge = new SessionBridge({
-    storage,
-    config: { port: 3456 },
-    logger: noopLogger,
-    adapter,
-  });
+  const emitter = new EventEmitter();
+  const services = buildSessionServices(
+    { storage, config: { port: 3456 }, logger: noopLogger as Logger, adapter },
+    (type, payload) => emitter.emit(type, payload),
+  );
+  const bridge = {
+    connectBackend: (sessionId: string) => services.backendApi.connectBackend(sessionId),
+    getSession: (sessionId: string) => services.infoApi.getSession(sessionId),
+    on: (event: string, listener: (...args: unknown[]) => void) => emitter.on(event, listener),
+  };
   return { bridge, storage, adapter };
 }
 
@@ -211,7 +217,7 @@ function pushTeamToolPair(
 // ---------------------------------------------------------------------------
 
 describe("team event emission (Phase 5.7)", () => {
-  let bridge: SessionBridge;
+  let bridge: ReturnType<typeof createBridgeWithAdapter>["bridge"];
   let adapter: MockBackendAdapter;
   const SESSION_ID = "sess-team-events";
 

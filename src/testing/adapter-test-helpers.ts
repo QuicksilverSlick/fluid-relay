@@ -10,6 +10,7 @@
  * - Layer 2 (scenario): setupInitializedSession, translateAndPush
  */
 
+import { EventEmitter } from "node:events";
 import { translate } from "../adapters/claude/message-translator.js";
 import { MemoryStorage } from "../adapters/memory-storage.js";
 import type { RateLimiterFactory } from "../core/consumer/consumer-gatekeeper.js";
@@ -20,10 +21,17 @@ import type {
   ConnectOptions,
 } from "../core/interfaces/backend-adapter.js";
 import type { MessageTracer } from "../core/messaging/message-tracer.js";
-import { SessionBridge } from "../core/session-bridge.js";
+import type { Session } from "../core/session/session-repository.js";
+import { buildSessionServices } from "../core/session-coordinator/build-services.js";
 import type { UnifiedMessage } from "../core/types/unified-message.js";
 import { createUnifiedMessage } from "../core/types/unified-message.js";
+import type { AuthContext, Authenticator } from "../interfaces/auth.js";
+import type { GitInfoResolver } from "../interfaces/git-resolver.js";
+import type { Logger } from "../interfaces/logger.js";
+import type { SessionStorage } from "../interfaces/storage.js";
+import type { WebSocketLike } from "../interfaces/transport.js";
 import type { CLIMessage } from "../types/cli-messages.js";
+import type { SessionSnapshot } from "../types/session-state.js";
 
 // ─── Layer 1: Plumbing ──────────────────────────────────────────────────────
 
@@ -154,27 +162,93 @@ export const noopLogger = {
 };
 
 /**
- * Create a SessionBridge wired with a MockBackendAdapter.
- * Returns the bridge, storage, and adapter for test assertions.
+ * Minimal bridge-like wrapper returned by createBridgeWithAdapter.
+ * Exposes the same surface as SessionBridge for integration tests.
+ */
+export type BridgeTestWrapper = {
+  connectBackend(
+    sessionId: string,
+    options?: { resume?: boolean; adapterOptions?: Record<string, unknown> },
+  ): Promise<void>;
+  disconnectBackend(sessionId: string): Promise<void>;
+  sendUserMessage(sessionId: string, content: string, options?: Record<string, unknown>): void;
+  sendToBackend(sessionId: string, message: UnifiedMessage): void;
+  restoreFromStorage(): number;
+  getOrCreateSession(sessionId: string): Session;
+  removeSession(sessionId: string): void;
+  getSession(sessionId: string): SessionSnapshot | undefined;
+  seedSessionState(sessionId: string, params: { cwd?: string; model?: string }): void;
+  handleConsumerOpen(ws: WebSocketLike, context: AuthContext): void;
+  handleConsumerMessage(ws: WebSocketLike, sessionId: string, data: string | Buffer): void;
+  handleConsumerClose(ws: WebSocketLike, sessionId: string): void;
+  close(): Promise<void>;
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  off(event: string, listener: (...args: unknown[]) => void): void;
+};
+
+/**
+ * Create session services wired with a MockBackendAdapter.
+ * Returns a bridge-like wrapper, storage, and adapter for test assertions.
  */
 export function createBridgeWithAdapter(options?: {
-  storage?: MemoryStorage;
+  storage?: SessionStorage;
   adapter?: BackendAdapter;
   config?: Record<string, unknown>;
   rateLimiterFactory?: RateLimiterFactory;
   tracer?: MessageTracer;
+  gitResolver?: GitInfoResolver;
+  authenticator?: Authenticator;
 }) {
   const storage = options?.storage ?? new MemoryStorage();
   const adapter = options?.adapter ?? new MockBackendAdapter();
-  const bridge = new SessionBridge({
-    storage,
-    config: { port: 3456, ...options?.config },
-    logger: noopLogger,
-    adapter,
-    rateLimiterFactory: options?.rateLimiterFactory,
-    tracer: options?.tracer,
-  });
-  return { bridge, storage, adapter: adapter as MockBackendAdapter };
+  const emitter = new EventEmitter();
+  const services = buildSessionServices(
+    {
+      storage,
+      config: { port: 3456, ...options?.config },
+      logger: noopLogger as Logger,
+      adapter,
+      rateLimiterFactory: options?.rateLimiterFactory,
+      tracer: options?.tracer,
+      gitResolver: options?.gitResolver,
+      authenticator: options?.authenticator,
+    },
+    (type, payload) => emitter.emit(type, payload),
+  );
+  const bridge: BridgeTestWrapper = {
+    connectBackend: (sessionId, opts) => services.backendApi.connectBackend(sessionId, opts),
+    disconnectBackend: (sessionId) => services.backendApi.disconnectBackend(sessionId),
+    sendUserMessage: (sessionId, content, opts) =>
+      services.runtimeApi.sendUserMessage(sessionId, content, opts as never),
+    sendToBackend: (sessionId, message) => services.runtimeApi.sendToBackend(sessionId, message),
+    restoreFromStorage: () => services.persistenceService.restoreFromStorage(),
+    getOrCreateSession: (sessionId) => services.lifecycleService.getOrCreateSession(sessionId),
+    removeSession: (sessionId) => services.lifecycleService.removeSession(sessionId),
+    getSession: (sessionId) => services.infoApi.getSession(sessionId),
+    seedSessionState: (sessionId, params) => services.infoApi.seedSessionState(sessionId, params),
+    handleConsumerOpen: (ws, context) => services.consumerGateway.handleConsumerOpen(ws, context),
+    handleConsumerMessage: (ws, sessionId, data) =>
+      services.consumerGateway.handleConsumerMessage(ws, sessionId, data),
+    handleConsumerClose: (ws, sessionId) =>
+      services.consumerGateway.handleConsumerClose(ws, sessionId),
+    close: async () => {
+      await services.lifecycleService.closeAllSessions();
+      const stor = services.infoApi.getStorage();
+      if (stor?.flush) {
+        try {
+          await stor.flush();
+        } catch (_) {}
+      }
+      services.core.tracer.destroy();
+    },
+    on: (event, listener) => {
+      emitter.on(event, listener);
+    },
+    off: (event, listener) => {
+      emitter.off(event, listener);
+    },
+  };
+  return { bridge, storage: storage as MemoryStorage, adapter: adapter as MockBackendAdapter };
 }
 
 /**
@@ -182,7 +256,7 @@ export function createBridgeWithAdapter(options?: {
  * Returns the backend session ready for pushing more messages.
  */
 export async function setupInitializedSession(
-  bridge: SessionBridge,
+  bridge: BridgeTestWrapper,
   adapter: MockBackendAdapter,
   sessionId = "sess-1",
 ): Promise<MockBackendSession> {

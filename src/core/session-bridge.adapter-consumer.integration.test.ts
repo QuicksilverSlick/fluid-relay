@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { TokenBucketLimiter } from "../adapters/token-bucket-limiter.js";
 import type { WebSocketLike } from "../interfaces/transport.js";
 import {
+  type BridgeTestWrapper,
   createBridgeWithAdapter,
   type MockBackendAdapter,
   makeAssistantUnifiedMsg,
   makeResultUnifiedMsg,
   tick,
 } from "../testing/adapter-test-helpers.js";
-import type { SessionBridge } from "./session-bridge.js";
 import { createUnifiedMessage } from "./types/unified-message.js";
 
 // ── Mock WebSocket ───────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ function sentOfType(socket: MockSocket, type: string): unknown[] {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("Adapter → SessionBridge → Consumer Integration", () => {
-  let bridge: SessionBridge;
+  let bridge: BridgeTestWrapper;
   let adapter: MockBackendAdapter;
   const sessionId = "integration-session-1";
 

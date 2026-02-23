@@ -2,13 +2,14 @@
  * SessionCoordinator — top-level facade and entry point.
  *
  * Owns the session registry and wires the transport layer (SessionTransportHub,
- * SessionBridge), policy services (ReconnectPolicy, IdlePolicy), and the
+ * session services), policy services (ReconnectPolicy, IdlePolicy), and the
  * DomainEventBus. Each accepted session gets one SessionRuntime. Consumers
- * and backends connect via the bridge; all session lifecycle events flow through
- * this class and are published to the bus for other subsystems to observe.
+ * and backends connect via the services; all session lifecycle events flow
+ * through this class and are published to the bus for other subsystems to observe.
  */
 
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import type WebSocket from "ws";
 import type { Authenticator } from "../interfaces/auth.js";
 import type { GitInfoResolver } from "../interfaces/git-resolver.js";
@@ -24,7 +25,7 @@ import type {
 import type { ProviderConfig, ResolvedConfig } from "../types/config.js";
 import { resolveConfig } from "../types/config.js";
 import type { SessionCoordinatorEventMap } from "../types/events.js";
-import type { SessionInfo } from "../types/session-state.js";
+import type { SessionInfo, SessionSnapshot } from "../types/session-state.js";
 import { noopLogger } from "../utils/noop-logger.js";
 import { redactSecrets } from "../utils/redact-secrets.js";
 import type { RateLimiterFactory } from "./consumer/consumer-gatekeeper.js";
@@ -48,10 +49,11 @@ import type { MessageTracer } from "./messaging/message-tracer.js";
 import { IdlePolicy } from "./policies/idle-policy.js";
 import { ReconnectPolicy } from "./policies/reconnect-policy.js";
 import { SessionTransportHub } from "./session/session-transport-hub.js";
-import { SessionBridge } from "./session-bridge.js";
+import { buildSessionServices } from "./session-coordinator/build-services.js";
+import type { SessionServices } from "./session-services.js";
 
 /**
- * Facade wiring SessionBridge + SessionLauncher together.
+ * Facade wiring session services + SessionLauncher together.
  *
  * Auto-wires:
  * - backend:session_id → registry.setBackendSessionId
@@ -77,12 +79,47 @@ export interface SessionCoordinatorOptions {
   defaultAdapterName?: string;
 }
 
+/**
+ * Minimal bridge-compatible facade exposed as `coordinator.bridge`.
+ *
+ * Provides the bridge methods referenced by E2E tests and test utilities
+ * without requiring a full `SessionBridge` instance. The backing services
+ * are injected at construction time.
+ */
+export interface BridgeFacade {
+  // State queries
+  isBackendConnected(sessionId: string): boolean;
+  getSession(sessionId: string): SessionSnapshot | undefined;
+  // Seeding
+  seedSessionState(sessionId: string, params: { cwd?: string; model?: string }): void;
+  setAdapterName(sessionId: string, name: string): void;
+  // Broadcast
+  broadcastProcessOutput(sessionId: string, stream: "stdout" | "stderr", data: string): void;
+  broadcastNameUpdate(sessionId: string, name: string): void;
+  // Session rename (broadcast + event emission)
+  renameSession(sessionId: string, name: string): void;
+  // Slash commands
+  executeSlashCommand(
+    sessionId: string,
+    command: string,
+  ): Promise<{ content: string; source: "emulated" } | null>;
+  // Event subscriptions (EventSource interface)
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  off(event: string, listener: (...args: unknown[]) => void): void;
+  // Event emission (allows tests to simulate bridge events)
+  emit(event: string, ...args: unknown[]): void;
+}
+
 export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEventMap> {
-  readonly bridge: SessionBridge;
+  /** Thin bridge-compatible facade for backward-compat access by E2E tests and test utils. */
+  readonly bridge: BridgeFacade;
   readonly launcher: SessionLauncher;
   readonly registry: SessionRegistry;
   readonly domainEvents: DomainEventBus;
 
+  private readonly services: SessionServices;
+  /** Plain EventEmitter for bridge events — forwarded to this coordinator emitter via CoordinatorEventRelay. */
+  private readonly _bridgeEmitter: EventEmitter;
   private adapterResolver: AdapterResolver | null;
   private _defaultAdapterName: string;
   private config: ResolvedConfig;
@@ -106,25 +143,98 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     this._defaultAdapterName = options.defaultAdapterName ?? "claude";
     this.domainEvents = new DomainEventBus();
 
-    // ── SessionBridge (message routing + runtime map) ───────────────────
-    this.bridge = new SessionBridge({
-      storage: options.storage,
-      gitResolver: options.gitResolver,
-      authenticator: options.authenticator,
-      logger: options.logger,
-      config: options.config,
-      metrics: options.metrics,
-      adapter: options.adapter,
-      adapterResolver: options.adapterResolver,
-      rateLimiterFactory: options.rateLimiterFactory,
-      tracer: options.tracer,
-    });
+    // ── Bridge event emitter (replaces SessionBridge as event source) ────
+    this._bridgeEmitter = new EventEmitter();
+    this._bridgeEmitter.setMaxListeners(100);
 
-    // ── Transport + policies ────────────────────────────────────────────
+    // ── Session services (message routing + runtime map) ─────────────────
+    this.services = buildSessionServices(
+      {
+        storage: options.storage,
+        gitResolver: options.gitResolver,
+        authenticator: options.authenticator,
+        logger: options.logger,
+        config: options.config,
+        metrics: options.metrics,
+        adapter: options.adapter,
+        adapterResolver: options.adapterResolver,
+        rateLimiterFactory: options.rateLimiterFactory,
+        tracer: options.tracer,
+      },
+      (type, payload) => this._bridgeEmitter.emit(type, payload),
+    );
+
+    // ── Bridge compat facade ─────────────────────────────────────────────
+    // Use a local `bridge` so that `renameSession` can reference
+    // `bridge.broadcastNameUpdate` and be intercepted by test spies.
+    const bridge: BridgeFacade = {
+      isBackendConnected: (sessionId) => this.services.backendApi.isBackendConnected(sessionId),
+      getSession: (sessionId) => this.services.infoApi.getSession(sessionId),
+      seedSessionState: (sessionId, params) =>
+        this.services.infoApi.seedSessionState(sessionId, params),
+      setAdapterName: (sessionId, name) => this.services.infoApi.setAdapterName(sessionId, name),
+      broadcastProcessOutput: (sessionId, stream, data) =>
+        this.services.broadcastApi.broadcastProcessOutput(sessionId, stream, data),
+      broadcastNameUpdate: (sessionId, name) =>
+        this.services.broadcastApi.broadcastNameUpdate(sessionId, name),
+      renameSession: (sessionId, name) => {
+        bridge.broadcastNameUpdate(sessionId, name);
+        this._bridgeEmitter.emit("session:renamed", { sessionId, name });
+      },
+      executeSlashCommand: (sessionId, command) =>
+        this.services.runtimeApi.executeSlashCommand(sessionId, command),
+      on: (event, listener) => this._bridgeEmitter.on(event, listener),
+      off: (event, listener) => this._bridgeEmitter.off(event, listener),
+      emit: (event, ...args) => {
+        this._bridgeEmitter.emit(event, ...args);
+      },
+    };
+    this.bridge = bridge;
+
+    // ── Transport + policies ─────────────────────────────────────────────
     this.launcher = options.launcher;
     this.registry = options.registry ?? options.launcher;
+
+    // Structural adapters — the service sub-APIs satisfy the port interfaces
+    // via structural typing, no explicit casts needed.
+    const bridgeTransport = {
+      handleConsumerOpen: (
+        ws: import("../interfaces/transport.js").WebSocketLike,
+        ctx: import("../interfaces/auth.js").AuthContext,
+      ) => this.services.consumerGateway.handleConsumerOpen(ws, ctx),
+      handleConsumerMessage: (
+        ws: import("../interfaces/transport.js").WebSocketLike,
+        sessionId: string,
+        data: string | Buffer,
+      ) => this.services.consumerGateway.handleConsumerMessage(ws, sessionId, data),
+      handleConsumerClose: (
+        ws: import("../interfaces/transport.js").WebSocketLike,
+        sessionId: string,
+      ) => this.services.consumerGateway.handleConsumerClose(ws, sessionId),
+      setAdapterName: (sessionId: string, name: string) =>
+        this.services.infoApi.setAdapterName(sessionId, name),
+      connectBackend: (
+        sessionId: string,
+        opts?: { resume?: boolean; adapterOptions?: Record<string, unknown> },
+      ) => this.services.backendApi.connectBackend(sessionId, opts),
+    };
+
+    const bridgeLifecycle = {
+      getAllSessions: () => this.services.infoApi.getAllSessions(),
+      getSession: (sessionId: string) => this.services.infoApi.getSession(sessionId),
+      closeSession: (sessionId: string) => this.services.lifecycleService.closeSession(sessionId),
+      applyPolicyCommand: (
+        sessionId: string,
+        command: import("./interfaces/runtime-commands.js").PolicyCommand,
+      ) => this.services.runtimeApi.applyPolicyCommand(sessionId, command),
+      broadcastWatchdogState: (
+        sessionId: string,
+        watchdog: { gracePeriodMs: number; startedAt: number } | null,
+      ) => this.services.broadcastApi.broadcastWatchdogState(sessionId, watchdog),
+    };
+
     this.transportHub = new SessionTransportHub({
-      bridge: this.bridge,
+      bridge: bridgeTransport,
       launcher: this.launcher,
       adapter: options.adapter ?? null,
       adapterResolver: options.adapterResolver ?? null,
@@ -135,13 +245,13 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     });
     this.reconnectController = new ReconnectPolicy({
       launcher: this.launcher,
-      bridge: this.bridge,
+      bridge: bridgeLifecycle,
       logger: this.logger,
       reconnectGracePeriodMs: this.config.reconnectGracePeriodMs,
       domainEvents: this.domainEvents,
     });
     this.idleSessionReaper = new IdlePolicy({
-      bridge: this.bridge,
+      bridge: bridgeLifecycle,
       logger: this.logger,
       idleSessionTimeoutMs: this.config.idleSessionTimeoutMs,
       domainEvents: this.domainEvents,
@@ -151,13 +261,17 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     this.startupRestoreService = new StartupRestoreService({
       launcher: this.launcher,
       registry: this.registry,
-      bridge: this.bridge,
+      bridge: { restoreFromStorage: () => this.services.persistenceService.restoreFromStorage() },
       logger: this.logger,
     });
     this.recoveryService = new BackendRecoveryService({
       launcher: this.launcher,
       registry: this.registry,
-      bridge: this.bridge,
+      bridge: {
+        isBackendConnected: (sessionId) => this.services.backendApi.isBackendConnected(sessionId),
+        connectBackend: (sessionId, opts) =>
+          this.services.backendApi.connectBackend(sessionId, opts),
+      },
       logger: this.logger,
       relaunchDedupMs: this.config.relaunchDedupMs,
       initializeTimeoutMs: this.config.initializeTimeoutMs,
@@ -170,18 +284,21 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         // biome-ignore lint/suspicious/noExplicitAny: dynamic event forwarding
         this.emit(event as any, payload as any),
       domainEvents: this.domainEvents,
-      bridge: this.bridge,
+      bridge: this._bridgeEmitter,
       launcher: this.launcher,
       handlers: {
         onProcessSpawned: (payload) => {
           const { sessionId } = payload;
           const info = this.registry.getSession(sessionId);
           if (!info) return;
-          this.bridge.seedSessionState(sessionId, {
+          this.services.infoApi.seedSessionState(sessionId, {
             cwd: info.cwd,
             model: info.model,
           });
-          this.bridge.setAdapterName(sessionId, info.adapterName ?? this.defaultAdapterName);
+          this.services.infoApi.setAdapterName(
+            sessionId,
+            info.adapterName ?? this.defaultAdapterName,
+          );
         },
         onBackendSessionId: (payload) => {
           this.registry.setBackendSessionId(payload.sessionId, payload.backendSessionId);
@@ -190,7 +307,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           this.registry.markConnected(payload.sessionId);
         },
         onProcessResumeFailed: (payload) => {
-          this.bridge.broadcastResumeFailedToConsumers(payload.sessionId);
+          this.services.broadcastApi.broadcastResumeFailedToConsumers(payload.sessionId);
         },
         onProcessStdout: (payload) => {
           this.handleProcessOutput(payload.sessionId, "stdout", payload.data);
@@ -200,7 +317,10 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         },
         onProcessExited: (payload) => {
           if (payload.circuitBreaker) {
-            this.bridge.broadcastCircuitBreakerState(payload.sessionId, payload.circuitBreaker);
+            this.services.broadcastApi.broadcastCircuitBreakerState(
+              payload.sessionId,
+              payload.circuitBreaker,
+            );
           }
         },
         onFirstTurnCompleted: (payload) => {
@@ -217,7 +337,9 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           this.processLogService.cleanup(payload.sessionId);
         },
         onCapabilitiesTimeout: (payload) => {
-          this.bridge.applyPolicyCommand(payload.sessionId, { type: "capabilities_timeout" });
+          this.services.runtimeApi.applyPolicyCommand(payload.sessionId, {
+            type: "capabilities_timeout",
+          });
         },
         onBackendRelaunchNeeded: (payload) => {
           void this.recoveryService.handleRelaunchNeeded(payload.sessionId);
@@ -251,11 +373,11 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     if (!adapter || isInvertedConnectionAdapter(adapter)) {
       const launchResult = this.launcher.launch({ cwd, model: options.model });
       launchResult.adapterName = adapterName;
-      this.bridge.seedSessionState(launchResult.sessionId, {
+      this.services.infoApi.seedSessionState(launchResult.sessionId, {
         cwd: launchResult.cwd,
         model: options.model,
       });
-      this.bridge.setAdapterName(launchResult.sessionId, adapterName);
+      this.services.infoApi.setAdapterName(launchResult.sessionId, adapterName);
       return {
         sessionId: launchResult.sessionId,
         cwd: launchResult.cwd,
@@ -277,11 +399,11 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       adapterName,
     });
 
-    this.bridge.seedSessionState(sessionId, { cwd, model: options.model });
-    this.bridge.setAdapterName(sessionId, adapterName);
+    this.services.infoApi.seedSessionState(sessionId, { cwd, model: options.model });
+    this.services.infoApi.setAdapterName(sessionId, adapterName);
 
     try {
-      await this.bridge.connectBackend(sessionId, {
+      await this.services.backendApi.connectBackend(sessionId, {
         adapterOptions: {
           cwd,
           initializeTimeoutMs: this.config.initializeTimeoutMs,
@@ -291,7 +413,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       this.registry.markConnected(sessionId);
     } catch (err) {
       this.registry.removeSession(sessionId);
-      void this.bridge.closeSession(sessionId);
+      void this.services.lifecycleService.closeSession(sessionId);
       throw err;
     }
 
@@ -305,8 +427,8 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
 
   /**
    * Start the session coordinator:
-   * 1. Wire bridge + launcher events
-   * 2. Restore from storage (launcher first, then bridge — I6)
+   * 1. Wire services + launcher events
+   * 2. Restore from storage (launcher first, then services — I6)
    * 3. Start reconnection watchdog (I4)
    * 4. Start WebSocket server if provided
    */
@@ -338,7 +460,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     await this.transportHub.stop();
 
     await this.launcher.killAll();
-    await this.bridge.close();
+    await this.closeSessions();
     await this.adapterResolver?.stopAll?.();
     this.started = false;
   }
@@ -360,7 +482,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     this.recoveryService.clearDedupState(sessionId);
 
     // Close WS connections and remove per-session JSON from storage
-    await this.bridge.closeSession(sessionId);
+    await this.services.lifecycleService.closeSession(sessionId);
 
     // Remove from registry's in-memory map and re-persist
     this.registry.removeSession(sessionId);
@@ -368,7 +490,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     return true;
   }
 
-  /** Rename a session through the coordinator/bridge command path. */
+  /** Rename a session through the coordinator command path. */
   renameSession(sessionId: string, name: string): SessionInfo | null {
     const existing = this.registry.getSession(sessionId);
     if (!existing) return null;
@@ -392,21 +514,36 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
 
   /** Get models reported by the CLI's initialize response. */
   getSupportedModels(sessionId: string): InitializeModel[] {
-    return this.bridge.getSupportedModels(sessionId);
+    return this.services.runtimeApi.getSupportedModels(sessionId);
   }
 
   /** Get commands reported by the CLI's initialize response. */
   getSupportedCommands(sessionId: string): InitializeCommand[] {
-    return this.bridge.getSupportedCommands(sessionId);
+    return this.services.runtimeApi.getSupportedCommands(sessionId);
   }
 
   /** Get account info reported by the CLI's initialize response. */
   getAccountInfo(sessionId: string): InitializeAccount | null {
-    return this.bridge.getAccountInfo(sessionId);
+    return this.services.runtimeApi.getAccountInfo(sessionId);
   }
 
   /** Delegates to ReconnectController. Kept as named method for E2E test access. */
   private startReconnectWatchdog(): void {
     this.reconnectController.start();
+  }
+
+  /** Close all sessions and flush storage (extracted from the old SessionBridge.close()). */
+  private async closeSessions(): Promise<void> {
+    await this.services.lifecycleService.closeAllSessions();
+    const storage = this.services.infoApi.getStorage();
+    if (storage?.flush) {
+      try {
+        await storage.flush();
+      } catch (error) {
+        this.logger.warn("Failed to flush storage during shutdown", { error });
+      }
+    }
+    this.services.core.tracer.destroy();
+    this.removeAllListeners();
   }
 }

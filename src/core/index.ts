@@ -42,7 +42,6 @@ export {
 } from "./session/session-lifecycle.js";
 export { SessionRepository } from "./session/session-repository.js";
 export { SessionRuntime } from "./session/session-runtime.js";
-export { SessionBridge } from "./session-bridge.js";
 export { SessionCoordinator, type SessionCoordinatorOptions } from "./session-coordinator.js";
 export type {
   CoreSessionState,
