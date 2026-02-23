@@ -12,16 +12,16 @@ import type { GitInfoResolver } from "../interfaces/git-resolver.js";
 import type { Logger } from "../interfaces/logger.js";
 import type { MetricsCollector } from "../interfaces/metrics.js";
 import type { ResolvedConfig } from "../types/config.js";
-import type { BackendApi } from "./bridge/backend-api.js";
-import type { RuntimeApi } from "./bridge/runtime-api.js";
-import type { SessionBroadcastApi } from "./bridge/session-broadcast-api.js";
-import type { SessionInfoApi } from "./bridge/session-info-api.js";
-import type { SessionLifecycleService } from "./bridge/session-lifecycle-service.js";
-import type { SessionPersistenceService } from "./bridge/session-persistence-service.js";
 import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 import type { ConsumerGateway } from "./consumer/consumer-gateway.js";
 import type { MessageTracer } from "./messaging/message-tracer.js";
 import type { SessionRepository } from "./session/session-repository.js";
+import type { BackendApi } from "./session-coordinator/backend-api.js";
+import type { RuntimeApi } from "./session-coordinator/runtime-api.js";
+import type { SessionBroadcastApi } from "./session-coordinator/session-broadcast-api.js";
+import type { SessionInfoApi } from "./session-coordinator/session-info-api.js";
+import type { SessionLifecycleService } from "./session-coordinator/session-lifecycle-service.js";
+import type { SessionPersistenceService } from "./session-coordinator/session-persistence-service.js";
 
 /** Core infra context threaded through all session services. */
 export type BridgeCoreContext = {

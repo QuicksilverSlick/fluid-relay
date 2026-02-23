@@ -212,7 +212,7 @@ export function createConsumerGatewayDeps(params: {
       params.runtimeAccessors.getPendingPermissions(session),
     getQueuedMessage: (session: Session) => params.runtimeAccessors.getQueuedMessage(session),
     isBackendConnected: (session: Session) => params.runtimeAccessors.isBackendConnected(session),
-    registerConsumer: (session: Session, ws: WebSocketLike, identity) =>
+    registerConsumer: (session: Session, ws: WebSocketLike, identity: ConsumerIdentity) =>
       params.runtimeAccessors.addConsumer(session, ws, identity),
     unregisterConsumer: (session: Session, ws: WebSocketLike) =>
       params.runtimeAccessors.removeConsumer(session, ws),

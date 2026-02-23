@@ -19,27 +19,6 @@ import type { ProviderConfig } from "../../types/config.js";
 import { resolveConfig } from "../../types/config.js";
 import { noopLogger } from "../../utils/noop-logger.js";
 import { BackendConnector } from "../backend/backend-connector.js";
-import { BackendApi } from "../bridge/backend-api.js";
-import { forwardBridgeEventWithLifecycle } from "../bridge/bridge-event-forwarder.js";
-import {
-  generateSlashRequestId,
-  generateTraceId,
-  tracedNormalizeInbound,
-} from "../bridge/message-tracing-utils.js";
-import { RuntimeApi } from "../bridge/runtime-api.js";
-import { createRuntimeManager } from "../bridge/runtime-manager-factory.js";
-import {
-  createBackendConnectorDeps,
-  createCapabilitiesPolicyStateAccessors,
-  createConsumerGatewayDeps,
-  createConsumerPlaneRuntimeAccessors,
-  createQueueStateAccessors,
-} from "../bridge/session-bridge-deps-factory.js";
-import { SessionBroadcastApi } from "../bridge/session-broadcast-api.js";
-import { SessionInfoApi } from "../bridge/session-info-api.js";
-import { SessionLifecycleService } from "../bridge/session-lifecycle-service.js";
-import { SessionPersistenceService } from "../bridge/session-persistence-service.js";
-import { createSlashService } from "../bridge/slash-service-factory.js";
 import { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
 import {
   ConsumerBroadcaster,
@@ -47,7 +26,7 @@ import {
 } from "../consumer/consumer-broadcaster.js";
 import type { RateLimiterFactory } from "../consumer/consumer-gatekeeper.js";
 import { ConsumerGatekeeper } from "../consumer/consumer-gatekeeper.js";
-import { ConsumerGateway } from "../consumer/consumer-gateway.js";
+import { ConsumerGateway, type ConsumerGatewayDeps } from "../consumer/consumer-gateway.js";
 import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "../interfaces/backend-adapter.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
@@ -62,6 +41,27 @@ import { SessionRepository } from "../session/session-repository.js";
 import type { SessionServices } from "../session-services.js";
 import { SlashCommandRegistry } from "../slash/slash-command-registry.js";
 import { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
+import { BackendApi } from "./backend-api.js";
+import { forwardBridgeEventWithLifecycle } from "./bridge-event-forwarder.js";
+import {
+  generateSlashRequestId,
+  generateTraceId,
+  tracedNormalizeInbound,
+} from "./message-tracing-utils.js";
+import { RuntimeApi } from "./runtime-api.js";
+import { createRuntimeManager } from "./runtime-manager-factory.js";
+import { SessionBroadcastApi } from "./session-broadcast-api.js";
+import {
+  createBackendConnectorDeps,
+  createCapabilitiesPolicyStateAccessors,
+  createConsumerGatewayDeps,
+  createConsumerPlaneRuntimeAccessors,
+  createQueueStateAccessors,
+} from "./session-deps-factory.js";
+import { SessionInfoApi } from "./session-info-api.js";
+import { SessionLifecycleService } from "./session-lifecycle-service.js";
+import { SessionPersistenceService } from "./session-persistence-service.js";
+import { createSlashService } from "./slash-service-factory.js";
 
 /** All options accepted by buildSessionServices (formerly SessionBridgeInitOptions). */
 export type SessionBridgeInitOptions = {
@@ -266,7 +266,8 @@ export function buildSessionServices(
       gitTracker,
       logger,
       metrics,
-      emit: (type, payload) => emitEvent(type, payload as unknown),
+      emit: ((type: string, payload: unknown) =>
+        emitEvent(type, payload)) as ConsumerGatewayDeps["emit"],
       routeConsumerMessage: (session, msg, ws) =>
         runtimeApi.handleInboundCommand(session.id, msg, ws),
       maxConsumerMessageSize: MAX_CONSUMER_MESSAGE_SIZE,
