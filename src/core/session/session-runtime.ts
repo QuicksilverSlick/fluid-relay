@@ -639,32 +639,21 @@ export class SessionRuntime {
   }
 
   private handleSystemSignal(signal: SystemSignal): void {
-    switch (signal.kind) {
-      case "BACKEND_CONNECTED":
-        this.transitionLifecycle("active", "signal:backend:connected");
-        break;
-      case "BACKEND_DISCONNECTED":
-        this.transitionLifecycle("degraded", "signal:backend:disconnected");
-        break;
-      case "SESSION_CLOSED":
-        this.transitionLifecycle("closed", "signal:session:closed");
-        break;
-      case "RECONNECT_TIMEOUT":
-        this.transitionLifecycle("degraded", "policy:reconnect_timeout");
-        break;
-      case "IDLE_REAP":
-        this.transitionLifecycle("closing", "policy:idle_reap");
-        break;
-      case "CAPABILITIES_TIMEOUT":
-        // Advisory — no direct state mutation yet.
-        break;
-      case "CONSUMER_CONNECTED":
-      case "CONSUMER_DISCONNECTED":
-      case "GIT_INFO_RESOLVED":
-      case "CAPABILITIES_READY":
-        // Handled by higher-level logic outside SessionRuntime for now.
-        break;
+    const prevData = this.session.data;
+    const [nextData, effects] = sessionReducer(
+      this.session.data,
+      { type: "SYSTEM_SIGNAL", signal },
+      this.session.teamCorrelationBuffer,
+    );
+    if (nextData !== prevData) {
+      this.session = { ...this.session, data: nextData };
+      this.markDirty();
     }
+    executeEffects(effects, this.session, {
+      broadcaster: this.deps.broadcaster,
+      emitEvent: this.deps.emitEvent,
+      queueHandler: this.deps.queueHandler,
+    });
   }
 
   async executeSlashCommand(
