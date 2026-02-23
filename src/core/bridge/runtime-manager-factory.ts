@@ -15,7 +15,6 @@ export interface RuntimeManagerFactoryDeps {
   emitPermissionResolved: SessionRuntimeDeps["emitPermissionResolved"];
   onSessionSeeded: SessionRuntimeDeps["onSessionSeeded"];
   onInvalidLifecycleTransition: SessionRuntimeDeps["onInvalidLifecycleTransition"];
-  routeBackendMessage: SessionRuntimeDeps["routeBackendMessage"];
   canMutateSession?: SessionRuntimeDeps["canMutateSession"];
   onMutationRejected?: SessionRuntimeDeps["onMutationRejected"];
   emitEvent: SessionRuntimeDeps["emitEvent"];
@@ -40,7 +39,6 @@ export function createRuntimeManager(deps: RuntimeManagerFactoryDeps): RuntimeMa
         emitPermissionResolved: deps.emitPermissionResolved,
         onSessionSeeded: deps.onSessionSeeded,
         onInvalidLifecycleTransition: deps.onInvalidLifecycleTransition,
-        routeBackendMessage: deps.routeBackendMessage,
         canMutateSession: deps.canMutateSession,
         onMutationRejected: deps.onMutationRejected,
         emitEvent: deps.emitEvent,

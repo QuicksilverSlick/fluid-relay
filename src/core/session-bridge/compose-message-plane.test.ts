@@ -104,7 +104,6 @@ describe("composeMessagePlane", () => {
     });
 
     expect(plane.lifecycleService).toBeDefined();
-    expect(plane.messageRouter).toBeDefined();
     expect(plane.slashService).toBeDefined();
     expect(plane.queueHandler).toBeDefined();
 

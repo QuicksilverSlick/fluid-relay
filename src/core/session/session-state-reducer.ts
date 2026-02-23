@@ -1,21 +1,30 @@
 /**
  * Session State Reducer
  *
- * Pure function that applies a UnifiedMessage to SessionState, returning a new
- * state object. Operates only on core types — no adapter dependencies.
+ * Pure function that applies a UnifiedMessage to SessionData, returning a
+ * `[SessionData, Effect[]]` tuple. No adapter dependencies, no side effects.
+ *
+ * - State transitions live in `reduce()` / field-specific sub-reducers.
+ * - Effects capture everything the caller should do: broadcasts, event
+ *   emissions, queued-message flushes, etc.
  *
  * Team tool_use blocks are buffered on arrival; tool_result blocks
  * are correlated with buffered tool_uses to drive team state transitions.
- *
- * No side effects — does not emit events, persist, or broadcast.
  */
 
 import type { PermissionRequest } from "../../types/cli-messages.js";
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
+import { CONSUMER_PROTOCOL_VERSION } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
 import {
   mapAssistantMessage,
+  mapAuthStatus,
+  mapConfigurationChange,
+  mapPermissionRequest,
   mapResultMessage,
+  mapSessionLifecycle,
+  mapStreamEvent,
+  mapToolProgress,
   mapToolUseSummary,
 } from "../messaging/consumer-message-mapper.js";
 import { reduceTeamState } from "../team/team-state-reducer.js";
@@ -25,12 +34,17 @@ import { recognizeTeamToolUses } from "../team/team-tool-recognizer.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { isToolResultContent } from "../types/unified-message.js";
+import type { Effect } from "./effect-types.js";
 import type { SessionData } from "./session-data.js";
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /**
  * Outer reducer — operates on full SessionData.
- * Delegates to reduce() for the state field.
- * Additional fields (lastStatus, messageHistory, etc.) are migrated here one by one.
+ * Returns `[nextData, effects]` where effects describe all side effects to
+ * be executed by the caller (broadcasts, event emissions, etc.).
  *
  * @param correlationBuffer — per-session buffer from session.teamCorrelationBuffer.
  *   Callers (SessionRuntime) must provide this; the reducer itself stays pure.
@@ -39,34 +53,208 @@ export function reduceSessionData(
   data: SessionData,
   message: UnifiedMessage,
   correlationBuffer: TeamToolCorrelationBuffer,
-): SessionData {
-  let changed = false;
-
+): [SessionData, Effect[]] {
   const nextState = reduce(data.state, message, correlationBuffer);
-  if (nextState !== data.state) changed = true;
-
   const nextLastStatus = reduceLastStatus(data.lastStatus, message);
-  if (nextLastStatus !== data.lastStatus) changed = true;
-
   const nextMessageHistory = reduceMessageHistory(data.messageHistory, message);
-  if (nextMessageHistory !== data.messageHistory) changed = true;
-
   const nextBackendSessionId = reduceBackendSessionId(data.backendSessionId, message);
-  if (nextBackendSessionId !== data.backendSessionId) changed = true;
-
   const nextPendingPermissions = reducePendingPermissions(data.pendingPermissions, message);
-  if (nextPendingPermissions !== data.pendingPermissions) changed = true;
 
-  if (!changed) return data;
-  return {
-    ...data,
-    state: nextState,
-    lastStatus: nextLastStatus,
-    messageHistory: nextMessageHistory,
-    backendSessionId: nextBackendSessionId,
-    pendingPermissions: nextPendingPermissions,
-  };
+  const changed =
+    nextState !== data.state ||
+    nextLastStatus !== data.lastStatus ||
+    nextMessageHistory !== data.messageHistory ||
+    nextBackendSessionId !== data.backendSessionId ||
+    nextPendingPermissions !== data.pendingPermissions;
+
+  const nextData: SessionData = changed
+    ? {
+        ...data,
+        state: nextState,
+        lastStatus: nextLastStatus,
+        messageHistory: nextMessageHistory,
+        backendSessionId: nextBackendSessionId,
+        pendingPermissions: nextPendingPermissions,
+      }
+    : data;
+
+  const effects = buildEffects(data, message, nextData);
+  return [nextData, effects];
 }
+
+// ---------------------------------------------------------------------------
+// Effect builder — pure, depends only on prev/next data and the message
+// ---------------------------------------------------------------------------
+
+function buildEffects(
+  prevData: SessionData,
+  message: UnifiedMessage,
+  nextData: SessionData,
+): Effect[] {
+  const effects: Effect[] = [];
+
+  switch (message.type) {
+    case "session_init": {
+      effects.push({
+        type: "BROADCAST",
+        message: {
+          type: "session_init",
+          session: nextData.state,
+          protocol_version: CONSUMER_PROTOCOL_VERSION,
+        },
+      });
+      effects.push({ type: "AUTO_SEND_QUEUED" });
+      break;
+    }
+
+    case "status_change": {
+      const { status: _s, ...rest } = message.metadata;
+      const filtered = Object.fromEntries(Object.entries(rest).filter(([, v]) => v != null));
+      effects.push({
+        type: "BROADCAST",
+        message: {
+          type: "status_change",
+          status: nextData.lastStatus,
+          ...(Object.keys(filtered).length > 0 && { metadata: filtered }),
+        },
+      });
+      if (message.metadata.permissionMode != null) {
+        effects.push({
+          type: "BROADCAST_SESSION_UPDATE",
+          patch: { permissionMode: nextData.state.permissionMode },
+        });
+      }
+      // Auto-send on "idle" transition
+      if (nextData.lastStatus === "idle" && prevData.lastStatus !== "idle") {
+        effects.push({ type: "AUTO_SEND_QUEUED" });
+      }
+      break;
+    }
+
+    case "assistant": {
+      // Only broadcast if history actually changed (dedup guard)
+      if (nextData.messageHistory !== prevData.messageHistory) {
+        const mapped = mapAssistantMessage(message);
+        if (mapped.type === "assistant") {
+          effects.push({ type: "BROADCAST", message: mapped });
+        }
+      }
+      break;
+    }
+
+    case "result": {
+      effects.push({ type: "BROADCAST", message: mapResultMessage(message) });
+      effects.push({ type: "AUTO_SEND_QUEUED" });
+      // Emit first-turn completion event when num_turns reaches 1
+      const numTurns = message.metadata?.num_turns as number | undefined;
+      const isError = message.metadata?.is_error as boolean | undefined;
+      if (numTurns === 1 && !isError) {
+        const firstUser = prevData.messageHistory.find((e) => e.type === "user_message");
+        if (firstUser && firstUser.type === "user_message") {
+          // sessionId will be injected by executeEffects
+          effects.push({
+            type: "EMIT_EVENT",
+            eventType: "session:first_turn_completed",
+            payload: { firstUserMessage: firstUser.content },
+          });
+        }
+      }
+      break;
+    }
+
+    case "stream_event": {
+      const event = message.metadata?.event as { type?: string } | undefined;
+      const parentToolUseId = message.metadata?.parent_tool_use_id;
+      // Infer "running" from message_start on the main session only
+      if (event?.type === "message_start" && !parentToolUseId) {
+        effects.push({
+          type: "BROADCAST",
+          message: { type: "status_change", status: nextData.lastStatus },
+        });
+      }
+      effects.push({ type: "BROADCAST", message: mapStreamEvent(message) });
+      break;
+    }
+
+    case "permission_request": {
+      const mapped = mapPermissionRequest(message);
+      if (mapped) {
+        effects.push({
+          type: "BROADCAST_TO_PARTICIPANTS",
+          message: { type: "permission_request", request: mapped.consumerPerm },
+        });
+        // sessionId will be injected by executeEffects
+        effects.push({
+          type: "EMIT_EVENT",
+          eventType: "permission:requested",
+          payload: { request: mapped.cliPerm },
+        });
+      }
+      break;
+    }
+
+    case "tool_progress": {
+      effects.push({ type: "BROADCAST", message: mapToolProgress(message) });
+      break;
+    }
+
+    case "tool_use_summary": {
+      // Only broadcast if history changed (dedup guard)
+      if (nextData.messageHistory !== prevData.messageHistory) {
+        const mapped = mapToolUseSummary(message);
+        if (mapped.type === "tool_use_summary") {
+          effects.push({ type: "BROADCAST", message: mapped });
+        }
+      }
+      break;
+    }
+
+    case "auth_status": {
+      effects.push({ type: "BROADCAST", message: mapAuthStatus(message) });
+      const m = message.metadata;
+      // sessionId will be injected by executeEffects
+      effects.push({
+        type: "EMIT_EVENT",
+        eventType: "auth_status",
+        payload: {
+          isAuthenticating: m.isAuthenticating as boolean,
+          output: m.output as string[] | undefined,
+          error: m.error as string | undefined,
+        },
+      });
+      break;
+    }
+
+    case "configuration_change": {
+      effects.push({ type: "BROADCAST", message: mapConfigurationChange(message) });
+      const m = message.metadata;
+      const patch: Partial<SessionState> = {};
+      if (typeof m.model === "string") patch.model = m.model;
+      const modeValue =
+        typeof m.mode === "string"
+          ? m.mode
+          : typeof m.permissionMode === "string"
+            ? m.permissionMode
+            : undefined;
+      if (modeValue !== undefined) patch.permissionMode = modeValue;
+      if (Object.keys(patch).length > 0) {
+        effects.push({ type: "BROADCAST_SESSION_UPDATE", patch });
+      }
+      break;
+    }
+
+    case "session_lifecycle": {
+      effects.push({ type: "BROADCAST", message: mapSessionLifecycle(message) });
+      break;
+    }
+  }
+
+  return effects;
+}
+
+// ---------------------------------------------------------------------------
+// Field reducers
+// ---------------------------------------------------------------------------
 
 function reduceBackendSessionId(
   current: string | undefined,
@@ -127,7 +315,7 @@ function reduceLastStatus(
 }
 
 /**
- * Apply a UnifiedMessage to session state, returning a new state.
+ * Apply a UnifiedMessage to SessionState, returning a new state.
  * Returns the original state reference if no fields changed.
  *
  * @param correlationBuffer — required; callers must provide a per-session buffer
@@ -158,7 +346,7 @@ export function reduce(
 }
 
 // ---------------------------------------------------------------------------
-// Individual reducers
+// State sub-reducers
 // ---------------------------------------------------------------------------
 
 function reduceSessionInit(state: SessionState, msg: UnifiedMessage): SessionState {

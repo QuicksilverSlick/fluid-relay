@@ -13,7 +13,6 @@ import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "../interfaces/backend-adapter.js";
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
-import type { UnifiedMessageRouterDeps } from "../messaging/unified-message-router.js";
 import type { GitInfoTracker } from "../session/git-info-tracker.js";
 
 import type { SessionData } from "../session/session-data.js";
@@ -120,16 +119,6 @@ export function createConsumerPlaneRuntimeAccessors(
     isBackendConnected: (session: Session) => runtime(session).isBackendConnected(),
     addConsumer: (session: Session, ws: WebSocketLike, identity: ConsumerIdentity) =>
       runtime(session).addConsumer(ws, identity),
-  };
-}
-
-export function createUnifiedMessageRouterDeps(params: {
-  broadcaster: ConsumerBroadcaster;
-  tracer: MessageTracer;
-}): UnifiedMessageRouterDeps {
-  return {
-    broadcaster: params.broadcaster,
-    tracer: params.tracer,
   };
 }
 

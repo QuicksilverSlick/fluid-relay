@@ -11,7 +11,6 @@ import { SessionPersistenceService } from "../bridge/session-persistence-service
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
 import { noopTracer } from "../messaging/message-tracer.js";
-import type { UnifiedMessageRouter } from "../messaging/unified-message-router.js";
 import type { GitInfoTracker } from "../session/git-info-tracker.js";
 import type { MessageQueueHandler } from "../session/message-queue-handler.js";
 import {
@@ -38,7 +37,6 @@ type ComposeRuntimePlaneOptions = {
   getBackendConnector: () => BackendConnector;
   getPersistenceService: () => SessionPersistenceService;
   getGitTracker: () => GitInfoTracker;
-  getMessageRouter: () => UnifiedMessageRouter;
   getCapabilitiesPolicy: () => import("../capabilities/capabilities-policy.js").CapabilitiesPolicy;
   emitEvent: (type: string, payload: unknown) => void;
 };
@@ -64,7 +62,6 @@ export function composeRuntimePlane({
   getBackendConnector,
   getPersistenceService,
   getGitTracker,
-  getMessageRouter,
   getCapabilitiesPolicy,
   emitEvent,
 }: ComposeRuntimePlaneOptions): RuntimePlane {
@@ -104,8 +101,6 @@ export function composeRuntimePlane({
         next: to,
         reason,
       }),
-    routeBackendMessage: (runtimeSession, unified, prevData) =>
-      getMessageRouter().route(runtimeSession, unified, prevData),
     canMutateSession: (sessionId) => leaseCoordinator.ensureLease(sessionId, leaseOwnerId),
     onMutationRejected: (sessionId, operation) =>
       logger.warn(`Mutation rejected for session ${sessionId}: ${operation}`),

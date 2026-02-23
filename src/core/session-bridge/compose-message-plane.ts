@@ -6,7 +6,6 @@ import type { RuntimeManager } from "../bridge/runtime-manager.js";
 import {
   createCapabilitiesPolicyStateAccessors,
   createQueueStateAccessors,
-  createUnifiedMessageRouterDeps,
 } from "../bridge/session-bridge-deps-factory.js";
 import { SessionLifecycleService } from "../bridge/session-lifecycle-service.js";
 import type { SessionPersistenceService } from "../bridge/session-persistence-service.js";
@@ -14,7 +13,6 @@ import { createSlashService } from "../bridge/slash-service-factory.js";
 import { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
-import { UnifiedMessageRouter } from "../messaging/unified-message-router.js";
 import { MessageQueueHandler } from "../session/message-queue-handler.js";
 import type { SessionLeaseCoordinator } from "../session/session-lease-coordinator.js";
 import type { SessionRepository } from "../session/session-repository.js";
@@ -53,7 +51,6 @@ export type MessagePlane = {
   capabilitiesPolicy: CapabilitiesPolicy;
   queueHandler: MessageQueueHandler;
   slashService: import("../slash/slash-command-service.js").SlashCommandService;
-  messageRouter: UnifiedMessageRouter;
   lifecycleService: SessionLifecycleService;
 };
 
@@ -116,18 +113,10 @@ export function composeMessagePlane({
         slashCommand: trace?.command,
       }),
   });
-  const messageRouter = new UnifiedMessageRouter(
-    createUnifiedMessageRouterDeps({
-      broadcaster,
-      tracer,
-    }),
-  );
-
   return {
     capabilitiesPolicy,
     queueHandler,
     slashService,
-    messageRouter,
     lifecycleService,
   };
 }

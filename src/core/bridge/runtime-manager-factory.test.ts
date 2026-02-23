@@ -28,7 +28,6 @@ function makeFactoryDeps(overrides?: Record<string, unknown>) {
     emitPermissionResolved: vi.fn(),
     onSessionSeeded: vi.fn(),
     onInvalidLifecycleTransition: vi.fn(),
-    routeBackendMessage: vi.fn(),
     emitEvent: vi.fn(),
     getGitTracker: vi.fn(() => ({
       resetAttempt: vi.fn(),
@@ -127,6 +126,5 @@ describe("createRuntimeManager", () => {
     expect(runtime.deps.emitPermissionResolved).toBe(deps.emitPermissionResolved);
     expect(runtime.deps.onSessionSeeded).toBe(deps.onSessionSeeded);
     expect(runtime.deps.onInvalidLifecycleTransition).toBe(deps.onInvalidLifecycleTransition);
-    expect(runtime.deps.routeBackendMessage).toBe(deps.routeBackendMessage);
   });
 });

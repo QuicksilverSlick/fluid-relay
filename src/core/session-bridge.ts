@@ -41,7 +41,6 @@ import type { ConsumerGateway } from "./consumer/consumer-gateway.js";
 import { TypedEventEmitter } from "./events/typed-emitter.js";
 import type { InboundCommand, PolicyCommand } from "./interfaces/runtime-commands.js";
 import type { MessageTracer } from "./messaging/message-tracer.js";
-import type { UnifiedMessageRouter } from "./messaging/unified-message-router.js";
 import type { GitInfoTracker } from "./session/git-info-tracker.js";
 import type { MessageQueueHandler } from "./session/message-queue-handler.js";
 import type { LifecycleState } from "./session/session-lifecycle.js";
@@ -69,7 +68,6 @@ export class SessionBridge extends TypedEventEmitter<BridgeEventMap> {
   private queueHandler: MessageQueueHandler;
   private capabilitiesPolicy: CapabilitiesPolicy;
   private backendConnector: BackendConnector;
-  private messageRouter: UnifiedMessageRouter;
   private consumerGateway: ConsumerGateway;
   private tracer: MessageTracer;
   private runtimeManager: RuntimeManager;
@@ -94,7 +92,6 @@ export class SessionBridge extends TypedEventEmitter<BridgeEventMap> {
       getBackendConnector: () => this.backendConnector,
       getPersistenceService: () => this.persistenceService,
       getGitTracker: () => this.gitTracker,
-      getMessageRouter: () => this.messageRouter,
       // Lazy — both this.capabilitiesPolicy and this.runtimeManager are
       // assigned from the planes below, but only called when the first
       // session runtime is created (well after constructor returns).
@@ -174,7 +171,6 @@ export class SessionBridge extends TypedEventEmitter<BridgeEventMap> {
     this.capabilitiesPolicy = messagePlane.capabilitiesPolicy;
     this.queueHandler = messagePlane.queueHandler;
     this.slashService = messagePlane.slashService;
-    this.messageRouter = messagePlane.messageRouter;
     this.lifecycleService = messagePlane.lifecycleService;
 
     const backendPlane = composeBackendPlane({

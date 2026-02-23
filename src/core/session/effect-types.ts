@@ -1,0 +1,26 @@
+/**
+ * Effect — a typed description of a side effect to perform after a state transition.
+ *
+ * `reduceSessionData` returns `[SessionData, Effect[]]`. The caller
+ * (SessionRuntime) executes each effect via `executeEffects()`.
+ *
+ * Effects are plain data — no closures, no dependencies. This keeps
+ * the reducer 100% pure and makes effects easy to assert in tests.
+ *
+ * @module SessionControl
+ */
+
+import type { ConsumerMessage } from "../../types/consumer-messages.js";
+import type { SessionState } from "../../types/session-state.js";
+
+export type Effect =
+  /** Broadcast a consumer message to all connected consumers. */
+  | { type: "BROADCAST"; message: ConsumerMessage }
+  /** Broadcast a permission_request only to session participants (not observers). */
+  | { type: "BROADCAST_TO_PARTICIPANTS"; message: ConsumerMessage }
+  /** Broadcast a partial session state patch as a session_update. */
+  | { type: "BROADCAST_SESSION_UPDATE"; patch: Partial<SessionState> }
+  /** Emit a domain event (type + payload). */
+  | { type: "EMIT_EVENT"; eventType: string; payload: unknown }
+  /** Auto-send a queued message now that the session is idle. */
+  | { type: "AUTO_SEND_QUEUED" };

@@ -5,7 +5,6 @@ import { composeRuntimePlane } from "./compose-runtime-plane.js";
 
 describe("composeRuntimePlane", () => {
   it("creates runtime services and resolves lazy collaborators on first runtime", () => {
-    const route = vi.fn();
     const resolveGitInfo = vi.fn();
     const sendToBackend = vi.fn();
     const emitPermissionResolved = vi.fn();
@@ -25,7 +24,6 @@ describe("composeRuntimePlane", () => {
       executeProgrammatic: vi.fn().mockResolvedValue(null),
     }));
     const getBackendConnector = vi.fn(() => ({ sendToBackend }));
-    const getMessageRouter = vi.fn(() => ({ route }));
     const getGitTracker = vi.fn(() => ({ resolveGitInfo }));
     const getCapabilitiesPolicy = vi.fn(() => ({
       sendInitializeRequest: vi.fn(),
@@ -47,7 +45,6 @@ describe("composeRuntimePlane", () => {
       getBackendConnector,
       getPersistenceService: () => runtimePlane.persistenceService,
       getGitTracker,
-      getMessageRouter,
       getCapabilitiesPolicy,
       emitEvent,
     });
@@ -60,7 +57,6 @@ describe("composeRuntimePlane", () => {
     const runtime = runtimePlane.runtimeManager.getOrCreate(session) as {
       deps: {
         sendToBackend: (session: Session, message: unknown) => void;
-        routeBackendMessage: (session: Session, message: unknown) => void;
         onSessionSeeded: (session: Session) => void;
         emitPermissionResolved: (
           sessionId: string,
@@ -71,7 +67,6 @@ describe("composeRuntimePlane", () => {
     };
 
     runtime.deps.sendToBackend(session, { type: "noop" });
-    runtime.deps.routeBackendMessage(session, { type: "backend_noop" });
     runtime.deps.onSessionSeeded(session);
     runtime.deps.emitPermissionResolved("s-runtime", "req-1", "allow");
 
@@ -79,12 +74,10 @@ describe("composeRuntimePlane", () => {
     expect(getQueueHandler).toHaveBeenCalledTimes(1);
     expect(getSlashService).toHaveBeenCalledTimes(1);
     expect(getBackendConnector).toHaveBeenCalledTimes(1);
-    expect(getMessageRouter).toHaveBeenCalledTimes(1);
     // getGitTracker is called once for the runtime's gitTracker dep and once inside onSessionSeeded
     expect(getGitTracker).toHaveBeenCalledTimes(2);
     expect(getCapabilitiesPolicy).toHaveBeenCalledTimes(1);
     expect(sendToBackend).toHaveBeenCalledWith(session, { type: "noop" });
-    expect(route).toHaveBeenCalledWith(session, { type: "backend_noop" }, undefined);
     expect(resolveGitInfo).toHaveBeenCalledWith(session);
     expect(emitPermissionResolved).toHaveBeenCalledWith("s-runtime", "req-1", "allow");
   });

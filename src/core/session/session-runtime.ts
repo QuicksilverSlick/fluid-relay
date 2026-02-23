@@ -30,6 +30,7 @@ import type { SlashCommandService } from "../slash/slash-command-service.js";
 import { diffTeamState } from "../team/team-event-differ.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
+import { executeEffects } from "./effect-executor.js";
 import type { GitInfoTracker } from "./git-info-tracker.js";
 import type { MessageQueueHandler } from "./message-queue-handler.js";
 import type { LifecycleState } from "./session-lifecycle.js";
@@ -60,7 +61,10 @@ type RuntimeSendPermissionOptions = {
 export interface SessionRuntimeDeps {
   now: () => number;
   maxMessageHistoryLength: number;
-  broadcaster: Pick<ConsumerBroadcaster, "broadcast" | "broadcastPresence" | "sendTo">;
+  broadcaster: Pick<
+    ConsumerBroadcaster,
+    "broadcast" | "broadcastToParticipants" | "broadcastPresence" | "sendTo"
+  >;
   queueHandler: Pick<
     MessageQueueHandler,
     | "handleQueueMessage"
@@ -93,7 +97,6 @@ export interface SessionRuntimeDeps {
   onInboundObserved?: (session: Session, msg: InboundCommand) => void;
   onInboundHandled?: (session: Session, msg: InboundCommand) => void;
   onBackendMessageObserved?: (session: Session, msg: UnifiedMessage) => void;
-  routeBackendMessage?: (session: Session, msg: UnifiedMessage, prevData?: SessionData) => void;
   onBackendMessageHandled?: (session: Session, msg: UnifiedMessage) => void;
   onSignal?: (
     session: Session,
@@ -679,7 +682,11 @@ export class SessionRuntime {
     this.deps.onBackendMessageObserved?.(this.session, msg);
 
     const prevData = this.session.data;
-    let nextData = reduceSessionData(this.session.data, msg, this.session.teamCorrelationBuffer);
+    let [nextData, effects] = reduceSessionData(
+      this.session.data,
+      msg,
+      this.session.teamCorrelationBuffer,
+    );
 
     // Apply history limits (centralized)
     if (nextData.messageHistory.length > this.deps.maxMessageHistoryLength) {
@@ -694,25 +701,25 @@ export class SessionRuntime {
       this.deps.persistSession(this.session);
     }
 
-    // High-level orchestration (side effects)
+    // Execute reducer effects (T4 broadcasts + event emissions + queue flush)
+    executeEffects(effects, this.session, {
+      broadcaster: this.deps.broadcaster,
+      emitEvent: this.deps.emitEvent,
+      queueHandler: this.deps.queueHandler,
+    });
+
+    // High-level orchestration for complex side effects
     if (msg.type === "session_init") {
       this.orchestrateSessionInit(msg);
     } else if (msg.type === "result") {
       this.orchestrateResult(msg);
     } else if (msg.type === "control_response") {
       this.orchestrateControlResponse(msg);
-    } else if (msg.type === "status_change") {
-      this.orchestrateStatusChange(msg);
-    } else if (msg.type === "permission_request") {
-      this.orchestratePermissionRequest(msg);
-    } else if (msg.type === "auth_status") {
-      this.orchestrateAuthStatus(msg);
     }
 
     this.emitTeamEvents(prevData.state.team);
 
     this.applyLifecycleFromBackendMessage(msg);
-    this.deps.routeBackendMessage?.(this.session, msg, prevData);
     this.deps.onBackendMessageHandled?.(this.session, msg);
   }
 
@@ -768,34 +775,6 @@ export class SessionRuntime {
     } else {
       this.deps.capabilitiesPolicy.sendInitializeRequest(this.session);
     }
-
-    // Auto-send queued message
-    this.deps.queueHandler.autoSendQueuedMessage(this.session);
-  }
-
-  private orchestrateStatusChange(msg: UnifiedMessage): void {
-    const status = typeof msg.metadata.status === "string" ? msg.metadata.status : null;
-    if (status === "idle") {
-      this.deps.queueHandler.autoSendQueuedMessage(this.session);
-    }
-  }
-
-  private orchestratePermissionRequest(msg: UnifiedMessage): void {
-    const m = msg.metadata;
-    this.deps.emitEvent("permission:requested", {
-      sessionId: this.session.id,
-      request: m,
-    });
-  }
-
-  private orchestrateAuthStatus(msg: UnifiedMessage): void {
-    const m = msg.metadata;
-    this.deps.emitEvent("auth_status", {
-      sessionId: this.session.id,
-      isAuthenticating: m.isAuthenticating as boolean,
-      output: m.output as string[],
-      error: m.error as string | undefined,
-    });
   }
 
   private orchestrateControlResponse(msg: UnifiedMessage): void {
@@ -808,25 +787,8 @@ export class SessionRuntime {
     }
   }
 
-  private orchestrateResult(msg: UnifiedMessage): void {
-    const m = msg.metadata;
-
-    // Trigger auto-naming after first turn
-    const numTurns = (m.num_turns as number) ?? 0;
-    const isError = (m.is_error as boolean) ?? false;
-    if (numTurns === 1 && !isError) {
-      const firstUserMsg = this.session.data.messageHistory.find(
-        (entry) => entry.type === "user_message",
-      );
-      if (firstUserMsg && firstUserMsg.type === "user_message") {
-        this.deps.emitEvent("session:first_turn_completed", {
-          sessionId: this.session.id,
-          firstUserMessage: firstUserMsg.content,
-        });
-      }
-    }
-
-    // Re-resolve git info
+  private orchestrateResult(_msg: UnifiedMessage): void {
+    // Re-resolve git info (first-turn event + auto-send handled by effects)
     const gitUpdate = this.deps.gitTracker.refreshGitInfo(this.session);
     if (gitUpdate) {
       this.session = {
@@ -842,9 +804,6 @@ export class SessionRuntime {
         session: gitUpdate,
       });
     }
-
-    // Auto-send queued message
-    this.deps.queueHandler.autoSendQueuedMessage(this.session);
   }
 
   private emitTeamEvents(prevTeam: TeamState | undefined): void {

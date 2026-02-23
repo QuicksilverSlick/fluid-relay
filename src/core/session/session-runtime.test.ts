@@ -14,6 +14,7 @@ function makeDeps(overrides?: Partial<SessionRuntimeDeps>): SessionRuntimeDeps {
     maxMessageHistoryLength: 100,
     broadcaster: {
       broadcast: vi.fn(),
+      broadcastToParticipants: vi.fn(),
       broadcastPresence: vi.fn(),
       sendTo: vi.fn(),
     } as any,
@@ -335,7 +336,6 @@ describe("SessionRuntime", () => {
     const calls: string[] = [];
     const deps = makeDeps({
       onBackendMessageObserved: () => calls.push("observed"),
-      routeBackendMessage: () => calls.push("route"),
       onBackendMessageHandled: () => calls.push("handled"),
     });
     const runtime = new SessionRuntime(session, deps);
@@ -348,7 +348,7 @@ describe("SessionRuntime", () => {
       }),
     );
 
-    expect(calls).toEqual(["observed", "route", "handled"]);
+    expect(calls).toEqual(["observed", "handled"]);
     expect(runtime.getLifecycleState()).toBe("idle");
   });
 
