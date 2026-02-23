@@ -98,7 +98,7 @@ export class SessionLifecycleService {
     }
 
     runtime.closeAllConsumers();
-    runtime.handleSignal("session:closed");
+    runtime.process({ type: "LIFECYCLE_SIGNAL", signal: "session:closed" });
 
     this.store.remove(sessionId);
     this.runtimeManager.delete(sessionId);

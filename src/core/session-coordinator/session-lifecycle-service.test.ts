@@ -32,6 +32,7 @@ function createService(options?: { leaseOwnerId?: string; preclaimedLeaseOwner?:
     closeBackendConnection: vi.fn().mockResolvedValue(undefined),
     closeAllConsumers: vi.fn(),
     handleSignal: vi.fn(),
+    process: vi.fn(),
   };
 
   const runtimeManager = {
@@ -158,7 +159,10 @@ describe("SessionLifecycleService", () => {
     expect(capabilitiesPolicy.cancelPendingInitialize).toHaveBeenCalledWith(session);
     expect(runtime.closeBackendConnection).toHaveBeenCalledTimes(1);
     expect(runtime.closeAllConsumers).toHaveBeenCalledTimes(1);
-    expect(runtime.handleSignal).toHaveBeenCalledWith("session:closed");
+    expect(runtime.process).toHaveBeenCalledWith({
+      type: "LIFECYCLE_SIGNAL",
+      signal: "session:closed",
+    });
     expect(store.remove).toHaveBeenCalledWith("s1");
     expect(runtimeManager.delete).toHaveBeenCalledWith("s1");
     expect(metrics.recordEvent).toHaveBeenCalledWith(
@@ -192,7 +196,10 @@ describe("SessionLifecycleService", () => {
       error: expect.any(Error),
     });
     expect(runtime.closeAllConsumers).toHaveBeenCalled();
-    expect(runtime.handleSignal).toHaveBeenCalledWith("session:closed");
+    expect(runtime.process).toHaveBeenCalledWith({
+      type: "LIFECYCLE_SIGNAL",
+      signal: "session:closed",
+    });
     expect(store.remove).toHaveBeenCalledWith("s1");
     expect(runtimeManager.delete).toHaveBeenCalledWith("s1");
     expect(emitSessionClosed).toHaveBeenCalledWith("s1");

@@ -30,6 +30,7 @@ function createRuntimeStub() {
     handleInboundCommand: vi.fn(),
     handleBackendMessage: vi.fn(),
     handleSignal: vi.fn(),
+    process: vi.fn(),
   };
 }
 
@@ -117,8 +118,8 @@ describe("RuntimeApi", () => {
     api.applyPolicyCommand("s1", cmd);
     api.applyPolicyCommand("missing", cmd);
 
-    expect(runtime.handlePolicyCommand).toHaveBeenCalledTimes(1);
-    expect(runtime.handlePolicyCommand).toHaveBeenCalledWith(cmd);
+    expect(runtime.process).toHaveBeenCalledTimes(1);
+    expect(runtime.process).toHaveBeenCalledWith({ type: "POLICY_COMMAND", command: cmd });
   });
 
   it("warns and skips sendToBackend for missing session", () => {
@@ -169,9 +170,12 @@ describe("RuntimeApi", () => {
     api.handleBackendMessage("s1", backend);
     api.handleLifecycleSignal("s1", "backend:connected");
 
-    expect(runtime.handleInboundCommand).toHaveBeenCalledWith(inbound, ws);
-    expect(runtime.handleBackendMessage).toHaveBeenCalledWith(backend);
-    expect(runtime.handleSignal).toHaveBeenCalledWith("backend:connected");
+    expect(runtime.process).toHaveBeenCalledWith({ type: "INBOUND_COMMAND", command: inbound, ws });
+    expect(runtime.process).toHaveBeenCalledWith({ type: "BACKEND_MESSAGE", message: backend });
+    expect(runtime.process).toHaveBeenCalledWith({
+      type: "LIFECYCLE_SIGNAL",
+      signal: "backend:connected",
+    });
   });
 
   it("blocks mutation when lease is held by another owner", () => {

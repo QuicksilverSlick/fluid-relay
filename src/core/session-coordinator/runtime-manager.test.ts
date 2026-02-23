@@ -10,13 +10,14 @@ function stubRuntime(overrides?: Partial<SessionRuntime>): SessionRuntime {
   return {
     getLifecycleState: vi.fn().mockReturnValue("awaiting_backend"),
     handleSignal: vi.fn(),
+    process: vi.fn(),
     ...overrides,
   } as unknown as SessionRuntime;
 }
 
 describe("RuntimeManager", () => {
   let manager: RuntimeManager;
-  let factory: ReturnType<typeof vi.fn>;
+  let factory: any;
   let runtime: SessionRuntime;
 
   beforeEach(() => {
@@ -96,10 +97,13 @@ describe("RuntimeManager", () => {
 
   // ── handleLifecycleSignal ────────────────────────────────────────────────
 
-  it("handleLifecycleSignal calls runtime.handleSignal with correct signal", () => {
+  it("handleLifecycleSignal calls runtime.process with correct signal", () => {
     manager.getOrCreate(stubSession("s1"));
     manager.handleLifecycleSignal("s1", "backend:connected");
-    expect(runtime.handleSignal).toHaveBeenCalledWith("backend:connected");
+    expect(runtime.process).toHaveBeenCalledWith({
+      type: "LIFECYCLE_SIGNAL",
+      signal: "backend:connected",
+    });
   });
 
   it("handleLifecycleSignal is a no-op for unknown sessionId", () => {

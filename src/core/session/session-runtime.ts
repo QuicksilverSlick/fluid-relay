@@ -33,6 +33,7 @@ import type { UnifiedMessage } from "../types/unified-message.js";
 import { executeEffects } from "./effect-executor.js";
 import type { GitInfoTracker } from "./git-info-tracker.js";
 import type { MessageQueueHandler } from "./message-queue-handler.js";
+import type { SessionEvent } from "./session-event.js";
 import type { LifecycleState } from "./session-lifecycle.js";
 import { isLifecycleTransitionAllowed } from "./session-lifecycle.js";
 import type { Session } from "./session-repository.js";
@@ -162,6 +163,32 @@ export class SessionRuntime {
 
   getLifecycleState(): LifecycleState {
     return this.lifecycle;
+  }
+
+  // ── Single entry point ──────────────────────────────────────────────────
+
+  /**
+   * Process a session event — the single canonical entry point.
+   *
+   * All external stimuli (backend messages, consumer commands, policy
+   * commands, lifecycle signals) flow through here. This gives us one
+   * place to enforce mutation guards, timestamp activity, and dispatch.
+   */
+  process(event: SessionEvent): void {
+    switch (event.type) {
+      case "BACKEND_MESSAGE":
+        this.handleBackendMessage(event.message);
+        break;
+      case "INBOUND_COMMAND":
+        this.handleInboundCommand(event.command, event.ws);
+        break;
+      case "POLICY_COMMAND":
+        this.handlePolicyCommand(event.command);
+        break;
+      case "LIFECYCLE_SIGNAL":
+        this.handleSignal(event.signal);
+        break;
+    }
   }
 
   getSessionSnapshot(): SessionSnapshot {

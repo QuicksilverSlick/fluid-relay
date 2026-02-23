@@ -110,19 +110,19 @@ export class RuntimeApi {
 
   applyPolicyCommand(sessionId: string, command: PolicyCommand): void {
     this.withMutableSessionVoid(sessionId, "applyPolicyCommand", (session) =>
-      this.runtime(session).handlePolicyCommand(command),
+      this.runtime(session).process({ type: "POLICY_COMMAND", command }),
     );
   }
 
   handleInboundCommand(sessionId: string, msg: InboundCommand, ws: WebSocketLike): void {
     this.withMutableSessionVoid(sessionId, "handleInboundCommand", (session) =>
-      this.runtime(session).handleInboundCommand(msg, ws),
+      this.runtime(session).process({ type: "INBOUND_COMMAND", command: msg, ws }),
     );
   }
 
   handleBackendMessage(sessionId: string, message: UnifiedMessage): void {
     this.withMutableSessionVoid(sessionId, "handleBackendMessage", (session) =>
-      this.runtime(session).handleBackendMessage(message),
+      this.runtime(session).process({ type: "BACKEND_MESSAGE", message }),
     );
   }
 
@@ -131,7 +131,7 @@ export class RuntimeApi {
     signal: "backend:connected" | "backend:disconnected" | "session:closed",
   ): void {
     this.withMutableSessionVoid(sessionId, "handleLifecycleSignal", (session) =>
-      this.runtime(session).handleSignal(signal),
+      this.runtime(session).process({ type: "LIFECYCLE_SIGNAL", signal }),
     );
   }
 

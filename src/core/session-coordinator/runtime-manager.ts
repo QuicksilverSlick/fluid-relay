@@ -56,6 +56,6 @@ export class RuntimeManager {
     sessionId: string,
     signal: "backend:connected" | "backend:disconnected" | "session:closed",
   ): void {
-    this.runtimes.get(sessionId)?.handleSignal(signal);
+    this.runtimes.get(sessionId)?.process({ type: "LIFECYCLE_SIGNAL", signal });
   }
 }
