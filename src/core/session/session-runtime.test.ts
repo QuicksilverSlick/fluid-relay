@@ -1096,4 +1096,315 @@ describe("SessionRuntime", () => {
       runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "CAPABILITIES_TIMEOUT" } }),
     ).not.toThrow();
   });
+
+  // ---------------------------------------------------------------------------
+  // sendControlRequest — null backendSession branch
+  // ---------------------------------------------------------------------------
+
+  it("storePendingPermission adds permission request to pendingPermissions map", () => {
+    const session = createMockSession({ id: "s1" });
+    const runtime = new SessionRuntime(session, makeDeps());
+    const perm: any = {
+      request_id: "perm-x",
+      options: [],
+      expires_at: Date.now() + 1000,
+      tool_name: "Bash",
+      tool_use_id: "tu-x",
+      safety_risk: null,
+    };
+
+    runtime.storePendingPermission("perm-x", perm);
+
+    expect(runtime.getPendingPermissions()).toHaveLength(1);
+    expect(runtime.getPendingPermissions()[0].request_id).toBe("perm-x");
+  });
+
+  it("sendInterrupt is a no-op when no backendSession is attached", () => {
+    const session = createMockSession({ id: "s1" }); // no backendSession
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    // Should not throw — sendControlRequest returns early at the null-check
+    expect(() => runtime.sendInterrupt()).not.toThrow();
+    expect(deps.broadcaster.broadcast).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // handleBackendMessage — history trim branch
+  // ---------------------------------------------------------------------------
+
+  it("trims messageHistory when backend messages push it over maxMessageHistoryLength", () => {
+    const session = createMockSession({
+      id: "s1",
+      data: {
+        messageHistory: [
+          { type: "user_message", content: "msg-a", timestamp: 1 } as any,
+          { type: "user_message", content: "msg-b", timestamp: 2 } as any,
+        ],
+      },
+    });
+    const runtime = new SessionRuntime(
+      session,
+      makeDeps({ config: { maxMessageHistoryLength: 1 } }),
+    );
+
+    // Any backend message will cause handleBackendMessage to evaluate the trim condition
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "status_change",
+        role: "system",
+        metadata: { status: "idle" },
+      }),
+    });
+
+    expect(runtime.getMessageHistory()).toHaveLength(1);
+    expect(runtime.getMessageHistory()[0]).toMatchObject({ content: "msg-b" });
+  });
+
+  // ---------------------------------------------------------------------------
+  // orchestrateSessionInit — branch coverage
+  // ---------------------------------------------------------------------------
+
+  it("emits backend:session_id event when session_init carries session_id", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "session_init",
+        role: "system",
+        metadata: { model: "claude", session_id: "backend-xyz-123" },
+      }),
+    });
+
+    expect(deps.emitEvent).toHaveBeenCalledWith("backend:session_id", {
+      sessionId: "s1",
+      backendSessionId: "backend-xyz-123",
+    });
+  });
+
+  it("resolves git info on session_init when gitResolver is provided and cwd is set", () => {
+    const gitInfo = { branch: "main", repoRoot: "/project" };
+    const gitResolver = { resolve: vi.fn(() => gitInfo) };
+    const session = createMockSession({
+      id: "s1",
+      data: { state: { ...createMockSession().data.state, cwd: "/project" } },
+    });
+    const deps = makeDeps({ gitResolver: gitResolver as any });
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "session_init",
+        role: "system",
+        metadata: { model: "claude" },
+      }),
+    });
+
+    expect(gitResolver.resolve).toHaveBeenCalledWith("/project");
+    expect(runtime.getState().branch).toBe("main");
+  });
+
+  it("registers slash_commands and skills from session_init state into registry", () => {
+    const session = createMockSession({ id: "s1" });
+    const clearDynamic = vi.fn();
+    const registerFromCLI = vi.fn();
+    const registerSkills = vi.fn();
+    session.registry = { clearDynamic, registerFromCLI, registerSkills } as any;
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+    clearDynamic.mockClear();
+    registerFromCLI.mockClear();
+    registerSkills.mockClear();
+
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "session_init",
+        role: "system",
+        metadata: { slash_commands: ["/compact", "/help"], skills: ["tdd-guide"] },
+      }),
+    });
+
+    // clearDynamic called to reset, then re-registered from init data
+    expect(clearDynamic).toHaveBeenCalled();
+    expect(registerFromCLI).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ name: "/compact" })]),
+    );
+    expect(registerSkills).toHaveBeenCalledWith(["tdd-guide"]);
+  });
+
+  it("calls applyCapabilities when session_init metadata carries capabilities object", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    const caps = { commands: [{ name: "/compact" }], models: ["claude-opus-4-6"], account: null };
+
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "session_init",
+        role: "system",
+        metadata: { model: "claude", capabilities: caps },
+      }),
+    });
+
+    expect(deps.capabilitiesPolicy.applyCapabilities).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+      caps.commands,
+      caps.models,
+      null,
+    );
+    expect(deps.capabilitiesPolicy.sendInitializeRequest).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // orchestrateControlResponse — session-changed branch
+  // ---------------------------------------------------------------------------
+
+  it("marks dirty when handleControlResponse mutates session state", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    // Simulate handleControlResponse calling runtime.setState internally
+    (deps.capabilitiesPolicy.handleControlResponse as any).mockImplementationOnce(() => {
+      runtime.setState({ ...session.data.state, model: "injected-model" });
+    });
+
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "control_response",
+        role: "assistant",
+        metadata: { request_id: "ctrl-1", capabilities: {} },
+      }),
+    });
+
+    expect(runtime.getState().model).toBe("injected-model");
+  });
+
+  // ---------------------------------------------------------------------------
+  // orchestrateResult — git update broadcast branch
+  // ---------------------------------------------------------------------------
+
+  it("broadcasts git update and updates state when refreshGitInfo returns truthy", () => {
+    const session = createMockSession({ id: "s1" });
+    const gitUpdate = { branch: "feature/new", repoRoot: "/repo" };
+    const deps = makeDeps({
+      gitTracker: {
+        resetAttempt: vi.fn(),
+        refreshGitInfo: vi.fn(() => gitUpdate),
+        resolveGitInfo: vi.fn(),
+      } as any,
+    });
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "result",
+        role: "assistant",
+        metadata: { subtype: "success", num_turns: 2, is_error: false },
+      }),
+    });
+
+    expect(runtime.getState().branch).toBe("feature/new");
+    expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }), {
+      type: "session_update",
+      session: gitUpdate,
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applyLifecycleFromBackendMessage — running/compacting branches
+  // ---------------------------------------------------------------------------
+
+  it("transitions to active on status_change with running status", () => {
+    const session = createMockSession({ id: "s1" });
+    const runtime = new SessionRuntime(session, makeDeps());
+
+    // First put it in idle state
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "status_change",
+        role: "system",
+        metadata: { status: "idle" },
+      }),
+    });
+    expect(runtime.getLifecycleState()).toBe("idle");
+
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "status_change",
+        role: "system",
+        metadata: { status: "running" },
+      }),
+    });
+    expect(runtime.getLifecycleState()).toBe("active");
+  });
+
+  it("transitions to active on status_change with compacting status", () => {
+    const session = createMockSession({ id: "s1" });
+    const runtime = new SessionRuntime(session, makeDeps());
+
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "status_change",
+        role: "system",
+        metadata: { status: "idle" },
+      }),
+    });
+
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "status_change",
+        role: "system",
+        metadata: { status: "compacting" },
+      }),
+    });
+    expect(runtime.getLifecycleState()).toBe("active");
+  });
+
+  // ---------------------------------------------------------------------------
+  // sendPermissionResponse — no backendSession branch
+  // ---------------------------------------------------------------------------
+
+  it("clears pending permission and emits event when backendSession is absent", () => {
+    const perm: any = {
+      request_id: "perm-3",
+      options: [],
+      expires_at: Date.now() + 1000,
+      tool_name: "Bash",
+      tool_use_id: "tu-3",
+      safety_risk: null,
+    };
+    const session = createMockSession({
+      id: "s1",
+      data: { pendingPermissions: new Map([["perm-3", perm]]) },
+      // no backendSession
+    });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.sendPermissionResponse("perm-3", "allow");
+
+    expect(deps.emitEvent).toHaveBeenCalledWith("permission:resolved", {
+      sessionId: "s1",
+      requestId: "perm-3",
+      behavior: "allow",
+    });
+    expect(runtime.getPendingPermissions()).toHaveLength(0);
+    // No backend send attempted since backendSession is null
+    expect(deps.broadcaster.broadcast).not.toHaveBeenCalled();
+  });
 });

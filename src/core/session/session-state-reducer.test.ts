@@ -627,3 +627,86 @@ describe("sessionReducer BACKEND_MESSAGE — reduceLastStatus edge cases", () =>
     expect(next.lastStatus).toBe("idle");
   });
 });
+
+// ---------------------------------------------------------------------------
+// session-reducer: uncovered branches in buildEffects
+// ---------------------------------------------------------------------------
+
+describe("sessionReducer BACKEND_MESSAGE — status_change with permissionMode (line 229)", () => {
+  it("emits BROADCAST_SESSION_UPDATE when status_change carries permissionMode", () => {
+    const data = baseData();
+    const msg = createUnifiedMessage({
+      type: "status_change",
+      role: "system",
+      metadata: { status: "idle", permissionMode: "acceptEdits" },
+    });
+    const buffer = new TeamToolCorrelationBuffer();
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+
+    const update = effects.find((e) => e.type === "BROADCAST_SESSION_UPDATE") as any;
+    expect(update).toBeDefined();
+    expect(update.patch.permissionMode).toBe("acceptEdits");
+  });
+});
+
+describe("sessionReducer BACKEND_MESSAGE — tool_progress (lines 304-305)", () => {
+  it("emits BROADCAST for tool_progress message", () => {
+    const data = baseData();
+    const msg = createUnifiedMessage({
+      type: "tool_progress",
+      role: "assistant",
+      metadata: { tool_use_id: "tu-1", content: "running..." },
+    });
+    const buffer = new TeamToolCorrelationBuffer();
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+
+    expect(effects.some((e) => e.type === "BROADCAST")).toBe(true);
+  });
+});
+
+describe("sessionReducer BACKEND_MESSAGE — configuration_change with mode field (line 342)", () => {
+  it("uses m.mode when it is a string for permissionMode in patch", () => {
+    const data = baseData();
+    const msg = createUnifiedMessage({
+      type: "configuration_change",
+      role: "system",
+      metadata: { mode: "plan" },
+    });
+    const buffer = new TeamToolCorrelationBuffer();
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+
+    const update = effects.find((e) => e.type === "BROADCAST_SESSION_UPDATE") as any;
+    expect(update?.patch.permissionMode).toBe("plan");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sessionReducer INBOUND_COMMAND path (lines 76, 138-142)
+// ---------------------------------------------------------------------------
+
+describe("sessionReducer INBOUND_COMMAND", () => {
+  it("returns data unchanged and empty effects for user_message on active session", () => {
+    const data = baseData();
+    const buffer = new TeamToolCorrelationBuffer();
+    const [next, effects] = sessionReducer(
+      data,
+      { type: "INBOUND_COMMAND", command: { type: "user_message", content: "hi", session_id: "" } },
+      buffer,
+    );
+    expect(next).toBe(data);
+    expect(effects).toHaveLength(0);
+  });
+
+  it("returns BROADCAST error effect for user_message when lifecycle is closing", () => {
+    const data = { ...baseData(), lifecycle: "closing" as const };
+    const buffer = new TeamToolCorrelationBuffer();
+    const [next, effects] = sessionReducer(
+      data,
+      { type: "INBOUND_COMMAND", command: { type: "user_message", content: "hi", session_id: "" } },
+      buffer,
+    );
+    expect(next).toBe(data);
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({ type: "BROADCAST", message: { type: "error" } });
+  });
+});
