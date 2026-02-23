@@ -419,7 +419,7 @@ describe("SessionCoordinator", () => {
     it("forwards stdout with redaction to broadcastProcessOutput", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn(mgr.services.broadcaster, "broadcastProcessOutput")
+        .spyOn((mgr as any).broadcaster, "broadcastProcessOutput")
         .mockImplementation(() => {});
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
@@ -438,7 +438,7 @@ describe("SessionCoordinator", () => {
     it("forwards stderr to broadcastProcessOutput", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn(mgr.services.broadcaster, "broadcastProcessOutput")
+        .spyOn((mgr as any).broadcaster, "broadcastProcessOutput")
         .mockImplementation(() => {});
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
@@ -463,7 +463,7 @@ describe("SessionCoordinator", () => {
     it("derives name from first user message, truncates at 50, and broadcasts", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn(mgr.services.broadcaster, "broadcastNameUpdate")
+        .spyOn((mgr as any).broadcaster, "broadcastNameUpdate")
         .mockImplementation(() => {});
       const setNameSpy = vi.spyOn(mgr.launcher, "setSessionName").mockImplementation(() => {});
 
@@ -488,7 +488,7 @@ describe("SessionCoordinator", () => {
     it("skips naming if session already has a name", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn(mgr.services.broadcaster, "broadcastNameUpdate")
+        .spyOn((mgr as any).broadcaster, "broadcastNameUpdate")
         .mockImplementation(() => {});
 
       const info = mgr.launcher.launch({ cwd: "/tmp" });
@@ -512,7 +512,7 @@ describe("SessionCoordinator", () => {
     it("deletes processLogBuffers when session is closed", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn(mgr.services.broadcaster, "broadcastProcessOutput")
+        .spyOn((mgr as any).broadcaster, "broadcastProcessOutput")
         .mockImplementation(() => {});
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
@@ -552,12 +552,10 @@ describe("SessionCoordinator", () => {
   describe("executeSlashCommand forwarding", () => {
     it("delegates to bridge.executeSlashCommand", async () => {
       mgr.start();
-      const executeSpy = vi
-        .spyOn(mgr.services.runtimeApi, "executeSlashCommand")
-        .mockResolvedValue({
-          content: "help output",
-          source: "emulated" as const,
-        });
+      const executeSpy = vi.spyOn(mgr, "executeSlashCommand").mockResolvedValue({
+        content: "help output",
+        source: "emulated" as const,
+      });
 
       const result = await mgr.executeSlashCommand("test-session", "/help");
 

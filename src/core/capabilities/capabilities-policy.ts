@@ -22,63 +22,52 @@ import type { ResolvedConfig } from "../../types/config.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { SessionData } from "../session/session-data.js";
 import type { Session } from "../session/session-repository.js";
+import type { SessionRuntime } from "../session/session-runtime.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 
 // ─── Dependency contracts ────────────────────────────────────────────────────
 
 type EmitEvent = (type: string, payload: unknown) => void;
-type CapabilitiesStateAccessors = {
-  getState: (session: Session) => SessionData["state"];
-  setState: (session: Session, state: SessionData["state"]) => void;
-  getPendingInitialize: (session: Session) => Session["pendingInitialize"];
-  setPendingInitialize: (session: Session, pendingInitialize: Session["pendingInitialize"]) => void;
-  trySendRawToBackend: (session: Session, ndjson: string) => "sent" | "unsupported" | "no_backend";
-  registerCLICommands: (session: Session, commands: InitializeCommand[]) => void;
-};
 
 // ─── CapabilitiesPolicy ─────────────────────────────────────────────────────
 
 export class CapabilitiesPolicy {
-  private readonly stateAccessors: CapabilitiesStateAccessors;
-
   constructor(
     private config: ResolvedConfig,
     private logger: Logger,
     private broadcaster: ConsumerBroadcaster,
     private emitEvent: EmitEvent,
-    stateAccessors: CapabilitiesStateAccessors,
-  ) {
-    this.stateAccessors = stateAccessors;
-  }
+    private getRuntime: (session: Session) => SessionRuntime,
+  ) {}
 
   private getState(session: Session): SessionData["state"] {
-    return this.stateAccessors.getState(session);
+    return this.getRuntime(session).getState();
   }
 
   private setState(session: Session, state: SessionData["state"]): void {
-    this.stateAccessors.setState(session, state);
+    this.getRuntime(session).setState(state);
   }
 
   private getPendingInitialize(session: Session): Session["pendingInitialize"] {
-    return this.stateAccessors.getPendingInitialize(session);
+    return this.getRuntime(session).getPendingInitialize();
   }
 
   private setPendingInitialize(
     session: Session,
     pendingInitialize: Session["pendingInitialize"],
   ): void {
-    this.stateAccessors.setPendingInitialize(session, pendingInitialize);
+    this.getRuntime(session).setPendingInitialize(pendingInitialize);
   }
 
   private trySendRawToBackend(
     session: Session,
     ndjson: string,
   ): "sent" | "unsupported" | "no_backend" {
-    return this.stateAccessors.trySendRawToBackend(session, ndjson);
+    return this.getRuntime(session).trySendRawToBackend(ndjson);
   }
 
   private registerCLICommands(session: Session, commands: InitializeCommand[]): void {
-    this.stateAccessors.registerCLICommands(session, commands);
+    this.getRuntime(session).registerCLICommands(commands);
   }
 
   sendInitializeRequest(session: Session): void {

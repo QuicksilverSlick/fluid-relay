@@ -37,57 +37,86 @@ function mockResolver(adapters: Record<string, BackendAdapter>): AdapterResolver
   };
 }
 
-describe("BackendConnector per-session adapter", () => {
-  const baseDeps = {
-    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
-    metrics: null,
-    broadcaster: { broadcast: vi.fn(), sendTo: vi.fn() } as any,
-    routeUnifiedMessage: vi.fn(),
-    emitEvent: vi.fn(),
-    onBackendConnectedState: (session: any, params: any) => {
+/**
+ * Creates a session-aware mock runtime that mutates the session directly,
+ * mirroring the real SessionRuntime behavior.
+ */
+function createSessionAwareRuntime(session: any) {
+  return {
+    attachBackendConnection: vi.fn((params: any) => {
       session.backendSession = params.backendSession;
       session.backendAbort = params.backendAbort;
-      session.data.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
+      if (session.data)
+        session.data.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
       session.adapterSlashExecutor = params.slashExecutor;
-    },
-    onBackendDisconnectedState: (session: any) => {
+    }),
+    resetBackendConnectionState: vi.fn(() => {
       session.backendSession = null;
       session.backendAbort = null;
-      session.data.backendSessionId = undefined;
-      session.data.adapterSupportsSlashPassthrough = false;
+      if (session.data) {
+        session.data.backendSessionId = undefined;
+        session.data.adapterSupportsSlashPassthrough = false;
+      }
       session.adapterSlashExecutor = null;
-    },
-    getBackendSession: (session: any) => session.backendSession ?? null,
-    getBackendAbort: (session: any) => session.backendAbort ?? null,
-    drainPendingMessages: (session: any) => {
-      const pending = session.data.pendingMessages ?? [];
-      session.data.pendingMessages = [];
+    }),
+    getBackendSession: vi.fn(() => session.backendSession ?? null),
+    getBackendAbort: vi.fn(() => session.backendAbort ?? null),
+    drainPendingMessages: vi.fn(() => {
+      const pending = session.data?.pendingMessages ?? [];
+      if (session.data) session.data.pendingMessages = [];
       return pending;
-    },
-    drainPendingPermissionIds: (session: any) => {
-      const pendingPermissions = session.data.pendingPermissions ?? new Map();
+    }),
+    drainPendingPermissionIds: vi.fn(() => {
+      const pendingPermissions = session.data?.pendingPermissions ?? new Map();
       const ids = Array.from(pendingPermissions.keys());
       pendingPermissions.clear();
-      session.data.pendingPermissions = pendingPermissions;
+      if (session.data) session.data.pendingPermissions = pendingPermissions;
       return ids;
-    },
-    peekPendingPassthrough: (session: any) => session.pendingPassthroughs?.[0],
-    shiftPendingPassthrough: (session: any) => session.pendingPassthroughs?.shift(),
-    setSlashCommandsState: (session: any, commands: string[]) => {
-      session.data.state = { ...(session.data.state ?? {}), slash_commands: commands };
-    },
-    registerCLICommands: (session: any, commands: string[]) => {
+    }),
+    peekPendingPassthrough: vi.fn(() => session.pendingPassthroughs?.[0]),
+    shiftPendingPassthrough: vi.fn(() => session.pendingPassthroughs?.shift()),
+    getState: vi.fn(() => {
+      const state = session.data?.state ?? session.state ?? {};
+      return state;
+    }),
+    setState: vi.fn((state: any) => {
+      if (session.data) session.data.state = state;
+      else session.state = state;
+    }),
+    registerSlashCommandNames: vi.fn((commands: string[]) => {
       session.registry?.registerFromCLI?.(
         commands.map((name: string) => ({ name, description: "" })),
       );
-    },
+    }),
   };
+}
+
+describe("BackendConnector per-session adapter", () => {
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any;
+
+  function makeBaseDeps(sessionRef: { current: any }) {
+    const runtimeCache = new WeakMap<object, ReturnType<typeof createSessionAwareRuntime>>();
+    return {
+      logger,
+      metrics: null,
+      broadcaster: { broadcast: vi.fn(), sendTo: vi.fn() } as any,
+      routeUnifiedMessage: vi.fn(),
+      emitEvent: vi.fn(),
+      getRuntime: (session: any) => {
+        if (!runtimeCache.has(session)) {
+          runtimeCache.set(session, createSessionAwareRuntime(session));
+        }
+        return runtimeCache.get(session) as any;
+      },
+    };
+  }
 
   it("resolves adapter from resolver using session.data.adapterName", async () => {
     const codex = mockAdapter("codex");
     const resolver = mockResolver({ codex, claude: mockAdapter("claude") });
+    const sessionRef = { current: null as any };
     const blm = new BackendConnector({
-      ...baseDeps,
+      ...makeBaseDeps(sessionRef),
       adapter: null,
       adapterResolver: resolver,
     });
@@ -100,6 +129,7 @@ describe("BackendConnector per-session adapter", () => {
       pendingMessages: [],
     } as any;
     session.data = session;
+    sessionRef.current = session;
 
     await blm.connectBackend(session);
     expect(resolver.resolve).toHaveBeenCalledWith("codex");
@@ -108,8 +138,9 @@ describe("BackendConnector per-session adapter", () => {
 
   it("falls back to global adapter when no adapterName", async () => {
     const globalAdapter = mockAdapter("claude");
+    const sessionRef = { current: null as any };
     const blm = new BackendConnector({
-      ...baseDeps,
+      ...makeBaseDeps(sessionRef),
       adapter: globalAdapter,
       adapterResolver: null,
     });
@@ -122,6 +153,7 @@ describe("BackendConnector per-session adapter", () => {
       pendingMessages: [],
     } as any;
     session.data = session;
+    sessionRef.current = session;
 
     await blm.connectBackend(session);
     expect(globalAdapter.connect).toHaveBeenCalled();
@@ -129,8 +161,9 @@ describe("BackendConnector per-session adapter", () => {
 
   it("falls back to global adapter when adapterName is set but no resolver", async () => {
     const globalAdapter = mockAdapter("claude");
+    const sessionRef = { current: null as any };
     const blm = new BackendConnector({
-      ...baseDeps,
+      ...makeBaseDeps(sessionRef),
       adapter: globalAdapter,
       adapterResolver: null,
     });
@@ -143,6 +176,7 @@ describe("BackendConnector per-session adapter", () => {
       pendingMessages: [],
     } as any;
     session.data = session;
+    sessionRef.current = session;
 
     await blm.connectBackend(session);
     expect(globalAdapter.connect).toHaveBeenCalled();
@@ -151,8 +185,9 @@ describe("BackendConnector per-session adapter", () => {
   it("falls back to global adapter for invalid adapterName", async () => {
     const globalAdapter = mockAdapter("claude");
     const resolver = mockResolver({ claude: mockAdapter("claude") });
+    const sessionRef = { current: null as any };
     const blm = new BackendConnector({
-      ...baseDeps,
+      ...makeBaseDeps(sessionRef),
       adapter: globalAdapter,
       adapterResolver: resolver,
     });
@@ -165,17 +200,17 @@ describe("BackendConnector per-session adapter", () => {
       pendingMessages: [],
     } as any;
     session.data = session;
+    sessionRef.current = session;
 
     await blm.connectBackend(session);
-    expect(baseDeps.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("Invalid adapter name"),
-    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Invalid adapter name"));
     expect(globalAdapter.connect).toHaveBeenCalled();
   });
 
   it("hasAdapter is true when resolver is set", () => {
+    const sessionRef = { current: null as any };
     const blm = new BackendConnector({
-      ...baseDeps,
+      ...makeBaseDeps(sessionRef),
       adapter: null,
       adapterResolver: mockResolver({ claude: mockAdapter("claude") }),
     });
@@ -183,8 +218,9 @@ describe("BackendConnector per-session adapter", () => {
   });
 
   it("hasAdapter is true when global adapter is set", () => {
+    const sessionRef = { current: null as any };
     const blm = new BackendConnector({
-      ...baseDeps,
+      ...makeBaseDeps(sessionRef),
       adapter: mockAdapter("claude"),
       adapterResolver: null,
     });
@@ -192,8 +228,9 @@ describe("BackendConnector per-session adapter", () => {
   });
 
   it("hasAdapter is false when neither resolver nor adapter is set", () => {
+    const sessionRef = { current: null as any };
     const blm = new BackendConnector({
-      ...baseDeps,
+      ...makeBaseDeps(sessionRef),
       adapter: null,
       adapterResolver: null,
     });
@@ -201,8 +238,9 @@ describe("BackendConnector per-session adapter", () => {
   });
 
   it("throws when no adapter or resolver is configured", async () => {
+    const sessionRef = { current: null as any };
     const blm = new BackendConnector({
-      ...baseDeps,
+      ...makeBaseDeps(sessionRef),
       adapter: null,
       adapterResolver: null,
     });
@@ -215,11 +253,12 @@ describe("BackendConnector per-session adapter", () => {
       pendingMessages: [],
     } as any;
     session.data = session;
+    sessionRef.current = session;
 
     await expect(blm.connectBackend(session)).rejects.toThrow("No BackendAdapter configured");
   });
 
-  it("uses setSlashCommandsState callback when slash executor is available", async () => {
+  it("calls setState with slash commands when slash executor is available", async () => {
     const sessionImpl = {
       sessionId: "test-session",
       send: vi.fn(),
@@ -245,14 +284,6 @@ describe("BackendConnector per-session adapter", () => {
       }),
     };
 
-    const setSlashCommandsState = vi.fn();
-    const blm = new BackendConnector({
-      ...baseDeps,
-      adapter,
-      adapterResolver: null,
-      setSlashCommandsState,
-    });
-
     const session = {
       id: "s6",
       adapterName: "codex",
@@ -266,10 +297,28 @@ describe("BackendConnector per-session adapter", () => {
     } as any;
     session.data = session;
 
+    // Create a runtime that tracks setState calls
+    const mockRuntime = createSessionAwareRuntime(session);
+    const setStateSpy = mockRuntime.setState;
+
+    const blm = new BackendConnector({
+      adapter,
+      adapterResolver: null,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
+      metrics: null,
+      broadcaster: { broadcast: vi.fn(), sendTo: vi.fn() } as any,
+      routeUnifiedMessage: vi.fn(),
+      emitEvent: vi.fn(),
+      getRuntime: () => mockRuntime as any,
+    });
+
     await blm.connectBackend(session);
 
-    expect(setSlashCommandsState).toHaveBeenCalledWith(session, ["/compact", "/status"]);
-    expect(session.data.state.slash_commands).toEqual([]);
+    // setState should have been called with updated slash_commands
+    expect(setStateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ slash_commands: ["/compact", "/status"] }),
+    );
+    // registerSlashCommandNames should have triggered registerFromCLI
     expect(session.registry.registerFromCLI).toHaveBeenCalledWith([
       { name: "/compact", description: "" },
       { name: "/status", description: "" },

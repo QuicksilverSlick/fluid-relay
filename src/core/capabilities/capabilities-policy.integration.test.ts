@@ -8,15 +8,36 @@ import { CapabilitiesPolicy } from "./capabilities-policy.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+function createMockRuntime(session: any) {
+  return {
+    getState: () => session.data.state,
+    setState: (state: any) => {
+      session.data.state = state;
+    },
+    getPendingInitialize: () => session.pendingInitialize,
+    setPendingInitialize: (pi: any) => {
+      session.pendingInitialize = pi;
+    },
+    trySendRawToBackend: (ndjson: string) => {
+      if (!session.backendSession) return "no_backend";
+      try {
+        session.backendSession.sendRaw(ndjson);
+        return "sent";
+      } catch {
+        return "unsupported";
+      }
+    },
+    registerCLICommands: (commands: any[]) => {
+      session.registry.registerFromCLI(commands);
+    },
+  } as any;
+}
+
 function createDeps(
   configOverrides?: Partial<ResolvedConfig>,
-  stateAccessors?: {
-    getState?: (session: any) => any;
-    setState?: (session: any, state: any) => void;
-    getPendingInitialize?: (session: any) => any;
-    setPendingInitialize?: (session: any, pendingInitialize: any) => void;
-    trySendRawToBackend?: (session: any, ndjson: string) => "sent" | "unsupported" | "no_backend";
-    registerCLICommands?: (session: any, commands: any[]) => void;
+  runtimeOverrides?: {
+    getState?: () => any;
+    setState?: (state: any) => void;
   },
 ) {
   const config = { ...DEFAULT_CONFIG, ...configOverrides };
@@ -26,36 +47,13 @@ function createDeps(
     sendTo: vi.fn(),
   } as unknown as ConsumerBroadcaster;
   const emitEvent = vi.fn();
-  const defaultStateAccessors = {
-    getState: (session: any) => session.data.state,
-    setState: (session: any, state: any) => {
-      session.data.state = state;
-    },
-    getPendingInitialize: (session: any) => session.pendingInitialize,
-    setPendingInitialize: (session: any, pendingInitialize: any) => {
-      session.pendingInitialize = pendingInitialize;
-    },
-    trySendRawToBackend: (session: any, ndjson: string) => {
-      if (!session.backendSession) return "no_backend";
-      try {
-        session.backendSession.sendRaw(ndjson);
-        return "sent";
-      } catch {
-        return "unsupported";
-      }
-    },
-    registerCLICommands: (session: any, commands: any[]) => {
-      session.registry.registerFromCLI(commands);
-    },
-  };
-  const resolvedStateAccessors = { ...defaultStateAccessors, ...(stateAccessors ?? {}) };
 
   const protocol = new CapabilitiesPolicy(
     config,
     noopLogger,
     broadcaster,
     emitEvent,
-    resolvedStateAccessors,
+    (session: any) => ({ ...createMockRuntime(session), ...(runtimeOverrides ?? {}) }),
   );
 
   return { protocol, config, broadcaster, emitEvent };
@@ -569,7 +567,7 @@ describe("CapabilitiesPolicy", () => {
       let state = { ...session.state, skills: ["commit"] };
       const { protocol, broadcaster } = createDeps(undefined, {
         getState: () => state,
-        setState: (_session, next) => {
+        setState: (next: any) => {
           state = next;
         },
       });

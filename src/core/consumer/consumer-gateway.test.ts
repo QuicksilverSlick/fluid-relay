@@ -11,7 +11,28 @@ import type { Session } from "../session/session-repository.js";
 import type { ConsumerGatewayDeps } from "./consumer-gateway.js";
 import { ConsumerGateway } from "./consumer-gateway.js";
 
+function createMockRuntime(session: any) {
+  return {
+    allocateAnonymousIdentityIndex: vi.fn(() => 1),
+    getConsumerIdentity: vi.fn((ws: any) => session.consumerSockets.get(ws)),
+    checkRateLimit: vi.fn(() => true),
+    removeConsumer: vi.fn((ws: any) => {
+      const id = session.consumerSockets.get(ws);
+      session.consumerSockets.delete(ws);
+      return id;
+    }),
+    addConsumer: vi.fn((ws: any, identity: any) => session.consumerSockets.set(ws, identity)),
+    getConsumerCount: vi.fn(() => session.consumerSockets.size),
+    getState: vi.fn(() => session.data.state),
+    getMessageHistory: vi.fn(() => session.data.messageHistory),
+    getPendingPermissions: vi.fn(() => Array.from(session.data.pendingPermissions.values())),
+    getQueuedMessage: vi.fn(() => session.data.queuedMessage),
+    isBackendConnected: vi.fn(() => false),
+  } as any;
+}
+
 function createDeps(overrides?: Partial<ConsumerGatewayDeps>): ConsumerGatewayDeps {
+  const fallbackSession = createMockSession({ id: "s1" });
   return {
     sessions: {
       get: vi.fn(() => undefined),
@@ -38,17 +59,7 @@ function createDeps(overrides?: Partial<ConsumerGatewayDeps>): ConsumerGatewayDe
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
     metrics: null,
     emit: vi.fn(),
-    allocateAnonymousIdentityIndex: vi.fn(() => 1),
-    checkRateLimit: vi.fn(() => true),
-    getConsumerIdentity: vi.fn(() => undefined),
-    getConsumerCount: vi.fn(() => 0),
-    getState: vi.fn(),
-    getMessageHistory: vi.fn(() => []),
-    getPendingPermissions: vi.fn(() => []),
-    getQueuedMessage: vi.fn(() => null),
-    isBackendConnected: vi.fn(() => false),
-    registerConsumer: vi.fn(),
-    unregisterConsumer: vi.fn(),
+    getRuntime: vi.fn((_session: any) => createMockRuntime(fallbackSession)),
     routeConsumerMessage: vi.fn(),
     maxConsumerMessageSize: 256 * 1024,
     tracer: {
@@ -85,10 +96,15 @@ describe("ConsumerGateway", () => {
       }
     }
 
-    const sockets = new Map<any, ConsumerIdentity>();
     const emitted: Array<{ event: string; payload: unknown }> = [];
     const identity =
       options?.identity ?? ({ userId: "u1", displayName: "User 1", role: "participant" } as const);
+
+    const mockRuntime = {
+      ...createMockRuntime(session),
+      isBackendConnected: vi.fn(() => options?.backendConnected ?? false),
+      checkRateLimit: vi.fn(() => !(options?.rateLimited ?? false)),
+    };
 
     const metrics = { recordEvent: vi.fn() } as any;
     const deps = createDeps({
@@ -109,22 +125,7 @@ describe("ConsumerGateway", () => {
       emit: vi.fn((event, payload) => {
         emitted.push({ event, payload });
       }),
-      checkRateLimit: vi.fn(() => !(options?.rateLimited ?? false)),
-      getConsumerIdentity: vi.fn((_, ws) => sockets.get(ws)),
-      getConsumerCount: vi.fn(() => sockets.size),
-      getState: vi.fn((s) => s.data.state),
-      getMessageHistory: vi.fn((s) => s.data.messageHistory),
-      getPendingPermissions: vi.fn((s) => Array.from(s.data.pendingPermissions.values())),
-      getQueuedMessage: vi.fn((s) => s.data.queuedMessage),
-      isBackendConnected: vi.fn(() => options?.backendConnected ?? false),
-      registerConsumer: vi.fn((_, ws, acceptedIdentity) => {
-        sockets.set(ws, acceptedIdentity);
-      }),
-      unregisterConsumer: vi.fn((_, ws) => {
-        const existing = sockets.get(ws);
-        sockets.delete(ws);
-        return existing;
-      }),
+      getRuntime: vi.fn(() => mockRuntime),
       routeConsumerMessage: vi.fn(),
     });
 
@@ -136,16 +137,18 @@ describe("ConsumerGateway", () => {
         .mock.calls.filter(([target]) => target === ws)
         .map(([, message]) => message as Record<string, unknown>);
 
-    return { gateway, deps, ws, session, emitted, sentToWs, identity, metrics };
+    return { gateway, deps, ws, session, emitted, sentToWs, identity, metrics, mockRuntime };
   }
 
   it("rejects consumer open for unknown session", () => {
-    const { gateway, deps, ws, emitted, metrics } = createHarness({ sessionExists: false });
+    const { gateway, deps, ws, emitted, metrics, mockRuntime } = createHarness({
+      sessionExists: false,
+    });
 
     gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);
 
     expect(ws.close).toHaveBeenCalledWith(4404, "Session not found");
-    expect(vi.mocked(deps.registerConsumer)).not.toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.addConsumer)).not.toHaveBeenCalled();
     expect(emitted.some((e) => e.event === "consumer:auth_failed")).toBe(true);
     expect(metrics.recordEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -157,7 +160,7 @@ describe("ConsumerGateway", () => {
   });
 
   it("accepts anonymous consumer and sends identity + session_init + cli_disconnected", () => {
-    const { gateway, deps, ws, sentToWs, emitted } = createHarness({
+    const { gateway, deps, ws, sentToWs, emitted, mockRuntime } = createHarness({
       backendConnected: false,
       history: [],
       pendingPermissions: [],
@@ -166,7 +169,7 @@ describe("ConsumerGateway", () => {
 
     gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);
 
-    expect(vi.mocked(deps.registerConsumer)).toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.addConsumer)).toHaveBeenCalled();
     expect(vi.mocked(deps.gitTracker.resolveGitInfo)).toHaveBeenCalled();
     const sent = sentToWs();
     expect(sent[0]).toEqual(
@@ -260,13 +263,13 @@ describe("ConsumerGateway", () => {
   });
 
   it("authenticator path accepts asynchronously", async () => {
-    const { gateway, deps, ws } = createHarness({ hasAuthenticator: true });
+    const { gateway, deps, ws, mockRuntime } = createHarness({ hasAuthenticator: true });
 
     gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);
     await flushPromises();
 
     expect(vi.mocked(deps.gatekeeper.authenticateAsync)).toHaveBeenCalled();
-    expect(vi.mocked(deps.registerConsumer)).toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.addConsumer)).toHaveBeenCalled();
   });
 
   it("routes valid consumer messages after auth + rate limit checks", () => {
@@ -366,21 +369,21 @@ describe("ConsumerGateway", () => {
   });
 
   it("handleConsumerClose unregisters consumer, emits event, and broadcasts presence", () => {
-    const { gateway, deps, ws, emitted } = createHarness();
+    const { gateway, deps, ws, emitted, mockRuntime } = createHarness();
     gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);
 
     gateway.handleConsumerClose(ws, "s1");
 
     expect(vi.mocked(deps.gatekeeper.cancelPendingAuth)).toHaveBeenCalledWith(ws);
-    expect(vi.mocked(deps.unregisterConsumer)).toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.removeConsumer)).toHaveBeenCalled();
     expect(vi.mocked(deps.broadcaster.broadcastPresence)).toHaveBeenCalled();
     expect(emitted.some((e) => e.event === "consumer:disconnected")).toBe(true);
   });
 
   it("handleConsumerClose is safe when session is missing", () => {
-    const { gateway, deps, ws } = createHarness({ sessionExists: false });
+    const { gateway, deps, ws, mockRuntime } = createHarness({ sessionExists: false });
     gateway.handleConsumerClose(ws, "s1");
-    expect(vi.mocked(deps.unregisterConsumer)).not.toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.removeConsumer)).not.toHaveBeenCalled();
     expect(vi.mocked(deps.gatekeeper.cancelPendingAuth)).toHaveBeenCalledWith(ws);
   });
 });

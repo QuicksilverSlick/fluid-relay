@@ -460,7 +460,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
 
     // Test watchdog broadcast internal method given to policies
     const reconnectBridge = (mgr as any).reconnectController["deps"]["bridge"];
-    const broadcastSpy = vi.spyOn((mgr as any).services.broadcaster, "broadcastWatchdogState");
+    const broadcastSpy = vi.spyOn((mgr as any).broadcaster, "broadcastWatchdogState");
 
     // With valid session
     reconnectBridge.broadcastWatchdogState(session.sessionId, {
@@ -488,7 +488,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     await mgr.start();
     const session = await mgr.createSession({ cwd: process.cwd() });
 
-    const broadcaster = (mgr as any).services.broadcaster;
+    const broadcaster = (mgr as any).broadcaster;
     const resumeFailedSpy = vi.spyOn(broadcaster, "broadcastResumeFailed");
     const circuitBreakerSpy = vi.spyOn(broadcaster, "broadcastCircuitBreakerState");
 
@@ -527,22 +527,16 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const session = await mgr.createSession({ cwd: process.cwd() });
 
     // isBackendConnected
-    const sessionStore = mgr.services.store.get(session.sessionId);
-    expect(
-      sessionStore && mgr.services.backendConnector.isBackendConnected(sessionStore),
-    ).toBeFalsy();
-    const missingStore = mgr.services.store.get("missing-session");
-    expect(
-      missingStore && mgr.services.backendConnector.isBackendConnected(missingStore),
-    ).toBeFalsy();
+    expect(mgr.isBackendConnected(session.sessionId)).toBeFalsy();
+    expect(mgr.isBackendConnected("missing-session")).toBeFalsy();
 
     // broadcastProcessOutput is internal (via handleProcessOutput)
-    const broadcastSpy = vi.spyOn((mgr as any).services.broadcaster, "broadcastProcessOutput");
+    const broadcastSpy = vi.spyOn((mgr as any).broadcaster, "broadcastProcessOutput");
     (mgr as any).handleProcessOutput(session.sessionId, "stdout", "test");
     expect(broadcastSpy).toHaveBeenCalled();
 
     // executeSlashCommand
-    const slashSpy = vi.spyOn((mgr as any).services.runtimeApi, "executeSlashCommand");
+    const slashSpy = vi.spyOn(mgr, "executeSlashCommand");
     mgr.executeSlashCommand(session.sessionId, "/test");
     expect(slashSpy).toHaveBeenCalled();
 
@@ -581,17 +575,17 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     expect(snapshot).toBeDefined();
 
     // applyPolicyCommand
-    const policySpy = vi.spyOn((mgr as any).services.runtimeApi, "applyPolicyCommand");
+    const policySpy = vi.spyOn(mgr as any, "applyPolicyCommandForSession");
     policyBridge.applyPolicyCommand(session.sessionId, { type: "idle_reap" });
     expect(policySpy).toHaveBeenCalled();
 
     // closeSession
-    const closeSpy = vi.spyOn((mgr as any).services.lifecycleService, "closeSession");
+    const closeSpy = vi.spyOn(mgr as any, "closeSessionInternal");
     policyBridge.closeSession(session.sessionId);
     expect(closeSpy).toHaveBeenCalled();
 
     // recoveryService connectBackend
-    const connectSpy = vi.spyOn((mgr as any).services.backendConnector, "connectBackend");
+    const connectSpy = vi.spyOn((mgr as any).backendConnector, "connectBackend");
     const recoveryBridge = (mgr as any).recoveryService["bridge"];
     await expect(recoveryBridge.connectBackend(session.sessionId, {})).rejects.toThrow(
       "No BackendAdapter configured",
@@ -618,7 +612,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     expect(mgr.renameSession("missing-session", "name")).toBeNull();
 
     // restoreFromStorage returning 0
-    vi.spyOn((mgr as any).services.store, "restoreAll").mockReturnValue(0);
+    vi.spyOn((mgr as any).store, "restoreAll").mockReturnValue(0);
     const restoreBridge = (mgr as any).startupRestoreService["bridge"];
     restoreBridge.restoreFromStorage();
 
@@ -646,7 +640,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     expect(renameSpy).toHaveBeenCalledWith(session.sessionId, "a".repeat(47) + "...");
 
     // trigger onCapabilitiesTimeout
-    const capSpy = vi.spyOn((mgr as any).services.runtimeApi, "applyPolicyCommand");
+    const capSpy = vi.spyOn(mgr as any, "applyPolicyCommandForSession");
     relayHandlers.onCapabilitiesTimeout({ sessionId: session.sessionId });
     expect(capSpy).toHaveBeenCalled();
 

@@ -10,20 +10,26 @@ import { MessageQueueHandler } from "./message-queue-handler.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+function createMockRuntime(session: any) {
+  return {
+    getLastStatus: () => session.data.lastStatus,
+    setLastStatus: (status: any) => {
+      session.data.lastStatus = status;
+    },
+    getQueuedMessage: () => session.data.queuedMessage,
+    setQueuedMessage: (queued: any) => {
+      session.data.queuedMessage = queued;
+    },
+    getConsumerIdentity: (ws: any) => session.consumerSockets.get(ws),
+  } as any;
+}
+
 function setup() {
   const broadcaster = new ConsumerBroadcaster(noopLogger);
   const sendUserMessage = vi.fn();
-  const handler = new MessageQueueHandler(broadcaster, sendUserMessage, {
-    getLastStatus: (session) => session.data.lastStatus,
-    setLastStatus: (session, status) => {
-      session.data.lastStatus = status;
-    },
-    getQueuedMessage: (session) => session.data.queuedMessage,
-    setQueuedMessage: (session, queued) => {
-      session.data.queuedMessage = queued;
-    },
-    getConsumerIdentity: (session, ws) => session.consumerSockets.get(ws),
-  });
+  const handler = new MessageQueueHandler(broadcaster, sendUserMessage, (session: any) =>
+    createMockRuntime(session),
+  );
 
   const ws = createTestSocket();
   const session = createMockSession({ lastStatus: null });
@@ -47,17 +53,22 @@ describe("MessageQueueHandler", () => {
       const sendUserMessage = vi.fn();
       let status: "compacting" | "idle" | "running" | null = "running";
       let queued: any = null;
-      const handler = new MessageQueueHandler(broadcaster, sendUserMessage, {
-        getLastStatus: () => status,
-        setLastStatus: (_session, next) => {
-          status = next;
-        },
-        getQueuedMessage: () => queued,
-        setQueuedMessage: (_session, next) => {
-          queued = next;
-        },
-        getConsumerIdentity: (runtimeSession, ws) => runtimeSession.consumerSockets.get(ws),
-      });
+      const handler = new MessageQueueHandler(
+        broadcaster,
+        sendUserMessage,
+        () =>
+          ({
+            getLastStatus: () => status,
+            setLastStatus: (next: any) => {
+              status = next;
+            },
+            getQueuedMessage: () => queued,
+            setQueuedMessage: (next: any) => {
+              queued = next;
+            },
+            getConsumerIdentity: (ws: any) => session.consumerSockets.get(ws),
+          }) as any,
+      );
       const ws = createTestSocket();
       const session = createMockSession({ lastStatus: null, queuedMessage: null });
       session.consumerSockets.set(ws, {

@@ -24,12 +24,16 @@ import type {
 } from "../types/cli-messages.js";
 import type { ProviderConfig, ResolvedConfig } from "../types/config.js";
 import { resolveConfig } from "../types/config.js";
-import type { SessionCoordinatorEventMap } from "../types/events.js";
+import type { BridgeEventMap, SessionCoordinatorEventMap } from "../types/events.js";
 import type { SessionInfo, SessionSnapshot } from "../types/session-state.js";
 import { noopLogger } from "../utils/noop-logger.js";
 import { redactSecrets } from "../utils/redact-secrets.js";
-import { buildSessionServices } from "./build-session-services.js";
+import { BackendConnector } from "./backend/backend-connector.js";
+import { CapabilitiesPolicy } from "./capabilities/capabilities-policy.js";
+import { ConsumerBroadcaster, MAX_CONSUMER_MESSAGE_SIZE } from "./consumer/consumer-broadcaster.js";
 import type { RateLimiterFactory } from "./consumer/consumer-gatekeeper.js";
+import { ConsumerGatekeeper } from "./consumer/consumer-gatekeeper.js";
+import { ConsumerGateway } from "./consumer/consumer-gateway.js";
 import { BackendRecoveryService } from "./coordinator/backend-recovery-service.js";
 import { CoordinatorEventRelay } from "./coordinator/coordinator-event-relay.js";
 import { ProcessLogService } from "./coordinator/process-log-service.js";
@@ -40,6 +44,7 @@ import type { CliAdapterName } from "./interfaces/adapter-names.js";
 import type { AdapterResolver } from "./interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "./interfaces/backend-adapter.js";
 import { isInvertedConnectionAdapter } from "./interfaces/inverted-connection-adapter.js";
+import type { InboundCommand, PolicyCommand } from "./interfaces/runtime-commands.js";
 import type {
   IdleSessionReaper as IIdleSessionReaper,
   ReconnectController as IReconnectController,
@@ -47,10 +52,35 @@ import type {
 import type { SessionLauncher } from "./interfaces/session-launcher.js";
 import type { SessionRegistry } from "./interfaces/session-registry.js";
 import type { MessageTracer } from "./messaging/message-tracer.js";
+import { noopTracer } from "./messaging/message-tracer.js";
+import { generateSlashRequestId, generateTraceId } from "./messaging/message-tracing-utils.js";
 import { IdlePolicy } from "./policies/idle-policy.js";
 import { ReconnectPolicy } from "./policies/reconnect-policy.js";
+import { GitInfoTracker } from "./session/git-info-tracker.js";
+import { MessageQueueHandler } from "./session/message-queue-handler.js";
+import type { SessionData } from "./session/session-data.js";
+import type { SystemSignal } from "./session/session-event.js";
+import {
+  InMemorySessionLeaseCoordinator,
+  type SessionLeaseCoordinator,
+} from "./session/session-lease-coordinator.js";
+import type { Session } from "./session/session-repository.js";
+import { SessionRepository } from "./session/session-repository.js";
+import type { SessionRuntime } from "./session/session-runtime.js";
+import { SessionRuntime as SessionRuntimeImpl } from "./session/session-runtime.js";
 import { SessionTransportHub } from "./session/session-transport-hub.js";
-import type { SessionServices } from "./session-services.js";
+import {
+  AdapterNativeHandler,
+  LocalHandler,
+  PassthroughHandler,
+  SlashCommandChain,
+  UnsupportedHandler,
+} from "./slash/slash-command-chain.js";
+import { SlashCommandExecutor } from "./slash/slash-command-executor.js";
+import { SlashCommandRegistry } from "./slash/slash-command-registry.js";
+import { SlashCommandService } from "./slash/slash-command-service.js";
+import { TeamToolCorrelationBuffer } from "./team/team-tool-correlation.js";
+import type { UnifiedMessage } from "./types/unified-message.js";
 
 /**
  * Facade wiring session services + SessionLauncher together.
@@ -77,6 +107,8 @@ export interface SessionCoordinatorOptions {
   rateLimiterFactory?: RateLimiterFactory;
   tracer?: MessageTracer;
   defaultAdapterName?: string;
+  leaseCoordinator?: SessionLeaseCoordinator;
+  leaseOwnerId?: string;
 }
 
 export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEventMap> {
@@ -84,13 +116,34 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
   readonly registry: SessionRegistry;
   readonly domainEvents: DomainEventBus;
 
-  public readonly services: SessionServices;
   /** Plain EventEmitter for bridge events — forwarded to this coordinator emitter via CoordinatorEventRelay. */
   public readonly _bridgeEmitter: EventEmitter;
+
+  // ── Services exposed for tests and e2e helpers ────────────────────────────
+  public readonly store: SessionRepository;
+  public readonly broadcaster: ConsumerBroadcaster;
+  public readonly backendConnector: BackendConnector;
+
+  // ── Private infra ─────────────────────────────────────────────────────────
+  private readonly runtimes = new Map<string, SessionRuntime>();
+  private readonly leaseCoordinator: SessionLeaseCoordinator;
+  private readonly leaseOwnerId: string;
+  private readonly tracer: MessageTracer;
+  private readonly gitResolver: GitInfoResolver | null;
+  private readonly metrics: MetricsCollector | null;
   private adapterResolver: AdapterResolver | null;
   private _defaultAdapterName: string;
   private config: ResolvedConfig;
   private logger: Logger;
+
+  // ── Private services (circular deps resolved via late-init) ───────────────
+  private gitTracker!: GitInfoTracker;
+  private capabilitiesPolicy!: CapabilitiesPolicy;
+  private queueHandler!: MessageQueueHandler;
+  private slashService!: SlashCommandService;
+  private consumerGateway!: ConsumerGateway;
+
+  // ── Coordinator sub-services ──────────────────────────────────────────────
   private transportHub: SessionTransportHub;
   private reconnectController: IReconnectController;
   private idleSessionReaper: IIdleSessionReaper;
@@ -100,38 +153,206 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
   private relay: CoordinatorEventRelay;
   private started = false;
 
+  // ── emitEvent: forwards to _bridgeEmitter, with lifecycle signal dispatch ──
+  private readonly emitEvent = (type: string, payload: unknown): void => {
+    if (
+      payload &&
+      typeof payload === "object" &&
+      "sessionId" in payload &&
+      (type === "backend:connected" || type === "backend:disconnected" || type === "session:closed")
+    ) {
+      const sessionId = (payload as { sessionId?: unknown }).sessionId;
+      if (typeof sessionId === "string") {
+        const runtime = this.runtimes.get(sessionId);
+        if (runtime) {
+          const signal: SystemSignal =
+            type === "backend:connected"
+              ? { kind: "BACKEND_CONNECTED" }
+              : type === "backend:disconnected"
+                ? { kind: "BACKEND_DISCONNECTED", reason: "bridge-event" }
+                : { kind: "SESSION_CLOSED" };
+          runtime.process({ type: "SYSTEM_SIGNAL", signal });
+        }
+      }
+    }
+    this._bridgeEmitter.emit(type, payload);
+  };
+
   constructor(options: SessionCoordinatorOptions) {
     super();
 
-    // ── Core config ─────────────────────────────────────────────────────
+    // ── Core config ─────────────────────────────────────────────────────────
     this.config = resolveConfig(options.config);
     this.logger = options.logger ?? noopLogger;
     this.adapterResolver = options.adapterResolver ?? null;
     this._defaultAdapterName = options.defaultAdapterName ?? "claude";
     this.domainEvents = new DomainEventBus();
+    this.tracer = (options.tracer ?? noopTracer) as MessageTracer;
+    this.gitResolver = options.gitResolver ?? null;
+    this.metrics = options.metrics ?? null;
+    this.leaseCoordinator = options.leaseCoordinator ?? new InMemorySessionLeaseCoordinator();
+    this.leaseOwnerId = options.leaseOwnerId ?? `beamcode-${process.pid}-${randomUUID()}`;
 
-    // ── Bridge event emitter (replaces SessionBridge as event source) ────
+    // ── Bridge event emitter ─────────────────────────────────────────────────
     this._bridgeEmitter = new EventEmitter();
     this._bridgeEmitter.setMaxListeners(100);
 
-    // ── Session services (message routing + runtime map) ─────────────────
-    this.services = buildSessionServices(
+    // ── Session store ────────────────────────────────────────────────────────
+    this.store = new SessionRepository(options.storage ?? null, {
+      createCorrelationBuffer: () => new TeamToolCorrelationBuffer(),
+      createRegistry: () => new SlashCommandRegistry(),
+    });
+
+    // ── Consumer plane ───────────────────────────────────────────────────────
+    this.broadcaster = new ConsumerBroadcaster(
+      this.logger,
+      (sessionId: string, msg: unknown) =>
+        this.emitEvent("message:outbound", { sessionId, message: msg }),
+      this.tracer,
+      (session: Session, ws: import("../interfaces/transport.js").WebSocketLike) =>
+        this.getOrCreateRuntime(session).removeConsumer(ws),
       {
-        storage: options.storage,
-        gitResolver: options.gitResolver,
-        authenticator: options.authenticator,
-        logger: options.logger,
-        config: options.config,
-        metrics: options.metrics,
-        adapter: options.adapter,
-        adapterResolver: options.adapterResolver,
-        rateLimiterFactory: options.rateLimiterFactory,
-        tracer: options.tracer,
+        getConsumerSockets: (session: Session) =>
+          this.getOrCreateRuntime(session).getConsumerSockets(),
       },
-      (type, payload) => this._bridgeEmitter.emit(type, payload),
     );
 
-    // ── Transport + policies ─────────────────────────────────────────────
+    const gatekeeper = new ConsumerGatekeeper(
+      options.authenticator ?? null,
+      this.config,
+      options.rateLimiterFactory,
+    );
+
+    this.gitTracker = new GitInfoTracker(this.gitResolver, {
+      getState: (session: Session) => this.getOrCreateRuntime(session).getState(),
+      setState: (session: Session, state: SessionData["state"]) =>
+        this.getOrCreateRuntime(session).setState(state),
+    });
+
+    // ── Message plane ────────────────────────────────────────────────────────
+    this.capabilitiesPolicy = new CapabilitiesPolicy(
+      this.config,
+      this.logger,
+      this.broadcaster,
+      this.emitEvent,
+      (session: Session) => this.getOrCreateRuntime(session),
+    );
+
+    this.queueHandler = new MessageQueueHandler(
+      this.broadcaster,
+      (
+        sessionId: string,
+        content: string,
+        opts?: { images?: { media_type: string; data: string }[] },
+      ) => this.sendUserMessageForSession(sessionId, content, opts),
+      (session: Session) => this.getOrCreateRuntime(session),
+      (session: Session) => this.store.persistSync(session),
+    );
+
+    // ── Slash service ────────────────────────────────────────────────────────
+    const localHandler = new LocalHandler({
+      executor: new SlashCommandExecutor(),
+      broadcaster: this.broadcaster,
+      emitEvent: this.emitEvent as (
+        type: keyof BridgeEventMap,
+        payload: BridgeEventMap[keyof BridgeEventMap],
+      ) => void,
+      tracer: this.tracer,
+    });
+
+    const commandChain = new SlashCommandChain([
+      localHandler,
+      new AdapterNativeHandler({
+        broadcaster: this.broadcaster,
+        emitEvent: this.emitEvent as (
+          type: keyof BridgeEventMap,
+          payload: BridgeEventMap[keyof BridgeEventMap],
+        ) => void,
+        tracer: this.tracer,
+      }),
+      new PassthroughHandler({
+        broadcaster: this.broadcaster,
+        emitEvent: this.emitEvent as (
+          type: keyof BridgeEventMap,
+          payload: BridgeEventMap[keyof BridgeEventMap],
+        ) => void,
+        registerPendingPassthrough: (
+          session: Session,
+          entry: Session["pendingPassthroughs"][number],
+        ) => this.getOrCreateRuntime(session).enqueuePendingPassthrough(entry),
+        sendUserMessage: (
+          sessionId: string,
+          content: string,
+          trace?: { traceId?: string; requestId?: string; command?: string },
+        ) =>
+          this.sendUserMessageForSession(sessionId, content, {
+            traceId: trace?.traceId,
+            slashRequestId: trace?.requestId,
+            slashCommand: trace?.command,
+          }),
+        tracer: this.tracer,
+      }),
+      new UnsupportedHandler({
+        broadcaster: this.broadcaster,
+        emitEvent: this.emitEvent as (
+          type: keyof BridgeEventMap,
+          payload: BridgeEventMap[keyof BridgeEventMap],
+        ) => void,
+        tracer: this.tracer,
+      }),
+    ]);
+
+    this.slashService = new SlashCommandService({
+      tracer: this.tracer,
+      now: () => Date.now(),
+      generateTraceId: () => generateTraceId(),
+      generateSlashRequestId: () => generateSlashRequestId(),
+      commandChain,
+      localHandler,
+    });
+
+    // ── Backend connector ────────────────────────────────────────────────────
+    this.backendConnector = new BackendConnector({
+      adapter: options.adapter ?? null,
+      adapterResolver: options.adapterResolver ?? null,
+      logger: this.logger,
+      metrics: this.metrics,
+      broadcaster: this.broadcaster,
+      routeUnifiedMessage: (session: Session, msg: UnifiedMessage) =>
+        this.withMutableSession(session.id, "handleBackendMessage", (s) =>
+          this.getOrCreateRuntime(s).process({ type: "BACKEND_MESSAGE", message: msg }),
+        ),
+      emitEvent: this.emitEvent as (
+        type: keyof BridgeEventMap,
+        payload: BridgeEventMap[keyof BridgeEventMap],
+      ) => void,
+      getRuntime: (session: Session) => this.getOrCreateRuntime(session),
+      tracer: this.tracer,
+    });
+
+    // ── Consumer gateway ─────────────────────────────────────────────────────
+    this.consumerGateway = new ConsumerGateway({
+      sessions: { get: (sessionId: string) => this.store.get(sessionId) },
+      gatekeeper,
+      broadcaster: this.broadcaster,
+      gitTracker: this.gitTracker,
+      logger: this.logger,
+      metrics: this.metrics,
+      emit: this.emitEvent as ConsumerGateway["deps"]["emit"],
+      getRuntime: (session: Session) => this.getOrCreateRuntime(session),
+      routeConsumerMessage: (
+        session: Session,
+        msg: InboundCommand,
+        ws: import("../interfaces/transport.js").WebSocketLike,
+      ) =>
+        this.withMutableSession(session.id, "handleInboundCommand", (s) =>
+          this.getOrCreateRuntime(s).process({ type: "INBOUND_COMMAND", command: msg, ws }),
+        ),
+      maxConsumerMessageSize: MAX_CONSUMER_MESSAGE_SIZE,
+      tracer: this.tracer,
+    });
+
+    // ── Transport + policies ─────────────────────────────────────────────────
     this.launcher = options.launcher;
     this.registry = options.registry ?? options.launcher;
 
@@ -141,16 +362,16 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       handleConsumerOpen: (
         ws: import("../interfaces/transport.js").WebSocketLike,
         ctx: import("../interfaces/auth.js").AuthContext,
-      ) => this.services.consumerGateway.handleConsumerOpen(ws, ctx),
+      ) => this.consumerGateway.handleConsumerOpen(ws, ctx),
       handleConsumerMessage: (
         ws: import("../interfaces/transport.js").WebSocketLike,
         sessionId: string,
         data: string | Buffer,
-      ) => this.services.consumerGateway.handleConsumerMessage(ws, sessionId, data),
+      ) => this.consumerGateway.handleConsumerMessage(ws, sessionId, data),
       handleConsumerClose: (
         ws: import("../interfaces/transport.js").WebSocketLike,
         sessionId: string,
-      ) => this.services.consumerGateway.handleConsumerClose(ws, sessionId),
+      ) => this.consumerGateway.handleConsumerClose(ws, sessionId),
       setAdapterName: (sessionId: string, name: string) => this.setAdapterName(sessionId, name),
       connectBackend: (
         sessionId: string,
@@ -159,19 +380,17 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     };
 
     const bridgeLifecycle = {
-      getAllSessions: () => this.services.store.getAllStates(),
+      getAllSessions: () => this.store.getAllStates(),
       getSession: (sessionId: string) => this.getSessionSnapshot(sessionId),
-      closeSession: (sessionId: string) => this.services.lifecycleService.closeSession(sessionId),
-      applyPolicyCommand: (
-        sessionId: string,
-        command: import("./interfaces/runtime-commands.js").PolicyCommand,
-      ) => this.services.runtimeApi.applyPolicyCommand(sessionId, command),
+      closeSession: (sessionId: string) => this.closeSessionInternal(sessionId),
+      applyPolicyCommand: (sessionId: string, command: PolicyCommand) =>
+        this.applyPolicyCommandForSession(sessionId, command),
       broadcastWatchdogState: (
         sessionId: string,
         watchdog: { gracePeriodMs: number; startedAt: number } | null,
       ) => {
-        const session = this.services.store.get(sessionId);
-        if (session) this.services.broadcaster.broadcastWatchdogState(session, watchdog);
+        const session = this.store.get(sessionId);
+        if (session) this.broadcaster.broadcastWatchdogState(session, watchdog);
       },
     };
 
@@ -199,13 +418,13 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       domainEvents: this.domainEvents,
     });
 
-    // ── Extracted services (coordinator/) ────────────────────────────────
+    // ── Extracted services (coordinator/) ────────────────────────────────────
     this.startupRestoreService = new StartupRestoreService({
       launcher: this.launcher,
       registry: this.registry,
       bridge: {
         restoreFromStorage: () => {
-          const count = this.services.store.restoreAll();
+          const count = this.store.restoreAll();
           if (count > 0) this.logger.info(`Restored ${count} session(s) from disk`);
           return count;
         },
@@ -217,8 +436,8 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       registry: this.registry,
       bridge: {
         isBackendConnected: (sessionId) => {
-          const session = this.services.store.get(sessionId);
-          return session ? this.services.backendConnector.isBackendConnected(session) : false;
+          const session = this.store.get(sessionId);
+          return session ? this.backendConnector.isBackendConnected(session) : false;
         },
         connectBackend: (sessionId, opts) => this.connectBackendForSession(sessionId, opts),
       },
@@ -228,7 +447,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       killGracePeriodMs: this.config.killGracePeriodMs,
     });
 
-    // ── Event relay (coordinator/) ──────────────────────────────────────
+    // ── Event relay (coordinator/) ────────────────────────────────────────────
     this.relay = new CoordinatorEventRelay({
       emit: (event, payload) =>
         // biome-ignore lint/suspicious/noExplicitAny: dynamic event forwarding
@@ -254,8 +473,8 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           this.registry.markConnected(payload.sessionId);
         },
         onProcessResumeFailed: (payload) => {
-          const session = this.services.store.get(payload.sessionId);
-          if (session) this.services.broadcaster.broadcastResumeFailed(session, payload.sessionId);
+          const session = this.store.get(payload.sessionId);
+          if (session) this.broadcaster.broadcastResumeFailed(session, payload.sessionId);
         },
         onProcessStdout: (payload) => {
           this.handleProcessOutput(payload.sessionId, "stdout", payload.data);
@@ -264,9 +483,9 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           this.handleProcessOutput(payload.sessionId, "stderr", payload.data);
         },
         onProcessExited: (payload) => {
-          const session = this.services.store.get(payload.sessionId);
+          const session = this.store.get(payload.sessionId);
           if (session && payload.circuitBreaker) {
-            this.services.broadcaster.broadcastCircuitBreakerState(session, payload.circuitBreaker);
+            this.broadcaster.broadcastCircuitBreakerState(session, payload.circuitBreaker);
           }
         },
         onFirstTurnCompleted: (payload) => {
@@ -283,7 +502,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           this.processLogService.cleanup(payload.sessionId);
         },
         onCapabilitiesTimeout: (payload) => {
-          this.services.runtimeApi.applyPolicyCommand(payload.sessionId, {
+          this.applyPolicyCommandForSession(payload.sessionId, {
             type: "capabilities_timeout",
           });
         },
@@ -359,7 +578,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       this.registry.markConnected(sessionId);
     } catch (err) {
       this.registry.removeSession(sessionId);
-      void this.services.lifecycleService.closeSession(sessionId);
+      void this.closeSessionInternal(sessionId);
       throw err;
     }
 
@@ -406,7 +625,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     await this.transportHub.stop();
 
     await this.launcher.killAll();
-    await this.closeSessions();
+    await this.closeAllSessions();
     await this.adapterResolver?.stopAll?.();
     this.started = false;
   }
@@ -428,7 +647,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     this.recoveryService.clearDedupState(sessionId);
 
     // Close WS connections and remove per-session JSON from storage
-    await this.services.lifecycleService.closeSession(sessionId);
+    await this.closeSessionInternal(sessionId);
 
     // Remove from registry's in-memory map and re-persist
     this.registry.removeSession(sessionId);
@@ -441,20 +660,12 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     const existing = this.registry.getSession(sessionId);
     if (!existing) return null;
     this.registry.setSessionName(sessionId, name);
-    const session = this.services.store.get(sessionId);
+    const session = this.store.get(sessionId);
     if (session) {
-      this.services.broadcaster.broadcastNameUpdate(session, name);
+      this.broadcaster.broadcastNameUpdate(session, name);
     }
     this._bridgeEmitter.emit("session:renamed", { sessionId, name });
     return { ...existing, name };
-  }
-
-  private handleProcessOutput(sessionId: string, stream: "stdout" | "stderr", data: string): void {
-    const redacted = this.processLogService.append(sessionId, stream, data);
-    const session = this.services.store.get(sessionId);
-    if (session) {
-      this.services.broadcaster.broadcastProcessOutput(session, stream, redacted);
-    }
   }
 
   /** Execute a slash command programmatically. */
@@ -462,33 +673,126 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     sessionId: string,
     command: string,
   ): Promise<{ content: string; source: "emulated" } | null> {
-    return this.services.runtimeApi.executeSlashCommand(sessionId, command);
+    const session = this.store.get(sessionId);
+    return session ? this.getOrCreateRuntime(session).executeSlashCommand(command) : null;
   }
 
   /** Get models reported by the CLI's initialize response. */
   getSupportedModels(sessionId: string): InitializeModel[] {
-    return this.services.runtimeApi.getSupportedModels(sessionId);
+    return this.withSession(sessionId, [], (s) => this.getOrCreateRuntime(s).getSupportedModels());
   }
 
   /** Get commands reported by the CLI's initialize response. */
   getSupportedCommands(sessionId: string): InitializeCommand[] {
-    return this.services.runtimeApi.getSupportedCommands(sessionId);
+    return this.withSession(sessionId, [], (s) =>
+      this.getOrCreateRuntime(s).getSupportedCommands(),
+    );
   }
 
   /** Get account info reported by the CLI's initialize response. */
   getAccountInfo(sessionId: string): InitializeAccount | null {
-    return this.services.runtimeApi.getAccountInfo(sessionId);
+    return this.withSession(sessionId, null, (s) => this.getOrCreateRuntime(s).getAccountInfo());
   }
 
-  /** Delegates to ReconnectController. Kept as named method for E2E test access. */
-  private startReconnectWatchdog(): void {
-    this.reconnectController.start();
+  /** Returns whether a backend is connected for the given session. */
+  isBackendConnected(sessionId: string): boolean {
+    const session = this.store.get(sessionId);
+    return session ? this.backendConnector.isBackendConnected(session) : false;
   }
 
-  /** Close all sessions and flush storage (extracted from the old SessionBridge.close()). */
-  private async closeSessions(): Promise<void> {
-    await this.services.lifecycleService.closeAllSessions();
-    const storage = this.services.store.getStorage();
+  /** Seed the session's initial state (cwd, model). Public for test utilities. */
+  seedSessionState(sessionId: string, params: { cwd?: string; model?: string }): void {
+    const session = this.getOrCreateSession(sessionId);
+    this.getOrCreateRuntime(session).seedSessionState(params);
+  }
+
+  /** Set the adapter name for the session. Public for test utilities. */
+  setAdapterName(sessionId: string, name: string): void {
+    const session = this.getOrCreateSession(sessionId);
+    this.getOrCreateRuntime(session).setAdapterName(name);
+  }
+
+  /** Get a session snapshot. Public for test utilities and e2e helpers. */
+  getSessionSnapshot(sessionId: string): SessionSnapshot | undefined {
+    const session = this.store.get(sessionId);
+    if (!session) return undefined;
+    return this.getOrCreateRuntime(session).getSessionSnapshot();
+  }
+
+  // ── Private: runtime management ──────────────────────────────────────────
+
+  private getOrCreateRuntime(session: Session): SessionRuntime {
+    let r = this.runtimes.get(session.id);
+    if (!r) {
+      r = new SessionRuntimeImpl(session, {
+        config: { maxMessageHistoryLength: this.config.maxMessageHistoryLength },
+        broadcaster: this.broadcaster,
+        queueHandler: this.queueHandler,
+        slashService: this.slashService,
+        backendConnector: this.backendConnector,
+        tracer: this.tracer,
+        store: this.store,
+        logger: this.logger,
+        emitEvent: this.emitEvent,
+        gitTracker: this.gitTracker,
+        gitResolver: this.gitResolver,
+        capabilitiesPolicy: this.capabilitiesPolicy,
+      });
+      this.runtimes.set(session.id, r);
+    }
+    return r;
+  }
+
+  // ── Private: session lifecycle ────────────────────────────────────────────
+
+  private getOrCreateSession(sessionId: string): Session {
+    if (!this.leaseCoordinator.ensureLease(sessionId, this.leaseOwnerId)) {
+      this.logger.warn("Session lifecycle getOrCreate blocked: lease not owned by this runtime", {
+        sessionId,
+        leaseOwnerId: this.leaseOwnerId,
+        currentLeaseOwner: this.leaseCoordinator.currentOwner(sessionId),
+      });
+      throw new Error(`Session lease for ${sessionId} is owned by another runtime`);
+    }
+    const existed = this.store.has(sessionId);
+    const session = this.store.getOrCreate(sessionId);
+    this.getOrCreateRuntime(session);
+    if (!existed) {
+      this.metrics?.recordEvent({
+        timestamp: Date.now(),
+        type: "session:created",
+        sessionId,
+      });
+    }
+    return session;
+  }
+
+  private async closeSessionInternal(sessionId: string): Promise<void> {
+    const session = this.store.get(sessionId);
+    if (!session) return;
+    const runtime = this.getOrCreateRuntime(session);
+    runtime.transitionLifecycle("closing", "session:close");
+    this.capabilitiesPolicy.cancelPendingInitialize(session);
+    if (runtime.getBackendSession()) {
+      await runtime.closeBackendConnection().catch((err: unknown) => {
+        this.logger.warn("Failed to close backend session", { sessionId, error: err });
+      });
+    }
+    runtime.closeAllConsumers();
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSED" } });
+    this.store.remove(sessionId);
+    this.runtimes.delete(sessionId);
+    this.leaseCoordinator.releaseLease(sessionId, this.leaseOwnerId);
+    this.metrics?.recordEvent({ timestamp: Date.now(), type: "session:closed", sessionId });
+    this.emitEvent("session:closed", { sessionId });
+  }
+
+  private async closeAllSessions(): Promise<void> {
+    for (const sessionId of [...this.runtimes.keys()]) {
+      await this.closeSessionInternal(sessionId);
+    }
+    this.runtimes.clear();
+    const storage = this.store.getStorage();
     if (storage?.flush) {
       try {
         await storage.flush();
@@ -496,8 +800,76 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         this.logger.warn("Failed to flush storage during shutdown", { error });
       }
     }
-    this.services.core.tracer.destroy();
+    this.tracer.destroy();
     this.removeAllListeners();
+  }
+
+  // ── Private: session mutation helpers ─────────────────────────────────────
+
+  private withSession<T>(sessionId: string, fallback: T, fn: (session: Session) => T): T {
+    const session = this.store.get(sessionId);
+    return session ? fn(session) : fallback;
+  }
+
+  private withMutableSession(sessionId: string, op: string, fn: (session: Session) => void): void {
+    if (!this.leaseCoordinator.ensureLease(sessionId, this.leaseOwnerId)) {
+      this.logger.warn(`Session mutation blocked: lease not owned by this runtime`, {
+        sessionId,
+        operation: op,
+      });
+      return;
+    }
+    const session = this.store.get(sessionId);
+    if (session) fn(session);
+  }
+
+  // ── Private: runtimeApi operations ────────────────────────────────────────
+
+  private sendUserMessageForSession(
+    sessionId: string,
+    text: string,
+    options?: {
+      traceId?: string;
+      slashRequestId?: string;
+      slashCommand?: string;
+      images?: { media_type: string; data: string }[];
+    },
+  ): void {
+    this.withMutableSession(sessionId, "sendUserMessage", (s) =>
+      this.getOrCreateRuntime(s).sendUserMessage(text, options),
+    );
+  }
+
+  private applyPolicyCommandForSession(sessionId: string, command: PolicyCommand): void {
+    this.withMutableSession(sessionId, "applyPolicyCommand", (s) => {
+      const kindMap: Record<string, SystemSignal["kind"]> = {
+        reconnect_timeout: "RECONNECT_TIMEOUT",
+        idle_reap: "IDLE_REAP",
+        capabilities_timeout: "CAPABILITIES_TIMEOUT",
+      };
+      const kind = kindMap[command.type];
+      if (kind) {
+        this.getOrCreateRuntime(s).process({
+          type: "SYSTEM_SIGNAL",
+          signal: { kind } as SystemSignal,
+        });
+      }
+    });
+  }
+
+  // ── Private: coordinator helpers ──────────────────────────────────────────
+
+  /** Delegates to ReconnectController. Kept as named method for E2E test access. */
+  private startReconnectWatchdog(): void {
+    this.reconnectController.start();
+  }
+
+  private handleProcessOutput(sessionId: string, stream: "stdout" | "stderr", data: string): void {
+    const redacted = this.processLogService.append(sessionId, stream, data);
+    const session = this.store.get(sessionId);
+    if (session) {
+      this.broadcaster.broadcastProcessOutput(session, stream, redacted);
+    }
   }
 
   /** Resolve session by ID and connect to the backend adapter. */
@@ -505,25 +877,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     sessionId: string,
     opts?: { resume?: boolean; adapterOptions?: Record<string, unknown> },
   ): Promise<void> {
-    const session = this.services.lifecycleService.getOrCreateSession(sessionId);
-    return this.services.backendConnector.connectBackend(session, opts);
-  }
-
-  // ── Inlined SessionInfoApi helpers ─────────────────────────────────────
-
-  private getSessionSnapshot(sessionId: string): SessionSnapshot | undefined {
-    const session = this.services.store.get(sessionId);
-    if (!session) return undefined;
-    return this.services.runtimeManager.getOrCreate(session).getSessionSnapshot();
-  }
-
-  private seedSessionState(sessionId: string, params: { cwd?: string; model?: string }): void {
-    const session = this.services.lifecycleService.getOrCreateSession(sessionId);
-    this.services.runtimeManager.getOrCreate(session).seedSessionState(params);
-  }
-
-  private setAdapterName(sessionId: string, name: string): void {
-    const session = this.services.lifecycleService.getOrCreateSession(sessionId);
-    this.services.runtimeManager.getOrCreate(session).setAdapterName(name);
+    const session = this.getOrCreateSession(sessionId);
+    return this.backendConnector.connectBackend(session, opts);
   }
 }

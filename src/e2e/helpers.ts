@@ -21,15 +21,11 @@ import {
 // ---------------------------------------------------------------------------
 
 export function isBackendConnected(coordinator: SessionCoordinator, sessionId: string): boolean {
-  const session = coordinator.services.store.get(sessionId);
-  return session ? coordinator.services.backendConnector.isBackendConnected(session) : false;
+  return coordinator.isBackendConnected(sessionId);
 }
 
 export function getSessionSnapshot(coordinator: SessionCoordinator, sessionId: string) {
-  const session = coordinator.services.store.get(sessionId);
-  return session
-    ? coordinator.services.runtimeManager.getOrCreate(session).getSessionSnapshot()
-    : undefined;
+  return coordinator.getSessionSnapshot(sessionId);
 }
 
 export type SessionCoordinatorEventPayload = { sessionId: string };

@@ -2,7 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 import type { BackendConnectorDeps } from "./backend-connector.js";
 import { BackendConnector } from "./backend-connector.js";
 
+function createMockRuntime() {
+  return {
+    attachBackendConnection: vi.fn(),
+    resetBackendConnectionState: vi.fn(),
+    getBackendSession: vi.fn(() => null),
+    getBackendAbort: vi.fn(() => null),
+    drainPendingMessages: vi.fn(() => []),
+    drainPendingPermissionIds: vi.fn(() => []),
+    peekPendingPassthrough: vi.fn(() => undefined),
+    shiftPendingPassthrough: vi.fn(() => undefined),
+    getState: vi.fn(() => ({ slash_commands: [] })),
+    setState: vi.fn(),
+    registerSlashCommandNames: vi.fn(),
+  };
+}
+
 function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnectorDeps {
+  const mockRuntime = createMockRuntime();
   return {
     adapter: {
       name: "test",
@@ -31,16 +48,7 @@ function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnector
     } as any,
     routeUnifiedMessage: vi.fn(),
     emitEvent: vi.fn(),
-    onBackendConnectedState: vi.fn(),
-    onBackendDisconnectedState: vi.fn(),
-    getBackendSession: vi.fn(() => null),
-    getBackendAbort: vi.fn(() => null),
-    drainPendingMessages: vi.fn(() => []),
-    drainPendingPermissionIds: vi.fn(() => []),
-    peekPendingPassthrough: vi.fn(() => undefined),
-    shiftPendingPassthrough: vi.fn(() => undefined),
-    setSlashCommandsState: vi.fn(),
-    registerCLICommands: vi.fn(),
+    getRuntime: () => mockRuntime as any,
     ...overrides,
   };
 }
@@ -128,9 +136,12 @@ describe("BackendConnector", () => {
     const failingClose = vi.fn().mockRejectedValue(new Error("close failed"));
     const existingSession = { close: failingClose } as any;
 
+    const mockRuntime = createMockRuntime();
+    mockRuntime.getBackendSession.mockReturnValue(existingSession);
+    mockRuntime.getBackendAbort.mockReturnValue({ abort: vi.fn() } as any);
+
     const deps = createDeps({
-      getBackendSession: vi.fn(() => existingSession),
-      getBackendAbort: vi.fn(() => ({ abort: vi.fn() }) as any),
+      getRuntime: () => mockRuntime as any,
     });
     const connector = new BackendConnector(deps);
     const session = { id: "s-reconnect", data: { adapterName: undefined } } as any;
@@ -150,9 +161,13 @@ describe("BackendConnector", () => {
     const failingClose = vi.fn().mockRejectedValue(new Error("disconnect close failed"));
     const backendSession = { close: failingClose } as any;
 
+    const mockRuntime = createMockRuntime();
+    mockRuntime.getBackendSession.mockReturnValue(backendSession);
+    mockRuntime.getBackendAbort.mockReturnValue({ abort: vi.fn() } as any);
+    mockRuntime.drainPendingPermissionIds.mockReturnValue([]);
+
     const deps = createDeps({
-      getBackendSession: vi.fn(() => backendSession),
-      getBackendAbort: vi.fn(() => ({ abort: vi.fn() }) as any),
+      getRuntime: () => mockRuntime as any,
     });
     const connector = new BackendConnector(deps);
     const session = { id: "s-disco", data: { adapterName: undefined } } as any;

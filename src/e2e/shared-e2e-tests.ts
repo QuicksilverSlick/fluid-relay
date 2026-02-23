@@ -275,8 +275,8 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
       );
       try {
         const partOutput = waitForMessageType(participant, "process_output", 20_000);
-        coordinator.services.broadcaster.broadcastProcessOutput(
-          coordinator.services.store.get(sessionId)!,
+        coordinator.broadcaster.broadcastProcessOutput(
+          coordinator.store.get(sessionId)!,
           "stderr",
           `${tokenPrefix}_RBAC_OUTPUT_CHECK`,
         );

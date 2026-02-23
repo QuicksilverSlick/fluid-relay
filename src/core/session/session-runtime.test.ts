@@ -1,17 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockSession, createTestSocket } from "../../testing/cli-message-factories.js";
-import { normalizeInbound } from "../messaging/inbound-normalizer.js";
+import { noopTracer } from "../messaging/message-tracer.js";
 import { makeDefaultState } from "../session/session-repository.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
 import { SessionRuntime, type SessionRuntimeDeps } from "./session-runtime.js";
 
 function makeDeps(overrides?: Partial<SessionRuntimeDeps>): SessionRuntimeDeps {
-  const tracedNormalizeInbound = vi.fn((_session, msg) =>
-    createUnifiedMessage({ type: "interrupt", role: "system", metadata: { source: msg.type } }),
-  );
   return {
-    now: () => 1700000000000,
-    maxMessageHistoryLength: 100,
+    config: { maxMessageHistoryLength: 100 },
     broadcaster: {
       broadcast: vi.fn(),
       broadcastToParticipants: vi.fn(),
@@ -28,16 +24,14 @@ function makeDeps(overrides?: Partial<SessionRuntimeDeps>): SessionRuntimeDeps {
       handleInbound: vi.fn(),
       executeProgrammatic: vi.fn(async () => null),
     },
-    sendToBackend: vi.fn(),
-    tracedNormalizeInbound,
-    persistSession: vi.fn(),
-    warnUnknownPermission: vi.fn(),
-    emitPermissionResolved: vi.fn(),
-    onInvalidLifecycleTransition: vi.fn(),
-
+    backendConnector: { sendToBackend: vi.fn() } as any,
+    tracer: noopTracer,
+    store: { persist: vi.fn(), persistSync: vi.fn() } as any,
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
     gitTracker: {
       resetAttempt: vi.fn(),
       refreshGitInfo: vi.fn(() => null),
+      resolveGitInfo: vi.fn(),
     } as any,
     gitResolver: null,
     emitEvent: vi.fn(),
@@ -114,22 +108,9 @@ describe("SessionRuntime", () => {
       expect.objectContaining({ id: "s1" }),
       expect.objectContaining({ type: "user_message", content: "hello" }),
     );
-    expect(deps.tracedNormalizeInbound).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "s1" }),
-      expect.objectContaining({
-        type: "user_message",
-        content: "hello",
-        session_id: "backend-1",
-      }),
-      expect.objectContaining({
-        traceId: undefined,
-        requestId: undefined,
-        command: undefined,
-      }),
-    );
     expect(send).toHaveBeenCalledTimes(1);
     expect(runtime.getLifecycleState()).toBe("active");
-    expect(deps.persistSession).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }));
+    expect(deps.store.persist).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }));
   });
 
   it("rejects user_message when lifecycle is closed", () => {
@@ -139,9 +120,7 @@ describe("SessionRuntime", () => {
       data: { lastStatus: null },
       backendSession: { send } as any,
     });
-    const deps = makeDeps({
-      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
-    });
+    const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
     const ws = createTestSocket();
 
@@ -162,16 +141,17 @@ describe("SessionRuntime", () => {
     expect(send).not.toHaveBeenCalled();
     expect(runtime.getMessageHistory()).toEqual([]);
     expect(runtime.getState().adapterName === undefined || true).toBe(true); // pendingMessages not changed
-    expect(deps.persistSession).not.toHaveBeenCalled();
+    expect(deps.store.persist).not.toHaveBeenCalled();
     expect(deps.broadcaster.sendTo).toHaveBeenCalledWith(ws, {
       type: "error",
       message: "Session is closing or closed and cannot accept new messages.",
     });
-    expect(deps.onInvalidLifecycleTransition).toHaveBeenCalledWith(
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      "Session lifecycle invalid transition",
       expect.objectContaining({
         sessionId: "s1",
-        from: "closed",
-        to: "active",
+        current: "closed",
+        next: "active",
         reason: "inbound:user_message",
       }),
     );
@@ -186,7 +166,10 @@ describe("SessionRuntime", () => {
       },
       backendSession: { send } as any,
     });
-    const runtime = new SessionRuntime(session, makeDeps({ maxMessageHistoryLength: 1 }));
+    const runtime = new SessionRuntime(
+      session,
+      makeDeps({ config: { maxMessageHistoryLength: 1 } }),
+    );
 
     runtime.sendUserMessage("new");
 
@@ -202,7 +185,10 @@ describe("SessionRuntime", () => {
       id: "s1",
       backendSession: { send } as any,
     });
-    const runtime = new SessionRuntime(session, makeDeps({ maxMessageHistoryLength: 2 }));
+    const runtime = new SessionRuntime(
+      session,
+      makeDeps({ config: { maxMessageHistoryLength: 2 } }),
+    );
 
     runtime.sendUserMessage("first");
     runtime.sendUserMessage("second");
@@ -393,8 +379,8 @@ describe("SessionRuntime", () => {
 
     runtime.sendPermissionResponse("missing", "deny");
 
-    expect(deps.warnUnknownPermission).toHaveBeenCalledWith("s1", "missing");
-    expect(deps.emitPermissionResolved).not.toHaveBeenCalled();
+    expect(deps.logger.warn).toHaveBeenCalledWith(expect.stringContaining("missing"));
+    expect(deps.emitEvent).not.toHaveBeenCalledWith("permission:resolved", expect.anything());
   });
 
   it("sends deny permission response to backend when pending request exists", () => {
@@ -412,14 +398,16 @@ describe("SessionRuntime", () => {
       data: { pendingPermissions: new Map([["perm-1", perm]]) },
       backendSession: { send } as any,
     });
-    const deps = makeDeps({
-      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
-    });
+    const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
     runtime.sendPermissionResponse("perm-1", "deny");
 
-    expect(deps.emitPermissionResolved).toHaveBeenCalledWith("s1", "perm-1", "deny");
+    expect(deps.emitEvent).toHaveBeenCalledWith("permission:resolved", {
+      sessionId: "s1",
+      requestId: "perm-1",
+      behavior: "deny",
+    });
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "permission_response",
@@ -618,9 +606,7 @@ describe("SessionRuntime", () => {
       data: { pendingPermissions: new Map([["perm-2", perm]]) },
       backendSession: { send } as any,
     });
-    const deps = makeDeps({
-      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
-    });
+    const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
     runtime.sendPermissionResponse("perm-2", "allow", {
@@ -640,9 +626,7 @@ describe("SessionRuntime", () => {
   it("normalizes and sends control requests for interrupt/model/mode", () => {
     const send = vi.fn();
     const session = createMockSession({ id: "s1", backendSession: { send } as any });
-    const deps = makeDeps({
-      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
-    });
+    const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
     runtime.sendInterrupt();
@@ -678,9 +662,7 @@ describe("SessionRuntime", () => {
       data: { state: { ...makeDefaultState("s1"), model: "claude-sonnet-4-6" } },
       backendSession: { send } as any,
     });
-    const deps = makeDeps({
-      tracedNormalizeInbound: vi.fn((_session, msg) => normalizeInbound(msg as any)),
-    });
+    const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
     runtime.sendSetModel("claude-haiku-4-5");
@@ -744,11 +726,12 @@ describe("SessionRuntime", () => {
     expect(runtime.transitionLifecycle("closed", "force-close")).toBe(true);
     expect(runtime.transitionLifecycle("active", "invalid-reopen")).toBe(false);
 
-    expect(deps.onInvalidLifecycleTransition).toHaveBeenCalledWith(
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      "Session lifecycle invalid transition",
       expect.objectContaining({
         sessionId: "s1",
-        from: "closed",
-        to: "active",
+        current: "closed",
+        next: "active",
       }),
     );
     expect(runtime.getLifecycleState()).toBe("closed");
@@ -782,29 +765,21 @@ describe("SessionRuntime", () => {
 
     expect(runtime.getState().adapterName).toBe("codex");
     expect(runtime.getState().adapterName).toBe("codex");
-    expect(deps.persistSession).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }));
+    expect(deps.store.persist).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }));
   });
 
-  it("seeds session state and invokes seed hook", () => {
+  it("seeds session state and triggers git resolution", () => {
     const session = createMockSession({ id: "s1" });
-    const onSessionSeeded = vi.fn();
-    const runtime = new SessionRuntime(session, makeDeps({ onSessionSeeded }));
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
 
     runtime.seedSessionState({ cwd: "/tmp/project", model: "claude-test" });
 
     expect(runtime.getState().cwd).toBe("/tmp/project");
     expect(runtime.getState().model).toBe("claude-test");
-    let seededSession: any = null;
-    const runtime2 = new SessionRuntime(
-      createMockSession({ id: "s1" }),
-      makeDeps({
-        onSessionSeeded: (s) => {
-          seededSession = s;
-        },
-      }),
+    expect(deps.gitTracker.resolveGitInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
     );
-    runtime2.seedSessionState({ cwd: "/tmp/project", model: "claude-test" });
-    expect(seededSession).not.toBeNull();
   });
 
   it("manages anonymous identity index and consumer registration lifecycle", () => {
@@ -1078,7 +1053,7 @@ describe("SessionRuntime", () => {
 
     runtime.sendToBackend(message);
 
-    expect(deps.sendToBackend).toHaveBeenCalledWith(session, message);
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(session, message);
   });
 
   it("getSupportedModels/Commands/AccountInfo return defaults when capabilities absent", () => {
@@ -1120,141 +1095,5 @@ describe("SessionRuntime", () => {
     expect(() =>
       runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "CAPABILITIES_TIMEOUT" } }),
     ).not.toThrow();
-  });
-
-  it("blocks mutating commands when lease check denies ownership", () => {
-    const send = vi.fn();
-    const session = createMockSession({ id: "s1", backendSession: { send } as any });
-    const onMutationRejected = vi.fn();
-    const deps = makeDeps({
-      canMutateSession: vi.fn().mockReturnValue(false),
-      onMutationRejected,
-    });
-    const runtime = new SessionRuntime(session, deps);
-
-    const accepted = runtime.sendUserMessage("blocked");
-    runtime.process({
-      type: "INBOUND_COMMAND",
-      command: {
-        type: "user_message",
-        content: "blocked-2",
-        session_id: "backend-1",
-      },
-      ws: createTestSocket(),
-    });
-
-    expect(accepted).toBe(false);
-    expect(send).not.toHaveBeenCalled();
-    expect(runtime.getMessageHistory()).toEqual([]);
-    expect(onMutationRejected).toHaveBeenCalledWith("s1", "sendUserMessage");
-    expect(onMutationRejected).toHaveBeenCalledWith("s1", "handleInboundCommand");
-  });
-
-  it("blocks backend connection state updates when lease is not owned", () => {
-    const session = createMockSession({ id: "s1" });
-    const deps = makeDeps({
-      canMutateSession: vi.fn().mockReturnValue(false),
-      onMutationRejected: vi.fn(),
-    });
-    const runtime = new SessionRuntime(session, deps);
-    const backendSession = { close: vi.fn() } as any;
-
-    runtime.attachBackendConnection({
-      backendSession,
-      backendAbort: new AbortController(),
-      supportsSlashPassthrough: true,
-      slashExecutor: null,
-    });
-    runtime.setState({ ...runtime.getState(), model: "blocked" });
-
-    expect(runtime.getBackendSession()).toBeNull();
-    expect(runtime.getState().model).not.toBe("blocked");
-  });
-
-  it("covers lease-denied guards across mutating runtime APIs", async () => {
-    const session = createMockSession({
-      id: "s1",
-      backendSession: {
-        send: vi.fn(),
-        sendRaw: vi.fn(),
-        close: vi.fn(),
-        messages: (async function* () {})(),
-        sessionId: "s1",
-      } as any,
-    });
-    const onMutationRejected = vi.fn();
-    const deps = makeDeps({
-      canMutateSession: vi.fn().mockReturnValue(false),
-      onMutationRejected,
-    });
-    const runtime = new SessionRuntime(session, deps);
-    const ws = createTestSocket();
-
-    runtime.setAdapterName("claude");
-    runtime.setLastStatus("running");
-    runtime.setState({ ...runtime.getState(), model: "guarded" });
-    runtime.setBackendSessionId("backend-guarded");
-    runtime.setMessageHistory([{ type: "user_message", content: "x", timestamp: 1 } as any]);
-    runtime.setQueuedMessage({
-      consumerId: "c1",
-      displayName: "u",
-      content: "queued",
-      queuedAt: Date.now(),
-    });
-    const timer = setTimeout(() => {}, 60_000);
-    runtime.setPendingInitialize({
-      requestId: "init-1",
-      timer,
-    });
-    clearTimeout(timer);
-    runtime.registerCLICommands([{ name: "/help", description: "help" }]);
-    runtime.registerSlashCommandNames(["/compact"]);
-    runtime.registerSkillCommands(["skill-a"]);
-    runtime.clearDynamicSlashRegistry();
-    runtime.seedSessionState({ cwd: "/tmp", model: "m" });
-    runtime.allocateAnonymousIdentityIndex();
-    runtime.addConsumer(ws, { userId: "u1", displayName: "u1", role: "participant" });
-    runtime.enqueuePendingPassthrough({
-      command: "/status",
-      requestId: "r1",
-      slashRequestId: "sr1",
-      traceId: "t1",
-      startedAtMs: 1,
-    });
-    runtime.shiftPendingPassthrough();
-    runtime.storePendingPermission("p1", {
-      id: "p1",
-      request_id: "p1",
-      command: "cmd",
-      input: {},
-      timestamp: Date.now(),
-      expires_at: Date.now() + 1000,
-      tool_name: "test",
-      tool_use_id: "tu1",
-      safety_risk: null,
-    } as any);
-    runtime.drainPendingMessages();
-    runtime.drainPendingPermissionIds();
-    runtime.checkRateLimit(ws, () => undefined);
-    runtime.transitionLifecycle("active", "test");
-    runtime.sendPermissionResponse("p1", "allow");
-    runtime.sendInterrupt();
-    runtime.sendSetModel("m2");
-    runtime.sendSetPermissionMode("plan");
-    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "RECONNECT_TIMEOUT" } });
-    await runtime.executeSlashCommand("/help");
-    runtime.sendToBackend(createUnifiedMessage({ type: "interrupt", role: "system" }));
-    runtime.process({
-      type: "BACKEND_MESSAGE",
-      message: createUnifiedMessage({ type: "result", role: "assistant" }),
-    });
-    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "BACKEND_CONNECTED" } });
-
-    // Basic sanity: guard callback was exercised heavily.
-    expect(onMutationRejected).toHaveBeenCalled();
-    // No guarded state changes should have applied.
-    expect(runtime.getState().model).not.toBe("guarded");
-    expect(runtime.getConsumerCount()).toBe(0);
-    expect(runtime.getLifecycleState()).toBe("awaiting_backend");
   });
 });
