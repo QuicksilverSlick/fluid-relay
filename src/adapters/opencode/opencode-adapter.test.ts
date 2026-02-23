@@ -362,7 +362,11 @@ describe("OpencodeAdapter", () => {
     // by using a second controllable stream for this test.
     const encoder2 = new TextEncoder();
     let ctrl: ReadableStreamDefaultController<Uint8Array>;
-    const stream = new ReadableStream<Uint8Array>({ start(c) { ctrl = c; } });
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        ctrl = c;
+      },
+    });
     connectSseSpy.mockResolvedValueOnce(stream);
 
     // Stop to allow a reconnect that uses the new stream
@@ -410,10 +414,7 @@ describe("OpencodeAdapter", () => {
 
     await defaultAdapter.connect({ sessionId: "beamcode-def" });
 
-    expect(launchSpy).toHaveBeenCalledWith(
-      "server",
-      expect.objectContaining({ port: 4096 }),
-    );
+    expect(launchSpy).toHaveBeenCalledWith("server", expect.objectContaining({ port: 4096 }));
   });
 
   it("falls back to ephemeral port when default port is in use", async () => {
@@ -428,10 +429,7 @@ describe("OpencodeAdapter", () => {
 
     await defaultAdapter.connect({ sessionId: "beamcode-def" });
 
-    expect(launchSpy).toHaveBeenCalledWith(
-      "server",
-      expect.objectContaining({ port: 54321 }),
-    );
+    expect(launchSpy).toHaveBeenCalledWith("server", expect.objectContaining({ port: 54321 }));
   });
 
   // -------------------------------------------------------------------------
@@ -513,7 +511,11 @@ describe("OpencodeAdapter", () => {
         callCount++;
         if (callCount === 1) {
           // First call: stream closes immediately → runSseLoop ends normally → line 223
-          const stream = new ReadableStream<Uint8Array>({ start(c) { c.close(); } });
+          const stream = new ReadableStream<Uint8Array>({
+            start(c) {
+              c.close();
+            },
+          });
           return Promise.resolve(stream);
         }
         // Subsequent calls: fail → triggers retry backoff → eventually exhausts

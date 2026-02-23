@@ -137,6 +137,7 @@ export function createMockSession(
       registerFromCLI: vi.fn(),
       registerSkills: vi.fn(),
       getAll: vi.fn(() => []),
+      clearDynamic: vi.fn(),
     } as any,
     pendingPassthroughs: [],
     adapterSlashExecutor: null,

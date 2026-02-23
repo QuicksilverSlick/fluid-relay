@@ -204,9 +204,7 @@ describe("translateSessionUpdate", () => {
         sessionUpdate: "tool_call_update",
         toolCallId: "call-1",
         status: "completed",
-        content: [
-          { type: "text", text: "result text" },
-        ] as unknown as AcpSessionUpdate["content"],
+        content: [{ type: "text", text: "result text" }] as unknown as AcpSessionUpdate["content"],
       };
       const result = translateSessionUpdate(update);
 

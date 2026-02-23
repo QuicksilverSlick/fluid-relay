@@ -121,7 +121,7 @@ describe("SessionCoordinator", () => {
       mgr.start();
       const info = mgr.launcher.launch({ cwd: "/tmp" });
       // Simulate the bridge emitting backend:session_id
-      mgr.bridge.emit("backend:session_id" as any, {
+      (mgr as any)._bridgeEmitter.emit("backend:session_id" as any, {
         sessionId: info.sessionId,
         backendSessionId: "cli-abc-123",
       });
@@ -141,7 +141,7 @@ describe("SessionCoordinator", () => {
       const info = mgr.launcher.launch({ cwd: "/tmp" });
       expect(info.state).toBe("starting");
 
-      mgr.bridge.emit("backend:connected" as any, { sessionId: info.sessionId });
+      (mgr as any)._bridgeEmitter.emit("backend:connected" as any, { sessionId: info.sessionId });
 
       const session = mgr.launcher.getSession(info.sessionId);
       expect(session?.state).toBe("connected");
@@ -151,7 +151,7 @@ describe("SessionCoordinator", () => {
       mgr.start();
       const info = mgr.launcher.launch({ cwd: "/tmp", model: "test-model" });
 
-      const snapshot = mgr.bridge.getSession(info.sessionId);
+      const snapshot = (mgr as any).getSessionSnapshot(info.sessionId);
       expect(snapshot).toBeDefined();
       expect(snapshot!.state.cwd).toBe("/tmp");
       expect(snapshot!.state.model).toBe("test-model");
@@ -172,7 +172,9 @@ describe("SessionCoordinator", () => {
       await pm.lastProcess!.exited;
       const spawnsBefore = pm.spawnCalls.length;
 
-      mgr.bridge.emit("backend:relaunch_needed" as any, { sessionId: info.sessionId });
+      (mgr as any)._bridgeEmitter.emit("backend:relaunch_needed" as any, {
+        sessionId: info.sessionId,
+      });
       // Allow async relaunch to run
       await new Promise((r) => setTimeout(r, 10));
 
@@ -190,7 +192,7 @@ describe("SessionCoordinator", () => {
       const received: string[] = [];
       mgr.on("backend:connected", () => received.push("backend:connected"));
 
-      mgr.bridge.emit("backend:connected" as any, { sessionId: "s1" });
+      (mgr as any)._bridgeEmitter.emit("backend:connected" as any, { sessionId: "s1" });
 
       expect(received).toContain("backend:connected");
     });
@@ -211,7 +213,7 @@ describe("SessionCoordinator", () => {
       const received: unknown[] = [];
       mgr.domainEvents.on("backend:connected", (event) => received.push(event));
 
-      mgr.bridge.emit("backend:connected" as any, { sessionId: "s1" });
+      (mgr as any)._bridgeEmitter.emit("backend:connected" as any, { sessionId: "s1" });
 
       expect(received).toHaveLength(1);
       expect(received[0]).toMatchObject({
@@ -358,7 +360,7 @@ describe("SessionCoordinator", () => {
       mgr.on("capabilities:ready", handler);
 
       // Simulate the bridge emitting the event
-      mgr.bridge.emit("capabilities:ready" as any, {
+      (mgr as any)._bridgeEmitter.emit("capabilities:ready" as any, {
         sessionId: "sess-1",
         commands: [{ name: "/help", description: "Help" }],
         models: [{ value: "claude-sonnet-4-5-20250929", displayName: "Sonnet" }],
@@ -373,7 +375,7 @@ describe("SessionCoordinator", () => {
       const handler = vi.fn();
       mgr.on("capabilities:timeout", handler);
 
-      mgr.bridge.emit("capabilities:timeout" as any, {
+      (mgr as any)._bridgeEmitter.emit("capabilities:timeout" as any, {
         sessionId: "sess-1",
       });
 
@@ -417,31 +419,39 @@ describe("SessionCoordinator", () => {
     it("forwards stdout with redaction to broadcastProcessOutput", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn(mgr.bridge, "broadcastProcessOutput")
+        .spyOn(mgr.services.broadcaster, "broadcastProcessOutput")
         .mockImplementation(() => {});
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
-      mgr.launcher.emit("process:stdout" as any, {
+      (mgr.launcher as any).emit("process:stdout" as any, {
         sessionId: info.sessionId,
         data: "safe output line\n",
       });
 
-      expect(broadcastSpy).toHaveBeenCalledWith(info.sessionId, "stdout", expect.any(String));
+      expect(broadcastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: info.sessionId }),
+        "stdout",
+        expect.any(String),
+      );
     });
 
     it("forwards stderr to broadcastProcessOutput", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn(mgr.bridge, "broadcastProcessOutput")
+        .spyOn(mgr.services.broadcaster, "broadcastProcessOutput")
         .mockImplementation(() => {});
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
-      mgr.launcher.emit("process:stderr" as any, {
+      (mgr.launcher as any).emit("process:stderr" as any, {
         sessionId: info.sessionId,
         data: "error line\n",
       });
 
-      expect(broadcastSpy).toHaveBeenCalledWith(info.sessionId, "stderr", expect.any(String));
+      expect(broadcastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: info.sessionId }),
+        "stderr",
+        expect.any(String),
+      );
     });
   });
 
@@ -452,18 +462,23 @@ describe("SessionCoordinator", () => {
   describe("session auto-naming on first turn", () => {
     it("derives name from first user message, truncates at 50, and broadcasts", () => {
       mgr.start();
-      const broadcastSpy = vi.spyOn(mgr.bridge, "broadcastNameUpdate").mockImplementation(() => {});
+      const broadcastSpy = vi
+        .spyOn(mgr.services.broadcaster, "broadcastNameUpdate")
+        .mockImplementation(() => {});
       const setNameSpy = vi.spyOn(mgr.launcher, "setSessionName").mockImplementation(() => {});
 
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
       const longMessage = "A".repeat(60);
-      mgr.bridge.emit("session:first_turn_completed" as any, {
+      (mgr as any)._bridgeEmitter.emit("session:first_turn_completed" as any, {
         sessionId: info.sessionId,
         firstUserMessage: longMessage,
       });
 
-      expect(broadcastSpy).toHaveBeenCalledWith(info.sessionId, expect.stringContaining("..."));
+      expect(broadcastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: info.sessionId }),
+        expect.stringContaining("..."),
+      );
       // Name should be truncated to 50 chars: 47 + "..."
       const calledName = broadcastSpy.mock.calls[0][1];
       expect(calledName.length).toBeLessThanOrEqual(50);
@@ -472,13 +487,15 @@ describe("SessionCoordinator", () => {
 
     it("skips naming if session already has a name", () => {
       mgr.start();
-      const broadcastSpy = vi.spyOn(mgr.bridge, "broadcastNameUpdate").mockImplementation(() => {});
+      const broadcastSpy = vi
+        .spyOn(mgr.services.broadcaster, "broadcastNameUpdate")
+        .mockImplementation(() => {});
 
       const info = mgr.launcher.launch({ cwd: "/tmp" });
       // Set a name before auto-naming triggers
       mgr.launcher.setSessionName(info.sessionId, "Existing Name");
 
-      mgr.bridge.emit("session:first_turn_completed" as any, {
+      (mgr as any)._bridgeEmitter.emit("session:first_turn_completed" as any, {
         sessionId: info.sessionId,
         firstUserMessage: "Hello world",
       });
@@ -495,33 +512,33 @@ describe("SessionCoordinator", () => {
     it("deletes processLogBuffers when session is closed", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn(mgr.bridge, "broadcastProcessOutput")
+        .spyOn(mgr.services.broadcaster, "broadcastProcessOutput")
         .mockImplementation(() => {});
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
       // Generate some process output to populate the buffer
-      mgr.launcher.emit("process:stdout" as any, {
+      (mgr.launcher as any).emit("process:stdout" as any, {
         sessionId: info.sessionId,
         data: "line-before-close\n",
       });
       expect(broadcastSpy).toHaveBeenCalledWith(
-        info.sessionId,
+        expect.objectContaining({ id: info.sessionId }),
         "stdout",
         expect.stringContaining("line-before-close"),
       );
 
       // Emit session:closed — should clean up the buffer
-      mgr.bridge.emit("session:closed" as any, { sessionId: info.sessionId });
+      (mgr as any)._bridgeEmitter.emit("session:closed" as any, { sessionId: info.sessionId });
 
       // After close, new output for same session creates a fresh buffer
       // (the old accumulated lines are gone). Verify output still works.
       broadcastSpy.mockClear();
-      mgr.launcher.emit("process:stdout" as any, {
+      (mgr.launcher as any).emit("process:stdout" as any, {
         sessionId: info.sessionId,
         data: "line-after-close\n",
       });
       expect(broadcastSpy).toHaveBeenCalledWith(
-        info.sessionId,
+        expect.objectContaining({ id: info.sessionId }),
         "stdout",
         expect.stringContaining("line-after-close"),
       );
@@ -535,10 +552,12 @@ describe("SessionCoordinator", () => {
   describe("executeSlashCommand forwarding", () => {
     it("delegates to bridge.executeSlashCommand", async () => {
       mgr.start();
-      const executeSpy = vi.spyOn(mgr.bridge, "executeSlashCommand").mockResolvedValue({
-        content: "help output",
-        source: "emulated" as const,
-      });
+      const executeSpy = vi
+        .spyOn(mgr.services.runtimeApi, "executeSlashCommand")
+        .mockResolvedValue({
+          content: "help output",
+          source: "emulated" as const,
+        });
 
       const result = await mgr.executeSlashCommand("test-session", "/help");
 

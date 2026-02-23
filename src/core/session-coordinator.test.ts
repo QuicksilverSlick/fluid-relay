@@ -363,7 +363,6 @@ describe("SessionCoordinator.renameSession", () => {
     await mgr.start();
 
     const created = await mgr.createSession({ cwd: process.cwd() });
-    const bridgeRenameSpy = vi.spyOn(mgr.bridge, "renameSession");
     const coordinatorEvents: Array<{ sessionId: string; name: string }> = [];
     const domainEvents: Array<{ sessionId: string; name: string }> = [];
 
@@ -374,7 +373,6 @@ describe("SessionCoordinator.renameSession", () => {
 
     expect(renamed).toMatchObject({ sessionId: created.sessionId, name: "My Session" });
     expect(mgr.registry.getSession(created.sessionId)?.name).toBe("My Session");
-    expect(bridgeRenameSpy).toHaveBeenCalledWith(created.sessionId, "My Session");
     expect(coordinatorEvents).toEqual([{ sessionId: created.sessionId, name: "My Session" }]);
     expect(domainEvents).toEqual([{ sessionId: created.sessionId, name: "My Session" }]);
 
@@ -392,11 +390,9 @@ describe("SessionCoordinator.renameSession", () => {
     });
     await mgr.start();
 
-    const bridgeRenameSpy = vi.spyOn(mgr.bridge, "renameSession");
     const renamed = mgr.renameSession("missing-session", "new-name");
 
     expect(renamed).toBeNull();
-    expect(bridgeRenameSpy).not.toHaveBeenCalled();
 
     await mgr.stop();
   });
@@ -531,26 +527,31 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const session = await mgr.createSession({ cwd: process.cwd() });
 
     // isBackendConnected
-    expect(mgr.bridge.isBackendConnected(session.sessionId)).toBe(false);
-    expect(mgr.bridge.isBackendConnected("missing-session")).toBe(false);
+    const sessionStore = mgr.services.store.get(session.sessionId);
+    expect(
+      sessionStore && mgr.services.backendConnector.isBackendConnected(sessionStore),
+    ).toBeFalsy();
+    const missingStore = mgr.services.store.get("missing-session");
+    expect(
+      missingStore && mgr.services.backendConnector.isBackendConnected(missingStore),
+    ).toBeFalsy();
 
-    // broadcastProcessOutput
+    // broadcastProcessOutput is internal (via handleProcessOutput)
     const broadcastSpy = vi.spyOn((mgr as any).services.broadcaster, "broadcastProcessOutput");
-    mgr.bridge.broadcastProcessOutput(session.sessionId, "stdout", "test");
+    (mgr as any).handleProcessOutput(session.sessionId, "stdout", "test");
     expect(broadcastSpy).toHaveBeenCalled();
-    mgr.bridge.broadcastProcessOutput("missing-session", "stdout", "test");
 
     // executeSlashCommand
     const slashSpy = vi.spyOn((mgr as any).services.runtimeApi, "executeSlashCommand");
-    mgr.bridge.executeSlashCommand(session.sessionId, "/test");
+    mgr.executeSlashCommand(session.sessionId, "/test");
     expect(slashSpy).toHaveBeenCalled();
 
     // on / off
     const listener = vi.fn();
-    mgr.bridge.on("session:renamed", listener);
-    mgr.bridge.emit("session:renamed", { sessionId: session.sessionId, name: "New Name" });
+    mgr._bridgeEmitter.on("session:renamed", listener);
+    mgr._bridgeEmitter.emit("session:renamed", { sessionId: session.sessionId, name: "New Name" });
     expect(listener).toHaveBeenCalledWith({ sessionId: session.sessionId, name: "New Name" });
-    mgr.bridge.off("session:renamed", listener);
+    mgr._bridgeEmitter.off("session:renamed", listener);
 
     await mgr.stop();
   });
@@ -613,8 +614,8 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     await mgr.start();
     const session = await mgr.createSession({}); // missing cwd triggers default fallback
 
-    // broadcastNameUpdate with missing session
-    mgr.bridge.broadcastNameUpdate("missing-session", "name");
+    // renameSession with missing session returns null
+    expect(mgr.renameSession("missing-session", "name")).toBeNull();
 
     // restoreFromStorage returning 0
     vi.spyOn((mgr as any).services.store, "restoreAll").mockReturnValue(0);

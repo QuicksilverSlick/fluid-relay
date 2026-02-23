@@ -383,7 +383,9 @@ describe("ConsumerBroadcaster", () => {
       });
       const session = sessionWithConsumers({ ws, id: identity() });
       // Should not throw — non-Error is stringified in warning log
-      expect(() => broadcaster.broadcast(session, { type: "status_change", status: "idle" })).not.toThrow();
+      expect(() =>
+        broadcaster.broadcast(session, { type: "status_change", status: "idle" }),
+      ).not.toThrow();
     });
 
     it("broadcastToParticipants() handles non-Error thrown from send", () => {
@@ -392,7 +394,9 @@ describe("ConsumerBroadcaster", () => {
         throw 42; // non-Error
       });
       const session = sessionWithConsumers({ ws, id: identity("participant") });
-      expect(() => broadcaster.broadcastToParticipants(session, { type: "status_change", status: "idle" })).not.toThrow();
+      expect(() =>
+        broadcaster.broadcastToParticipants(session, { type: "status_change", status: "idle" }),
+      ).not.toThrow();
     });
 
     it("sendTo() handles non-Error thrown from send", () => {

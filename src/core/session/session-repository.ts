@@ -33,14 +33,7 @@ export interface QueuedMessage {
   queuedAt: number;
 }
 
-export interface Session {
-  // ── Immutable lookup key ────────────────────────────────────────────────
-  readonly id: string;
-
-  // ── Serializable state (sole ownership: SessionRuntime) ─────────────────
-  readonly data: SessionData;
-
-  // ── Runtime handles (mutable, non-serializable) ──────────────────────────
+export interface SessionHandles {
   /** BackendSession from BackendAdapter. */
   backendSession: BackendSession | null;
   /** AbortController for the backend message consumption loop. */
@@ -67,6 +60,14 @@ export interface Session {
   }>;
   /** Adapter-specific slash command executor (e.g. Codex JSON-RPC translation). */
   adapterSlashExecutor: AdapterSlashExecutor | null;
+}
+
+export interface Session extends SessionHandles {
+  // ── Immutable lookup key ────────────────────────────────────────────────
+  readonly id: string;
+
+  // ── Serializable state (sole ownership: SessionRuntime) ─────────────────
+  readonly data: SessionData;
 }
 
 export function makeDefaultState(sessionId: string): SessionState {

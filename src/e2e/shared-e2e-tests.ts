@@ -16,6 +16,8 @@ import {
   closeWebSockets,
   connectConsumerAndWaitReady,
   connectConsumerWithQueryAndWaitReady,
+  getSessionSnapshot,
+  isBackendConnected,
   waitForBackendConnectedOrExit,
   waitForMessage,
   waitForMessageType,
@@ -59,7 +61,7 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
     activeCoordinators.push(coordinator);
 
     await waitForBackendConnectedOrExit(coordinator, sessionId, connectTimeoutMs);
-    expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+    expect(isBackendConnected(coordinator, sessionId)).toBe(true);
   });
 
   it.runIf(runSmoke)("session is registered in launcher after createSession", async () => {
@@ -81,7 +83,7 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
 
     const consumer = await connectConsumerAndWaitReady(port, sessionId, consumerOpts);
     try {
-      expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+      expect(isBackendConnected(coordinator, sessionId)).toBe(true);
     } finally {
       await closeWebSockets(consumer);
     }
@@ -96,7 +98,7 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
     const consumer1 = await connectConsumerAndWaitReady(port, sessionId, consumerOpts);
     const consumer2 = await connectConsumerAndWaitReady(port, sessionId, consumerOpts);
     try {
-      expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+      expect(isBackendConnected(coordinator, sessionId)).toBe(true);
     } finally {
       await closeWebSockets(consumer1, consumer2);
     }
@@ -114,11 +116,11 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
       await closeWebSockets(consumer1);
 
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+      expect(isBackendConnected(coordinator, sessionId)).toBe(true);
 
       const consumer2 = await connectConsumerAndWaitReady(port, sessionId, consumerOpts);
       try {
-        expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+        expect(isBackendConnected(coordinator, sessionId)).toBe(true);
       } finally {
         await closeWebSockets(consumer2);
       }
@@ -141,11 +143,11 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
     await closeWebSockets(first);
     await disconnected;
 
-    expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+    expect(isBackendConnected(coordinator, sessionId)).toBe(true);
 
     const second = await connectConsumerAndWaitReady(port, sessionId, consumerOpts);
     try {
-      expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+      expect(isBackendConnected(coordinator, sessionId)).toBe(true);
     } finally {
       await closeWebSockets(second);
     }
@@ -157,11 +159,11 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
 
     await waitForBackendConnectedOrExit(coordinator, sessionId, connectTimeoutMs);
 
-    expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+    expect(isBackendConnected(coordinator, sessionId)).toBe(true);
     const deleted = await coordinator.deleteSession(sessionId);
     expect(deleted).toBe(true);
     expect(coordinator.launcher.getSession(sessionId)).toBeUndefined();
-    expect(coordinator.bridge.getSession(sessionId)).toBeUndefined();
+    expect(getSessionSnapshot(coordinator, sessionId)).toBeUndefined();
   });
 
   it.runIf(runSmoke)(
@@ -175,7 +177,7 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
       });
       try {
         await waitForBackendConnectedOrExit(coordinator, sessionId, connectTimeoutMs);
-        expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+        expect(isBackendConnected(coordinator, sessionId)).toBe(true);
       } finally {
         await closeWebSockets(consumer);
       }
@@ -194,8 +196,8 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
         waitForBackendConnectedOrExit(session2.coordinator, session2.sessionId, connectTimeoutMs),
       ]);
 
-      expect(session1.coordinator.bridge.isBackendConnected(session1.sessionId)).toBe(true);
-      expect(session2.coordinator.bridge.isBackendConnected(session2.sessionId)).toBe(true);
+      expect(isBackendConnected(session1.coordinator, session1.sessionId)).toBe(true);
+      expect(isBackendConnected(session2.coordinator, session2.sessionId)).toBe(true);
     },
   );
 
@@ -215,7 +217,7 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
       try {
         await waitForBackendConnectedOrExit(coordinator, second.sessionId, connectTimeoutMs);
 
-        expect(coordinator.bridge.isBackendConnected(second.sessionId)).toBe(true);
+        expect(isBackendConnected(coordinator, second.sessionId)).toBe(true);
         expect(second.sessionId).not.toBe(sessionId);
         expect(second.adapterName).toBe(adapterName);
       } finally {
@@ -232,7 +234,7 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
         activeCoordinators.push(coordinator);
 
         await waitForBackendConnectedOrExit(coordinator, sessionId, connectTimeoutMs);
-        expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+        expect(isBackendConnected(coordinator, sessionId)).toBe(true);
 
         const deleted = await coordinator.deleteSession(sessionId);
         expect(deleted).toBe(true);
@@ -273,8 +275,8 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
       );
       try {
         const partOutput = waitForMessageType(participant, "process_output", 20_000);
-        coordinator.bridge.broadcastProcessOutput(
-          sessionId,
+        coordinator.services.broadcaster.broadcastProcessOutput(
+          coordinator.services.store.get(sessionId)!,
           "stderr",
           `${tokenPrefix}_RBAC_OUTPUT_CHECK`,
         );
@@ -460,13 +462,13 @@ export function registerSharedFullTests(config: SharedE2eTestConfig): void {
 
       // Diagnostic: log session state between turns
       {
-        const snapshot = coordinator.bridge.getSession(sessionId);
+        const snapshot = getSessionSnapshot(coordinator, sessionId);
         const launcherInfo = coordinator.launcher.getSession(sessionId);
         console.log(
           `[${adapterName}-second-turn] between turns: lastStatus=${snapshot?.lastStatus ?? "n/a"} ` +
             `cliConnected=${snapshot?.cliConnected ?? "n/a"} ` +
             `launcherState=${launcherInfo?.state ?? "n/a"} ` +
-            `backendConnected=${coordinator.bridge.isBackendConnected(sessionId)} ` +
+            `backendConnected=${isBackendConnected(coordinator, sessionId)} ` +
             `messageHistoryLen=${snapshot?.messageHistoryLength ?? "n/a"}`,
         );
       }
@@ -540,7 +542,7 @@ export function registerSharedFullTests(config: SharedE2eTestConfig): void {
     try {
       consumer.send(JSON.stringify({ type: "set_permission_mode", mode: "delegate" }));
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+      expect(isBackendConnected(coordinator, sessionId)).toBe(true);
     } finally {
       await closeWebSockets(consumer);
     }
@@ -588,7 +590,7 @@ export function registerSharedFullTests(config: SharedE2eTestConfig): void {
       ).catch(() => {});
 
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+      expect(isBackendConnected(coordinator, sessionId)).toBe(true);
     } finally {
       await closeWebSockets(consumer);
     }
@@ -634,7 +636,7 @@ export function registerSharedFullTests(config: SharedE2eTestConfig): void {
       ).catch(() => {});
 
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+      expect(isBackendConnected(coordinator, sessionId)).toBe(true);
 
       consumer.send(
         JSON.stringify({

@@ -79,47 +79,14 @@ export interface SessionCoordinatorOptions {
   defaultAdapterName?: string;
 }
 
-/**
- * Minimal bridge-compatible facade exposed as `coordinator.bridge`.
- *
- * Provides the bridge methods referenced by E2E tests and test utilities
- * without requiring a full `SessionBridge` instance. The backing services
- * are injected at construction time.
- */
-export interface BridgeFacade {
-  // State queries
-  isBackendConnected(sessionId: string): boolean;
-  getSession(sessionId: string): SessionSnapshot | undefined;
-  // Seeding
-  seedSessionState(sessionId: string, params: { cwd?: string; model?: string }): void;
-  setAdapterName(sessionId: string, name: string): void;
-  // Broadcast
-  broadcastProcessOutput(sessionId: string, stream: "stdout" | "stderr", data: string): void;
-  broadcastNameUpdate(sessionId: string, name: string): void;
-  // Session rename (broadcast + event emission)
-  renameSession(sessionId: string, name: string): void;
-  // Slash commands
-  executeSlashCommand(
-    sessionId: string,
-    command: string,
-  ): Promise<{ content: string; source: "emulated" } | null>;
-  // Event subscriptions (EventSource interface)
-  on(event: string, listener: (...args: unknown[]) => void): void;
-  off(event: string, listener: (...args: unknown[]) => void): void;
-  // Event emission (allows tests to simulate bridge events)
-  emit(event: string, ...args: unknown[]): void;
-}
-
 export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEventMap> {
-  /** Thin bridge-compatible facade for backward-compat access by E2E tests and test utils. */
-  readonly bridge: BridgeFacade;
   readonly launcher: SessionLauncher;
   readonly registry: SessionRegistry;
   readonly domainEvents: DomainEventBus;
 
-  private readonly services: SessionServices;
+  public readonly services: SessionServices;
   /** Plain EventEmitter for bridge events — forwarded to this coordinator emitter via CoordinatorEventRelay. */
-  private readonly _bridgeEmitter: EventEmitter;
+  public readonly _bridgeEmitter: EventEmitter;
   private adapterResolver: AdapterResolver | null;
   private _defaultAdapterName: string;
   private config: ResolvedConfig;
@@ -163,39 +130,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       },
       (type, payload) => this._bridgeEmitter.emit(type, payload),
     );
-
-    // ── Bridge compat facade ─────────────────────────────────────────────
-    // Use a local `bridge` so that `renameSession` can reference
-    // `bridge.broadcastNameUpdate` and be intercepted by test spies.
-    const bridge: BridgeFacade = {
-      isBackendConnected: (sessionId) => {
-        const session = this.services.store.get(sessionId);
-        return session ? this.services.backendConnector.isBackendConnected(session) : false;
-      },
-      getSession: (sessionId) => this.getSessionSnapshot(sessionId),
-      seedSessionState: (sessionId, params) => this.seedSessionState(sessionId, params),
-      setAdapterName: (sessionId, name) => this.setAdapterName(sessionId, name),
-      broadcastProcessOutput: (sessionId, stream, data) => {
-        const session = this.services.store.get(sessionId);
-        if (session) this.services.broadcaster.broadcastProcessOutput(session, stream, data);
-      },
-      broadcastNameUpdate: (sessionId, name) => {
-        const session = this.services.store.get(sessionId);
-        if (session) this.services.broadcaster.broadcastNameUpdate(session, name);
-      },
-      renameSession: (sessionId, name) => {
-        bridge.broadcastNameUpdate(sessionId, name);
-        this._bridgeEmitter.emit("session:renamed", { sessionId, name });
-      },
-      executeSlashCommand: (sessionId, command) =>
-        this.services.runtimeApi.executeSlashCommand(sessionId, command),
-      on: (event, listener) => this._bridgeEmitter.on(event, listener),
-      off: (event, listener) => this._bridgeEmitter.off(event, listener),
-      emit: (event, ...args) => {
-        this._bridgeEmitter.emit(event, ...args);
-      },
-    };
-    this.bridge = bridge;
 
     // ── Transport + policies ─────────────────────────────────────────────
     this.launcher = options.launcher;
@@ -507,13 +441,20 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     const existing = this.registry.getSession(sessionId);
     if (!existing) return null;
     this.registry.setSessionName(sessionId, name);
-    this.bridge.renameSession(sessionId, name);
+    const session = this.services.store.get(sessionId);
+    if (session) {
+      this.services.broadcaster.broadcastNameUpdate(session, name);
+    }
+    this._bridgeEmitter.emit("session:renamed", { sessionId, name });
     return { ...existing, name };
   }
 
   private handleProcessOutput(sessionId: string, stream: "stdout" | "stderr", data: string): void {
     const redacted = this.processLogService.append(sessionId, stream, data);
-    this.bridge.broadcastProcessOutput(sessionId, stream, redacted);
+    const session = this.services.store.get(sessionId);
+    if (session) {
+      this.services.broadcaster.broadcastProcessOutput(session, stream, redacted);
+    }
   }
 
   /** Execute a slash command programmatically. */
@@ -521,7 +462,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     sessionId: string,
     command: string,
   ): Promise<{ content: string; source: "emulated" } | null> {
-    return this.bridge.executeSlashCommand(sessionId, command);
+    return this.services.runtimeApi.executeSlashCommand(sessionId, command);
   }
 
   /** Get models reported by the CLI's initialize response. */

@@ -20,6 +20,18 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
+export function isBackendConnected(coordinator: SessionCoordinator, sessionId: string): boolean {
+  const session = coordinator.services.store.get(sessionId);
+  return session ? coordinator.services.backendConnector.isBackendConnected(session) : false;
+}
+
+export function getSessionSnapshot(coordinator: SessionCoordinator, sessionId: string) {
+  const session = coordinator.services.store.get(sessionId);
+  return session
+    ? coordinator.services.runtimeManager.getOrCreate(session).getSessionSnapshot()
+    : undefined;
+}
+
 export type SessionCoordinatorEventPayload = { sessionId: string };
 export type TestContextLike = { task?: { name?: string; result?: { state?: string } } };
 export type CoordinatorTrace = {
@@ -163,7 +175,7 @@ export function waitForBackendConnectedOrExit(
   sessionId: string,
   timeoutMs = 20_000,
 ): Promise<void> {
-  if (coordinator.bridge.isBackendConnected(sessionId)) {
+  if (isBackendConnected(coordinator, sessionId)) {
     return Promise.resolve();
   }
 
@@ -174,7 +186,7 @@ export function waitForBackendConnectedOrExit(
         payload !== null &&
         "sessionId" in payload &&
         (payload as SessionCoordinatorEventPayload).sessionId === sessionId &&
-        coordinator.bridge.isBackendConnected(sessionId)
+        isBackendConnected(coordinator, sessionId)
       ) {
         cleanup();
         resolve();
@@ -205,7 +217,7 @@ export function waitForBackendConnectedOrExit(
     }, timeoutMs);
 
     const poll = setInterval(() => {
-      if (coordinator.bridge.isBackendConnected(sessionId)) {
+      if (isBackendConnected(coordinator, sessionId)) {
         cleanup();
         resolve();
         return;
@@ -358,8 +370,8 @@ export function dumpTraceOnFailure(
   for (const coordinator of coordinators) {
     // Dump session state for each active session
     for (const info of coordinator.launcher.listSessions()) {
-      const connected = coordinator.bridge.isBackendConnected(info.sessionId);
-      const snapshot = coordinator.bridge.getSession(info.sessionId);
+      const connected = isBackendConnected(coordinator, info.sessionId);
+      const snapshot = getSessionSnapshot(coordinator, info.sessionId);
       console.error(
         `[${prefix}] session=${info.sessionId} backendConnected=${connected} ` +
           `launcherState=${info.state} exitCode=${info.exitCode ?? "n/a"} ` +

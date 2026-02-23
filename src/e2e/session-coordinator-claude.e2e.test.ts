@@ -151,7 +151,7 @@ describe("E2E Real SDK-URL SessionCoordinator", () => {
 
     const { sessionId } = coordinator.launcher.launch({ cwd: process.cwd() });
     await waitForSessionExited(coordinator, sessionId, 10_000);
-    expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(false);
+    expect(isBackendConnected(coordinator, sessionId)).toBe(false);
     expect(coordinator.launcher.getSession(sessionId)?.state).toBe("exited");
   });
 
@@ -161,7 +161,7 @@ describe("E2E Real SDK-URL SessionCoordinator", () => {
 
     const { sessionId } = coordinator.launcher.launch({ cwd: "/definitely/not/a/real/path" });
     await waitForSessionExited(coordinator, sessionId, 10_000);
-    expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(false);
+    expect(isBackendConnected(coordinator, sessionId)).toBe(false);
     expect(coordinator.launcher.getSession(sessionId)?.state).toBe("exited");
   });
 
@@ -282,7 +282,7 @@ describe("E2E Real SDK-URL SessionCoordinator", () => {
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
 
-        expect(coordinator.bridge.isBackendConnected(sessionId)).toBe(true);
+        expect(isBackendConnected(coordinator, sessionId)).toBe(true);
       } finally {
         await closeWebSockets(consumer);
       }
@@ -322,13 +322,13 @@ describe("E2E Real SDK-URL SessionCoordinator", () => {
 
       // Diagnostic: log session state before post-relaunch turn
       {
-        const snapshot = coordinator.bridge.getSession(sessionId);
+        const snapshot = getSessionSnapshot(coordinator, sessionId);
         const launcherInfo = coordinator.launcher.getSession(sessionId);
         console.log(
           `[claude-relaunch-turn] before post-relaunch turn: lastStatus=${snapshot?.lastStatus ?? "n/a"} ` +
             `cliConnected=${snapshot?.cliConnected ?? "n/a"} ` +
             `launcherState=${launcherInfo?.state ?? "n/a"} ` +
-            `backendConnected=${coordinator.bridge.isBackendConnected(sessionId)} ` +
+            `backendConnected=${isBackendConnected(coordinator, sessionId)} ` +
             `messageHistoryLen=${snapshot?.messageHistoryLength ?? "n/a"}`,
         );
       }

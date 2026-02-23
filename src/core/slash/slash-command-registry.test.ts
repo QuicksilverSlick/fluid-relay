@@ -145,9 +145,7 @@ describe("SlashCommandRegistry", () => {
   });
 
   it("registerFromCLI uses empty string when description is not a string", () => {
-    registry.registerFromCLI([
-      { name: "/vim", description: undefined as unknown as string },
-    ]);
+    registry.registerFromCLI([{ name: "/vim", description: undefined as unknown as string }]);
     const cmd = registry.find("/vim");
     expect(cmd).toBeDefined();
     expect(cmd!.description).toBe("");

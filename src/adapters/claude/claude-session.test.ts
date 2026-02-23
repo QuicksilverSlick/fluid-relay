@@ -823,7 +823,10 @@ describe("ClaudeSession", () => {
     await tick();
 
     // User echo → translate() returns null, consumedType=true → lines 251-264
-    ws.emit("message", JSON.stringify({ type: "user", message: { role: "user", content: "echo" } }));
+    ws.emit(
+      "message",
+      JSON.stringify({ type: "user", message: { role: "user", content: "echo" } }),
+    );
     await tick();
 
     await session.close();
