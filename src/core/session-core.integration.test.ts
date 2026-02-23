@@ -24,7 +24,7 @@ import type { ConsumerMessage } from "../types/consumer-messages.js";
 
 // ─── Programmatic API ───────────────────────────────────────────────────────
 
-describe("SessionBridge — Programmatic API", () => {
+describe("Session Core — Programmatic API", () => {
   let bridge: BridgeTestWrapper;
   let backendSession: MockBackendSession;
 
@@ -149,7 +149,7 @@ function createAuthBridge(options?: {
 
 const flushAuth = () => new Promise((r) => setTimeout(r, 0));
 
-describe("SessionBridge — auth integration", () => {
+describe("Session Core — auth integration", () => {
   it("synchronous authenticator throw is caught and auth fails", () => {
     const authenticator: Authenticator = {
       authenticate: () => {
@@ -389,7 +389,7 @@ function allCharacterizationMessages(socket: { sentMessages: string[] }): Consum
   return socket.sentMessages.map((s) => JSON.parse(s));
 }
 
-describe("SessionBridge Characterization", () => {
+describe("Session Core Characterization", () => {
   let bridge: BridgeTestWrapper;
   let adapter: MockBackendAdapter;
 
@@ -575,7 +575,7 @@ describe("SessionBridge Characterization", () => {
 
 // ─── Event Emission ──────────────────────────────────────────────────────────
 
-describe("SessionBridge — Event emission", () => {
+describe("Session Core — Event emission", () => {
   let bridge: BridgeTestWrapper;
   let adapter: MockBackendAdapter;
 
@@ -645,7 +645,7 @@ describe("SessionBridge — Event emission", () => {
 
 // ─── Behavior lock: connectBackend event ordering ───────────────────────────
 
-describe("SessionBridge — connectBackend event ordering (behavior lock)", () => {
+describe("Session Core — connectBackend event ordering (behavior lock)", () => {
   let bridge: BridgeTestWrapper;
   let adapter: MockBackendAdapter;
 

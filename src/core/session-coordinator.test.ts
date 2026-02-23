@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockExecFileSync = vi.hoisted(() => vi.fn(() => "/usr/bin/claude"));
 vi.mock("node:child_process", () => ({ execFileSync: mockExecFileSync }));
@@ -6,6 +6,7 @@ vi.mock("node:child_process", () => ({ execFileSync: mockExecFileSync }));
 import { ClaudeLauncher } from "../adapters/claude/claude-launcher.js";
 import { MemoryStorage } from "../adapters/memory-storage.js";
 import type { ProcessHandle, ProcessManager, SpawnOptions } from "../interfaces/process-manager.js";
+import type { OnCLIConnection, WebSocketServerLike } from "../interfaces/ws-server.js";
 import { MockBackendAdapter } from "../testing/adapter-test-helpers.js";
 import type { CliAdapterName } from "./interfaces/adapter-names.js";
 import type { AdapterResolver } from "./interfaces/adapter-resolver.js";
@@ -54,6 +55,57 @@ class TestProcessManager implements ProcessManager {
 
   isAlive(pid: number): boolean {
     return this.alivePids.has(pid);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// TrackingProcessManager — records kill signals per process for wiring tests
+// ---------------------------------------------------------------------------
+
+interface TrackingProcessHandle extends ProcessHandle {
+  resolveExit: (code: number | null) => void;
+  killCalls: string[];
+}
+
+class TrackingProcessManager implements ProcessManager {
+  readonly spawnCalls: SpawnOptions[] = [];
+  readonly spawnedProcesses: TrackingProcessHandle[] = [];
+  private alivePids = new Set<number>();
+  private nextPid = 10000;
+
+  spawn(options: SpawnOptions): ProcessHandle {
+    this.spawnCalls.push(options);
+    const pid = this.nextPid++;
+    this.alivePids.add(pid);
+    let resolveExit: (code: number | null) => void;
+    const exited = new Promise<number | null>((resolve) => {
+      resolveExit = resolve;
+    });
+    const killCalls: string[] = [];
+    const handle: TrackingProcessHandle = {
+      pid,
+      exited,
+      kill(signal: "SIGTERM" | "SIGKILL" | "SIGINT" = "SIGTERM") {
+        killCalls.push(signal);
+      },
+      stdout: null,
+      stderr: null,
+      resolveExit: (code: number | null) => {
+        this.alivePids.delete(pid);
+        resolveExit!(code);
+      },
+      killCalls,
+    };
+    this.spawnedProcesses.push(handle);
+    return handle;
+  }
+
+  isAlive(pid: number): boolean {
+    return this.alivePids.has(pid);
+  }
+
+  get lastProcess(): TrackingProcessHandle | undefined {
+    return this.spawnedProcesses[this.spawnedProcesses.length - 1];
   }
 }
 
@@ -650,5 +702,429 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     expect(relaunchSpy).toHaveBeenCalled();
 
     await mgr.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SessionCoordinator — event wiring and signal routing
+// (uses TrackingProcessManager to verify kill signals)
+// ---------------------------------------------------------------------------
+
+describe("SessionCoordinator wiring", () => {
+  let mgr: SessionCoordinator;
+  let pm: TrackingProcessManager;
+  let storage: MemoryStorage;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pm = new TrackingProcessManager();
+    storage = new MemoryStorage();
+    mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+  });
+
+  afterEach(async () => {
+    await mgr.stop().catch(() => {});
+  });
+
+  describe("start() and stop()", () => {
+    it("starts without error", () => {
+      expect(() => mgr.start()).not.toThrow();
+    });
+
+    it("stops gracefully", async () => {
+      mgr.start();
+      await expect(mgr.stop()).resolves.not.toThrow();
+    });
+
+    it("multiple start() calls are idempotent", () => {
+      mgr.start();
+      expect(() => mgr.start()).not.toThrow();
+    });
+  });
+
+  describe("backend:session_id wiring", () => {
+    it("forwards to launcher.setBackendSessionId", () => {
+      mgr.start();
+      const info = mgr.launcher.launch({ cwd: "/tmp" });
+      (mgr as any)._bridgeEmitter.emit("backend:session_id" as any, {
+        sessionId: info.sessionId,
+        backendSessionId: "cli-abc-123",
+      });
+
+      const session = mgr.launcher.getSession(info.sessionId);
+      expect(session?.backendSessionId).toBe("cli-abc-123");
+    });
+  });
+
+  describe("backend:connected wiring", () => {
+    it("forwards to launcher.markConnected", () => {
+      mgr.start();
+      const info = mgr.launcher.launch({ cwd: "/tmp" });
+      expect(info.state).toBe("starting");
+
+      (mgr as any)._bridgeEmitter.emit("backend:connected" as any, { sessionId: info.sessionId });
+
+      const session = mgr.launcher.getSession(info.sessionId);
+      expect(session?.state).toBe("connected");
+    });
+
+    it("seeds bridge session state when launcher spawns a process", () => {
+      mgr.start();
+      const info = mgr.launcher.launch({ cwd: "/tmp", model: "test-model" });
+
+      const snapshot = (mgr as any).getSessionSnapshot(info.sessionId);
+      expect(snapshot).toBeDefined();
+      expect(snapshot!.state.cwd).toBe("/tmp");
+      expect(snapshot!.state.model).toBe("test-model");
+      expect(snapshot!.state.adapterName).toBe("claude");
+    });
+  });
+
+  describe("backend:relaunch_needed wiring", () => {
+    it("triggers launcher.relaunch", async () => {
+      mgr.start();
+      const info = mgr.launcher.launch({ cwd: "/tmp" });
+      pm.lastProcess!.resolveExit(1);
+      await pm.lastProcess!.exited;
+      const spawnsBefore = pm.spawnCalls.length;
+
+      (mgr as any)._bridgeEmitter.emit("backend:relaunch_needed" as any, {
+        sessionId: info.sessionId,
+      });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(pm.spawnCalls.length).toBeGreaterThan(spawnsBefore);
+    });
+  });
+
+  describe("event forwarding", () => {
+    it("re-emits bridge events", () => {
+      mgr.start();
+      const received: string[] = [];
+      mgr.on("backend:connected", () => received.push("backend:connected"));
+
+      (mgr as any)._bridgeEmitter.emit("backend:connected" as any, { sessionId: "s1" });
+
+      expect(received).toContain("backend:connected");
+    });
+
+    it("re-emits launcher events", () => {
+      mgr.start();
+      const received: unknown[] = [];
+      mgr.on("process:spawned", (payload) => received.push(payload));
+
+      mgr.launcher.launch({ cwd: "/tmp" });
+
+      expect(received).toHaveLength(1);
+      expect((received[0] as any).pid).toBeDefined();
+    });
+
+    it("dual-publishes to domain event bus", () => {
+      mgr.start();
+      const received: unknown[] = [];
+      mgr.domainEvents.on("backend:connected", (event) => received.push(event));
+
+      (mgr as any)._bridgeEmitter.emit("backend:connected" as any, { sessionId: "s1" });
+
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatchObject({
+        source: "bridge",
+        type: "backend:connected",
+        payload: { sessionId: "s1" },
+      });
+      expect(typeof (received[0] as { timestamp: unknown }).timestamp).toBe("number");
+    });
+
+    it("consumes domain bus bridge events for coordination handlers", () => {
+      mgr.start();
+      const info = mgr.launcher.launch({ cwd: "/tmp" });
+
+      mgr.domainEvents.publishBridge("backend:session_id", {
+        sessionId: info.sessionId,
+        backendSessionId: "cli-via-domain-bus",
+      });
+
+      expect(mgr.launcher.getSession(info.sessionId)?.backendSessionId).toBe("cli-via-domain-bus");
+    });
+  });
+
+  describe("stop kills all processes", () => {
+    it("kills all launched processes", async () => {
+      mgr.start();
+      mgr.launcher.launch({ cwd: "/tmp" });
+      expect(pm.spawnedProcesses).toHaveLength(1);
+
+      setTimeout(() => pm.lastProcess!.resolveExit(0), 5);
+      await mgr.stop();
+
+      expect(pm.lastProcess!.killCalls).toContain("SIGTERM");
+    });
+  });
+
+  describe("WebSocket server integration", () => {
+    it("starts and stops WS server when provided", async () => {
+      const listenCalls: OnCLIConnection[] = [];
+      const closeCalled: boolean[] = [];
+
+      const mockServer: WebSocketServerLike = {
+        async listen(onConnection) {
+          listenCalls.push(onConnection);
+        },
+        async close() {
+          closeCalled.push(true);
+        },
+      };
+
+      const coord = new SessionCoordinator({
+        config: { port: 3456 },
+        server: mockServer,
+        launcher: createLauncher(pm),
+      });
+
+      await coord.start();
+      expect(listenCalls).toHaveLength(1);
+
+      await coord.stop();
+      expect(closeCalled).toHaveLength(1);
+    });
+
+    it("works without WS server (backwards compatible)", async () => {
+      const coord = new SessionCoordinator({
+        config: { port: 3456 },
+        launcher: createLauncher(pm),
+      });
+
+      await coord.start();
+      await coord.stop();
+    });
+
+    it("wires CLI connections to onConnection callback", async () => {
+      let capturedOnConnection: OnCLIConnection | null = null;
+
+      const mockServer: WebSocketServerLike = {
+        async listen(onConnection) {
+          capturedOnConnection = onConnection;
+        },
+        async close() {},
+      };
+
+      const coord = new SessionCoordinator({
+        config: { port: 3456 },
+        server: mockServer,
+        launcher: createLauncher(pm),
+      });
+
+      await coord.start();
+      expect(capturedOnConnection).not.toBeNull();
+
+      const mockSocket = { send: vi.fn(), close: vi.fn(), on: vi.fn() };
+      capturedOnConnection!(mockSocket as any, "test-session-id");
+      expect(mockSocket.close).toHaveBeenCalled();
+
+      await coord.stop();
+    });
+  });
+
+  describe("Forwarded structured data APIs", () => {
+    it("getSupportedModels forwards to bridge", () => {
+      mgr.start();
+      expect(mgr.getSupportedModels("nonexistent")).toEqual([]);
+    });
+
+    it("getSupportedCommands forwards to bridge", () => {
+      mgr.start();
+      expect(mgr.getSupportedCommands("nonexistent")).toEqual([]);
+    });
+
+    it("getAccountInfo forwards to bridge", () => {
+      mgr.start();
+      expect(mgr.getAccountInfo("nonexistent")).toBeNull();
+    });
+
+    it("forwards capabilities:ready event", () => {
+      mgr.start();
+      const handler = vi.fn();
+      mgr.on("capabilities:ready", handler);
+
+      (mgr as any)._bridgeEmitter.emit("capabilities:ready" as any, {
+        sessionId: "sess-1",
+        commands: [{ name: "/help", description: "Help" }],
+        models: [{ value: "claude-sonnet-4-5-20250929", displayName: "Sonnet" }],
+        account: { email: "test@test.com" },
+      });
+
+      expect(handler).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
+    });
+
+    it("forwards capabilities:timeout event", () => {
+      mgr.start();
+      const handler = vi.fn();
+      mgr.on("capabilities:timeout", handler);
+
+      (mgr as any)._bridgeEmitter.emit("capabilities:timeout" as any, {
+        sessionId: "sess-1",
+      });
+
+      expect(handler).toHaveBeenCalledWith({ sessionId: "sess-1" });
+    });
+  });
+
+  describe("adapterResolver wiring", () => {
+    it("defaultAdapterName returns resolver default when provided", () => {
+      const resolver = {
+        resolve: vi.fn(),
+        defaultName: "codex" as const,
+        availableAdapters: ["claude", "codex", "acp"] as const,
+      };
+
+      const resolverMgr = new SessionCoordinator({
+        config: { port: 3456 },
+        storage,
+        logger: noopLogger,
+        adapterResolver: resolver as any,
+        launcher: createLauncher(pm, storage),
+      });
+
+      expect(resolverMgr.defaultAdapterName).toBe("codex");
+    });
+
+    it("defaultAdapterName falls back to claude without resolver", () => {
+      expect(mgr.defaultAdapterName).toBe("claude");
+    });
+  });
+
+  describe("process output forwarding", () => {
+    it("forwards stdout with redaction to broadcastProcessOutput", () => {
+      mgr.start();
+      const broadcastSpy = vi
+        .spyOn((mgr as any).broadcaster, "broadcastProcessOutput")
+        .mockImplementation(() => {});
+      const info = mgr.launcher.launch({ cwd: "/tmp" });
+
+      (mgr.launcher as any).emit("process:stdout" as any, {
+        sessionId: info.sessionId,
+        data: "safe output line\n",
+      });
+
+      expect(broadcastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: info.sessionId }),
+        "stdout",
+        expect.any(String),
+      );
+    });
+
+    it("forwards stderr to broadcastProcessOutput", () => {
+      mgr.start();
+      const broadcastSpy = vi
+        .spyOn((mgr as any).broadcaster, "broadcastProcessOutput")
+        .mockImplementation(() => {});
+      const info = mgr.launcher.launch({ cwd: "/tmp" });
+
+      (mgr.launcher as any).emit("process:stderr" as any, {
+        sessionId: info.sessionId,
+        data: "error line\n",
+      });
+
+      expect(broadcastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: info.sessionId }),
+        "stderr",
+        expect.any(String),
+      );
+    });
+  });
+
+  describe("session auto-naming on first turn", () => {
+    it("derives name from first user message, truncates at 50, and broadcasts", () => {
+      mgr.start();
+      const broadcastSpy = vi
+        .spyOn((mgr as any).broadcaster, "broadcastNameUpdate")
+        .mockImplementation(() => {});
+      const setNameSpy = vi.spyOn(mgr.launcher, "setSessionName").mockImplementation(() => {});
+
+      const info = mgr.launcher.launch({ cwd: "/tmp" });
+      const longMessage = "A".repeat(60);
+      (mgr as any)._bridgeEmitter.emit("session:first_turn_completed" as any, {
+        sessionId: info.sessionId,
+        firstUserMessage: longMessage,
+      });
+
+      expect(broadcastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: info.sessionId }),
+        expect.stringContaining("..."),
+      );
+      const calledName = broadcastSpy.mock.calls[0][1];
+      expect(calledName.length).toBeLessThanOrEqual(50);
+      expect(setNameSpy).toHaveBeenCalledWith(info.sessionId, calledName);
+    });
+
+    it("skips naming if session already has a name", () => {
+      mgr.start();
+      const broadcastSpy = vi
+        .spyOn((mgr as any).broadcaster, "broadcastNameUpdate")
+        .mockImplementation(() => {});
+
+      const info = mgr.launcher.launch({ cwd: "/tmp" });
+      mgr.launcher.setSessionName(info.sessionId, "Existing Name");
+
+      (mgr as any)._bridgeEmitter.emit("session:first_turn_completed" as any, {
+        sessionId: info.sessionId,
+        firstUserMessage: "Hello world",
+      });
+
+      expect(broadcastSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("session closed cleanup", () => {
+    it("deletes processLogBuffers when session is closed", () => {
+      mgr.start();
+      const broadcastSpy = vi
+        .spyOn((mgr as any).broadcaster, "broadcastProcessOutput")
+        .mockImplementation(() => {});
+      const info = mgr.launcher.launch({ cwd: "/tmp" });
+
+      (mgr.launcher as any).emit("process:stdout" as any, {
+        sessionId: info.sessionId,
+        data: "line-before-close\n",
+      });
+      expect(broadcastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: info.sessionId }),
+        "stdout",
+        expect.stringContaining("line-before-close"),
+      );
+
+      (mgr as any)._bridgeEmitter.emit("session:closed" as any, { sessionId: info.sessionId });
+
+      broadcastSpy.mockClear();
+      (mgr.launcher as any).emit("process:stdout" as any, {
+        sessionId: info.sessionId,
+        data: "line-after-close\n",
+      });
+      expect(broadcastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: info.sessionId }),
+        "stdout",
+        expect.stringContaining("line-after-close"),
+      );
+    });
+  });
+
+  describe("executeSlashCommand forwarding", () => {
+    it("delegates to bridge.executeSlashCommand", async () => {
+      mgr.start();
+      const executeSpy = vi.spyOn(mgr, "executeSlashCommand").mockResolvedValue({
+        content: "help output",
+        source: "emulated" as const,
+      });
+
+      const result = await mgr.executeSlashCommand("test-session", "/help");
+
+      expect(executeSpy).toHaveBeenCalledWith("test-session", "/help");
+      expect(result).toEqual({ content: "help output", source: "emulated" });
+    });
   });
 });

@@ -44,7 +44,7 @@ function sentOfType(socket: MockSocket, type: string): unknown[] {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("Adapter → SessionBridge → Consumer Integration", () => {
+describe("Adapter → Session Core → Consumer Integration", () => {
   let bridge: BridgeTestWrapper;
   let adapter: MockBackendAdapter;
   const sessionId = "integration-session-1";
@@ -68,7 +68,7 @@ describe("Adapter → SessionBridge → Consumer Integration", () => {
 
   // ── 1. Basic flow ────────────────────────────────────────────────────────
 
-  describe("basic flow through SessionBridge", () => {
+  describe("basic flow through Session Core", () => {
     it("connects a consumer and delivers identity + session_init", () => {
       const socket = createMockSocket();
 

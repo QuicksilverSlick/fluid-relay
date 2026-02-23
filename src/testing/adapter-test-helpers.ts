@@ -197,8 +197,8 @@ export const noopLogger = {
 };
 
 /**
- * Minimal bridge-like wrapper returned by createBridgeWithAdapter.
- * Exposes the same surface as SessionBridge for integration tests.
+ * Minimal session-core wrapper returned by createBridgeWithAdapter.
+ * Assembles SessionRepository + SessionRuntime + BackendConnector for integration tests.
  */
 export type BridgeTestWrapper = {
   connectBackend(
