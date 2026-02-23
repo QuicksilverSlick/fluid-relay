@@ -235,8 +235,15 @@ export function createBridgeWithAdapter(options?: {
     },
     getOrCreateSession: (sessionId) => services.lifecycleService.getOrCreateSession(sessionId),
     removeSession: (sessionId) => services.lifecycleService.removeSession(sessionId),
-    getSession: (sessionId) => services.infoApi.getSession(sessionId),
-    seedSessionState: (sessionId, params) => services.infoApi.seedSessionState(sessionId, params),
+    getSession: (sessionId) => {
+      const session = services.store.get(sessionId);
+      if (!session) return undefined;
+      return services.runtimeManager.getOrCreate(session).getSessionSnapshot();
+    },
+    seedSessionState: (sessionId, params) => {
+      const session = services.lifecycleService.getOrCreateSession(sessionId);
+      services.runtimeManager.getOrCreate(session).seedSessionState(params);
+    },
     handleConsumerOpen: (ws, context) => services.consumerGateway.handleConsumerOpen(ws, context),
     handleConsumerMessage: (ws, sessionId, data) =>
       services.consumerGateway.handleConsumerMessage(ws, sessionId, data),

@@ -172,10 +172,9 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         const session = this.services.store.get(sessionId);
         return session ? this.services.backendConnector.isBackendConnected(session) : false;
       },
-      getSession: (sessionId) => this.services.infoApi.getSession(sessionId),
-      seedSessionState: (sessionId, params) =>
-        this.services.infoApi.seedSessionState(sessionId, params),
-      setAdapterName: (sessionId, name) => this.services.infoApi.setAdapterName(sessionId, name),
+      getSession: (sessionId) => this.getSessionSnapshot(sessionId),
+      seedSessionState: (sessionId, params) => this.seedSessionState(sessionId, params),
+      setAdapterName: (sessionId, name) => this.setAdapterName(sessionId, name),
       broadcastProcessOutput: (sessionId, stream, data) => {
         const session = this.services.store.get(sessionId);
         if (session) this.services.broadcaster.broadcastProcessOutput(session, stream, data);
@@ -218,8 +217,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         ws: import("../interfaces/transport.js").WebSocketLike,
         sessionId: string,
       ) => this.services.consumerGateway.handleConsumerClose(ws, sessionId),
-      setAdapterName: (sessionId: string, name: string) =>
-        this.services.infoApi.setAdapterName(sessionId, name),
+      setAdapterName: (sessionId: string, name: string) => this.setAdapterName(sessionId, name),
       connectBackend: (
         sessionId: string,
         opts?: { resume?: boolean; adapterOptions?: Record<string, unknown> },
@@ -227,8 +225,8 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     };
 
     const bridgeLifecycle = {
-      getAllSessions: () => this.services.infoApi.getAllSessions(),
-      getSession: (sessionId: string) => this.services.infoApi.getSession(sessionId),
+      getAllSessions: () => this.services.store.getAllStates(),
+      getSession: (sessionId: string) => this.getSessionSnapshot(sessionId),
       closeSession: (sessionId: string) => this.services.lifecycleService.closeSession(sessionId),
       applyPolicyCommand: (
         sessionId: string,
@@ -309,14 +307,11 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           const { sessionId } = payload;
           const info = this.registry.getSession(sessionId);
           if (!info) return;
-          this.services.infoApi.seedSessionState(sessionId, {
+          this.seedSessionState(sessionId, {
             cwd: info.cwd,
             model: info.model,
           });
-          this.services.infoApi.setAdapterName(
-            sessionId,
-            info.adapterName ?? this.defaultAdapterName,
-          );
+          this.setAdapterName(sessionId, info.adapterName ?? this.defaultAdapterName);
         },
         onBackendSessionId: (payload) => {
           this.registry.setBackendSessionId(payload.sessionId, payload.backendSessionId);
@@ -390,11 +385,11 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     if (!adapter || isInvertedConnectionAdapter(adapter)) {
       const launchResult = this.launcher.launch({ cwd, model: options.model });
       launchResult.adapterName = adapterName;
-      this.services.infoApi.seedSessionState(launchResult.sessionId, {
+      this.seedSessionState(launchResult.sessionId, {
         cwd: launchResult.cwd,
         model: options.model,
       });
-      this.services.infoApi.setAdapterName(launchResult.sessionId, adapterName);
+      this.setAdapterName(launchResult.sessionId, adapterName);
       return {
         sessionId: launchResult.sessionId,
         cwd: launchResult.cwd,
@@ -416,8 +411,8 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       adapterName,
     });
 
-    this.services.infoApi.seedSessionState(sessionId, { cwd, model: options.model });
-    this.services.infoApi.setAdapterName(sessionId, adapterName);
+    this.seedSessionState(sessionId, { cwd, model: options.model });
+    this.setAdapterName(sessionId, adapterName);
 
     try {
       await this.connectBackendForSession(sessionId, {
@@ -571,5 +566,23 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
   ): Promise<void> {
     const session = this.services.lifecycleService.getOrCreateSession(sessionId);
     return this.services.backendConnector.connectBackend(session, opts);
+  }
+
+  // ── Inlined SessionInfoApi helpers ─────────────────────────────────────
+
+  private getSessionSnapshot(sessionId: string): SessionSnapshot | undefined {
+    const session = this.services.store.get(sessionId);
+    if (!session) return undefined;
+    return this.services.runtimeManager.getOrCreate(session).getSessionSnapshot();
+  }
+
+  private seedSessionState(sessionId: string, params: { cwd?: string; model?: string }): void {
+    const session = this.services.lifecycleService.getOrCreateSession(sessionId);
+    this.services.runtimeManager.getOrCreate(session).seedSessionState(params);
+  }
+
+  private setAdapterName(sessionId: string, name: string): void {
+    const session = this.services.lifecycleService.getOrCreateSession(sessionId);
+    this.services.runtimeManager.getOrCreate(session).setAdapterName(name);
   }
 }

@@ -167,7 +167,11 @@ function createBridgeWithAdapter() {
       const session = services.lifecycleService.getOrCreateSession(sessionId);
       return services.backendConnector.connectBackend(session);
     },
-    getSession: (sessionId: string) => services.infoApi.getSession(sessionId),
+    getSession: (sessionId: string) => {
+      const session = services.store.get(sessionId);
+      if (!session) return undefined;
+      return services.runtimeManager.getOrCreate(session).getSessionSnapshot();
+    },
     on: (event: string, listener: (...args: unknown[]) => void) => emitter.on(event, listener),
   };
   return { bridge, storage, adapter };

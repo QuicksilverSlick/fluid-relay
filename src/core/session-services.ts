@@ -1,10 +1,6 @@
 /**
  * SessionServices — flat registry of all services produced by buildSessionServices.
  *
- * Replaces `SessionBridge`'s 21 private fields with a single typed object.
- * Used by `SessionCoordinator` to wire together session control, backend,
- * consumer, and message services without going through the `SessionBridge` facade.
- *
  * @module SessionControl
  */
 
@@ -19,7 +15,7 @@ import type { ConsumerGateway } from "./consumer/consumer-gateway.js";
 import type { MessageTracer } from "./messaging/message-tracer.js";
 import type { SessionRepository } from "./session/session-repository.js";
 import type { RuntimeApi } from "./session-coordinator/runtime-api.js";
-import type { SessionInfoApi } from "./session-coordinator/session-info-api.js";
+import type { RuntimeManager } from "./session-coordinator/runtime-manager.js";
 import type { SessionLifecycleService } from "./session-coordinator/session-lifecycle-service.js";
 
 /** Core infra context threaded through all session services. */
@@ -36,14 +32,14 @@ export interface SessionServices {
   readonly core: BridgeCoreContext;
   /** Session data store. */
   readonly store: SessionRepository;
+  /** Per-session runtime map (getOrCreate, get, delete, etc.). */
+  readonly runtimeManager: RuntimeManager;
   /** Programmatic runtime operations (send, interrupt, slash commands, etc.). */
   readonly runtimeApi: RuntimeApi;
   /** Backend connector (connect/disconnect/query). */
   readonly backendConnector: BackendConnector;
   /** Capabilities handshake policy. */
   readonly capabilitiesPolicy: CapabilitiesPolicy;
-  /** Session state reads and seeding. */
-  readonly infoApi: SessionInfoApi;
   /** Session lifecycle (getOrCreate, close, remove). */
   readonly lifecycleService: SessionLifecycleService;
   /** Consumer WebSocket gateway (open/message/close). */
