@@ -11,17 +11,15 @@
  */
 
 import type { ConsumerIdentity, ConsumerRole } from "../../interfaces/auth.js";
-import type { RateLimiter } from "../../interfaces/rate-limiter.js";
 import type { SessionStorage } from "../../interfaces/storage.js";
-import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { PermissionRequest } from "../../types/cli-messages.js";
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionSnapshot, SessionState } from "../../types/session-state.js";
-import type { AdapterSlashExecutor, BackendSession } from "../interfaces/backend-adapter.js";
+import type { AdapterSlashExecutor } from "../interfaces/backend-adapter.js";
 import type { SlashCommandRegistry } from "../slash/slash-command-registry.js";
 import type { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
-import type { SessionData } from "./session-data.js";
+import type { SessionData, SessionHandles } from "./session-data.js";
 
 export type { AdapterSlashExecutor };
 
@@ -33,34 +31,7 @@ export interface QueuedMessage {
   queuedAt: number;
 }
 
-export interface SessionHandles {
-  /** BackendSession from BackendAdapter. */
-  backendSession: BackendSession | null;
-  /** AbortController for the backend message consumption loop. */
-  backendAbort: AbortController | null;
-  consumerSockets: Map<WebSocketLike, ConsumerIdentity>;
-  consumerRateLimiters: Map<WebSocketLike, RateLimiter>;
-  anonymousCounter: number;
-  lastActivity: number;
-  pendingInitialize: {
-    requestId: string;
-    timer: ReturnType<typeof setTimeout>;
-  } | null;
-  /** Per-session correlation buffer for team tool_use↔tool_result pairing. */
-  teamCorrelationBuffer: TeamToolCorrelationBuffer;
-  /** Per-session slash command registry. */
-  registry: SlashCommandRegistry;
-  /** FIFO queue of passthrough slash commands awaiting CLI responses. */
-  pendingPassthroughs: Array<{
-    command: string;
-    requestId?: string;
-    slashRequestId: string;
-    traceId: string;
-    startedAtMs: number;
-  }>;
-  /** Adapter-specific slash command executor (e.g. Codex JSON-RPC translation). */
-  adapterSlashExecutor: AdapterSlashExecutor | null;
-}
+export type { SessionHandles } from "./session-data.js";
 
 export interface Session extends SessionHandles {
   // ── Immutable lookup key ────────────────────────────────────────────────
