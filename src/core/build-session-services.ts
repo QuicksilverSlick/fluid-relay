@@ -41,6 +41,7 @@ import {
 import { GitInfoTracker } from "./session/git-info-tracker.js";
 import { MessageQueueHandler } from "./session/message-queue-handler.js";
 import type { SessionData } from "./session/session-data.js";
+import type { SystemSignal } from "./session/session-event.js";
 import {
   InMemorySessionLeaseCoordinator,
   type SessionLeaseCoordinator,
@@ -97,7 +98,13 @@ function forwardBridgeEventWithLifecycle(
     if (typeof sessionId === "string") {
       const runtime = runtimeManager.get(sessionId);
       if (runtime) {
-        runtime.process({ type: "LIFECYCLE_SIGNAL", signal: type });
+        const signal: SystemSignal =
+          type === "backend:connected"
+            ? { kind: "BACKEND_CONNECTED" }
+            : type === "backend:disconnected"
+              ? { kind: "BACKEND_DISCONNECTED", reason: "bridge-event" }
+              : { kind: "SESSION_CLOSED" };
+        runtime.process({ type: "SYSTEM_SIGNAL", signal });
       }
     }
   }
@@ -569,9 +576,19 @@ export function buildSessionServices(
       sessionId: string,
       command: Parameters<RuntimeApiFacade["applyPolicyCommand"]>[1],
     ) =>
-      withMutableSessionVoid(sessionId, "applyPolicyCommand", (s: Session) =>
-        runtimeManager.getOrCreate(s).process({ type: "POLICY_COMMAND", command }),
-      ),
+      withMutableSessionVoid(sessionId, "applyPolicyCommand", (s: Session) => {
+        const kindMap: Record<string, SystemSignal["kind"]> = {
+          reconnect_timeout: "RECONNECT_TIMEOUT",
+          idle_reap: "IDLE_REAP",
+          capabilities_timeout: "CAPABILITIES_TIMEOUT",
+        };
+        const kind = kindMap[command.type];
+        if (kind) {
+          runtimeManager
+            .getOrCreate(s)
+            .process({ type: "SYSTEM_SIGNAL", signal: { kind } as SystemSignal });
+        }
+      }),
     handleBackendMessage: (sessionId: string, message: UnifiedMessage) =>
       withMutableSessionVoid(sessionId, "handleBackendMessage", (s: Session) =>
         runtimeManager.getOrCreate(s).process({ type: "BACKEND_MESSAGE", message }),
@@ -584,9 +601,16 @@ export function buildSessionServices(
       sessionId: string,
       signal: "backend:connected" | "backend:disconnected" | "session:closed",
     ) =>
-      withMutableSessionVoid(sessionId, "handleLifecycleSignal", (s: Session) =>
-        runtimeManager.getOrCreate(s).process({ type: "LIFECYCLE_SIGNAL", signal }),
-      ),
+      withMutableSessionVoid(sessionId, "handleLifecycleSignal", (s: Session) => {
+        const kindMap = {
+          "backend:connected": "BACKEND_CONNECTED",
+          "backend:disconnected": "BACKEND_DISCONNECTED",
+          "session:closed": "SESSION_CLOSED",
+        } as const;
+        runtimeManager
+          .getOrCreate(s)
+          .process({ type: "SYSTEM_SIGNAL", signal: { kind: kindMap[signal] } as SystemSignal });
+      }),
     sendInterrupt: (sessionId: string) =>
       withMutableSessionVoid(sessionId, "sendInterrupt", (s: Session) =>
         runtimeManager.getOrCreate(s).sendInterrupt(),
@@ -713,7 +737,7 @@ export function buildSessionServices(
         });
       }
       runtime.closeAllConsumers();
-      runtime.process({ type: "LIFECYCLE_SIGNAL", signal: "session:closed" });
+      runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSED" } });
       store.remove(sessionId);
       runtimeManager.delete(sessionId);
       leaseCoordinator.releaseLease(sessionId, leaseOwnerId);

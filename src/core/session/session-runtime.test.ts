@@ -758,8 +758,8 @@ describe("SessionRuntime", () => {
     const session = createMockSession({ id: "s1" });
     const runtime = new SessionRuntime(session, makeDeps());
 
-    runtime.process({ type: "LIFECYCLE_SIGNAL", signal: "backend:connected" });
-    runtime.process({ type: "POLICY_COMMAND", command: { type: "reconnect_timeout" } });
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "BACKEND_CONNECTED" } });
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "RECONNECT_TIMEOUT" } });
 
     expect(runtime.getLifecycleState()).toBe("degraded");
   });
@@ -768,7 +768,7 @@ describe("SessionRuntime", () => {
     const session = createMockSession({ id: "s1" });
     const runtime = new SessionRuntime(session, makeDeps());
 
-    runtime.process({ type: "POLICY_COMMAND", command: { type: "idle_reap" } });
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "IDLE_REAP" } });
 
     expect(runtime.getLifecycleState()).toBe("closing");
   });
@@ -1111,14 +1111,14 @@ describe("SessionRuntime", () => {
     expect(runtime.trySendRawToBackend("ndjson-line")).toBe("unsupported");
   });
 
-  it("handlePolicyCommand capabilities_timeout is a no-op", () => {
+  it("CAPABILITIES_TIMEOUT signal is a no-op", () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
     // Should not throw or change state
     expect(() =>
-      runtime.process({ type: "POLICY_COMMAND", command: { type: "capabilities_timeout" } }),
+      runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "CAPABILITIES_TIMEOUT" } }),
     ).not.toThrow();
   });
 
@@ -1241,14 +1241,14 @@ describe("SessionRuntime", () => {
     runtime.sendInterrupt();
     runtime.sendSetModel("m2");
     runtime.sendSetPermissionMode("plan");
-    runtime.process({ type: "POLICY_COMMAND", command: { type: "reconnect_timeout" } });
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "RECONNECT_TIMEOUT" } });
     await runtime.executeSlashCommand("/help");
     runtime.sendToBackend(createUnifiedMessage({ type: "interrupt", role: "system" }));
     runtime.process({
       type: "BACKEND_MESSAGE",
       message: createUnifiedMessage({ type: "result", role: "assistant" }),
     });
-    runtime.process({ type: "LIFECYCLE_SIGNAL", signal: "backend:connected" });
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "BACKEND_CONNECTED" } });
 
     // Basic sanity: guard callback was exercised heavily.
     expect(onMutationRejected).toHaveBeenCalled();

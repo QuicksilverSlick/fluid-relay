@@ -24,7 +24,7 @@ import type { BridgeEventMap } from "../../types/events.js";
 import type { SessionSnapshot, SessionState } from "../../types/session-state.js";
 import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
-import type { InboundCommand, PolicyCommand } from "../interfaces/runtime-commands.js";
+import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import type { SessionData } from "../session/session-data.js";
 import type { SlashCommandService } from "../slash/slash-command-service.js";
 import { diffTeamState } from "../team/team-event-differ.js";
@@ -33,7 +33,7 @@ import type { UnifiedMessage } from "../types/unified-message.js";
 import { executeEffects } from "./effect-executor.js";
 import type { GitInfoTracker } from "./git-info-tracker.js";
 import type { MessageQueueHandler } from "./message-queue-handler.js";
-import type { SessionEvent } from "./session-event.js";
+import type { SessionEvent, SystemSignal } from "./session-event.js";
 import type { LifecycleState } from "./session-lifecycle.js";
 import { isLifecycleTransitionAllowed } from "./session-lifecycle.js";
 import type { Session } from "./session-repository.js";
@@ -174,11 +174,8 @@ export class SessionRuntime {
       case "INBOUND_COMMAND":
         this.handleInboundCommand(event.command, event.ws);
         break;
-      case "POLICY_COMMAND":
-        this.handlePolicyCommand(event.command);
-        break;
-      case "LIFECYCLE_SIGNAL":
-        this.handleSignal(event.signal);
+      case "SYSTEM_SIGNAL":
+        this.handleSystemSignal(event.signal);
         break;
     }
   }
@@ -686,17 +683,32 @@ export class SessionRuntime {
     this.sendControlRequest({ type: "set_permission_mode", mode });
   }
 
-  private handlePolicyCommand(command: PolicyCommand): void {
-    if (!this.ensureMutationAllowed("handlePolicyCommand")) return;
-    switch (command.type) {
-      case "reconnect_timeout":
+  private handleSystemSignal(signal: SystemSignal): void {
+    if (!this.ensureMutationAllowed("handleSystemSignal")) return;
+    switch (signal.kind) {
+      case "BACKEND_CONNECTED":
+        this.transitionLifecycle("active", "signal:backend:connected");
+        break;
+      case "BACKEND_DISCONNECTED":
+        this.transitionLifecycle("degraded", "signal:backend:disconnected");
+        break;
+      case "SESSION_CLOSED":
+        this.transitionLifecycle("closed", "signal:session:closed");
+        break;
+      case "RECONNECT_TIMEOUT":
         this.transitionLifecycle("degraded", "policy:reconnect_timeout");
         break;
-      case "idle_reap":
+      case "IDLE_REAP":
         this.transitionLifecycle("closing", "policy:idle_reap");
         break;
-      case "capabilities_timeout":
-        // Capabilities timeout is advisory; no direct state mutation yet.
+      case "CAPABILITIES_TIMEOUT":
+        // Advisory — no direct state mutation yet.
+        break;
+      case "CONSUMER_CONNECTED":
+      case "CONSUMER_DISCONNECTED":
+      case "GIT_INFO_RESOLVED":
+      case "CAPABILITIES_READY":
+        // Handled by higher-level logic outside SessionRuntime for now.
         break;
     }
   }
@@ -864,19 +876,6 @@ export class SessionRuntime {
     const events = diffTeamState(this.session.id, prevTeam, currentTeam);
     for (const event of events) {
       this.deps.emitEvent(event.type, event.payload as BridgeEventMap[keyof BridgeEventMap]);
-    }
-  }
-
-  private handleSignal(
-    signal: "backend:connected" | "backend:disconnected" | "session:closed",
-  ): void {
-    if (!this.ensureMutationAllowed("handleSignal")) return;
-    if (signal === "backend:connected") {
-      this.transitionLifecycle("active", "signal:backend:connected");
-    } else if (signal === "backend:disconnected") {
-      this.transitionLifecycle("degraded", "signal:backend:disconnected");
-    } else if (signal === "session:closed") {
-      this.transitionLifecycle("closed", "signal:session:closed");
     }
   }
 

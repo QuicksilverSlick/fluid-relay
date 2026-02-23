@@ -19,19 +19,30 @@ describe("SessionEvent types", () => {
     expect(event.type).toBe("INBOUND_COMMAND");
   });
 
-  it("can construct a POLICY_COMMAND event", () => {
+  it("can construct a SYSTEM_SIGNAL event (BACKEND_CONNECTED)", () => {
     const event: SessionEvent = {
-      type: "POLICY_COMMAND",
-      command: { type: "capabilities_timeout" },
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "BACKEND_CONNECTED" },
     };
-    expect(event.type).toBe("POLICY_COMMAND");
+    expect(event.type).toBe("SYSTEM_SIGNAL");
+    if (event.type === "SYSTEM_SIGNAL") {
+      expect(event.signal.kind).toBe("BACKEND_CONNECTED");
+    }
   });
 
-  it("can construct a LIFECYCLE_SIGNAL event", () => {
+  it("can construct a SYSTEM_SIGNAL event (IDLE_REAP)", () => {
     const event: SessionEvent = {
-      type: "LIFECYCLE_SIGNAL",
-      signal: "backend:connected",
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "IDLE_REAP" },
     };
-    expect(event.type).toBe("LIFECYCLE_SIGNAL");
+    expect(event.type).toBe("SYSTEM_SIGNAL");
+  });
+
+  it("can construct a SYSTEM_SIGNAL event (CONSUMER_DISCONNECTED)", () => {
+    const event: SessionEvent = {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "CONSUMER_DISCONNECTED", ws: {} as any },
+    };
+    expect(event.type).toBe("SYSTEM_SIGNAL");
   });
 });
