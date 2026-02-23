@@ -13,6 +13,7 @@
 import { EventEmitter } from "node:events";
 import { translate } from "../adapters/claude/message-translator.js";
 import { MemoryStorage } from "../adapters/memory-storage.js";
+import { buildSessionServices } from "../core/build-session-services.js";
 import type { RateLimiterFactory } from "../core/consumer/consumer-gatekeeper.js";
 import type {
   BackendAdapter,
@@ -22,7 +23,6 @@ import type {
 } from "../core/interfaces/backend-adapter.js";
 import type { MessageTracer } from "../core/messaging/message-tracer.js";
 import type { Session } from "../core/session/session-repository.js";
-import { buildSessionServices } from "../core/session-coordinator/build-services.js";
 import type { UnifiedMessage } from "../core/types/unified-message.js";
 import { createUnifiedMessage } from "../core/types/unified-message.js";
 import type { AuthContext, Authenticator } from "../interfaces/auth.js";

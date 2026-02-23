@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { TestSessionCoordinator } from "../../test-utils/session-test-utils.js";
+import type { TestSessionCoordinator } from "../test-utils/session-test-utils.js";
 import {
   cleanupSessionCoordinator,
   closeWebSockets,
@@ -9,7 +9,7 @@ import {
   setupTestSessionCoordinator,
   waitForMessage,
   waitForMessageType,
-} from "../../test-utils/session-test-utils.js";
+} from "../test-utils/session-test-utils.js";
 
 function mockCliPermissionRequest(requestId = "perm-1") {
   return {

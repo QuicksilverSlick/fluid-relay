@@ -17,13 +17,13 @@ import type { AuthContext } from "../../interfaces/auth.js";
 import type { Logger } from "../../interfaces/logger.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import { tick } from "../../testing/adapter-test-helpers.js";
+import { buildSessionServices } from "../build-session-services.js";
 import type {
   BackendAdapter,
   BackendCapabilities,
   BackendSession,
   ConnectOptions,
 } from "../interfaces/backend-adapter.js";
-import { buildSessionServices } from "../session-coordinator/build-services.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
 

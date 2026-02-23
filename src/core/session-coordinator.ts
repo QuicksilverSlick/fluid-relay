@@ -28,6 +28,7 @@ import type { SessionCoordinatorEventMap } from "../types/events.js";
 import type { SessionInfo, SessionSnapshot } from "../types/session-state.js";
 import { noopLogger } from "../utils/noop-logger.js";
 import { redactSecrets } from "../utils/redact-secrets.js";
+import { buildSessionServices } from "./build-session-services.js";
 import type { RateLimiterFactory } from "./consumer/consumer-gatekeeper.js";
 import { BackendRecoveryService } from "./coordinator/backend-recovery-service.js";
 import { CoordinatorEventRelay } from "./coordinator/coordinator-event-relay.js";
@@ -49,7 +50,6 @@ import type { MessageTracer } from "./messaging/message-tracer.js";
 import { IdlePolicy } from "./policies/idle-policy.js";
 import { ReconnectPolicy } from "./policies/reconnect-policy.js";
 import { SessionTransportHub } from "./session/session-transport-hub.js";
-import { buildSessionServices } from "./session-coordinator/build-services.js";
 import type { SessionServices } from "./session-services.js";
 
 /**
