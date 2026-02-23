@@ -58,7 +58,12 @@ import {
   type SessionRuntimeDeps,
   SessionRuntime as SessionRuntimeImpl,
 } from "../session/session-runtime.js";
-import type { SessionServices } from "../session-services.js";
+import type {
+  LifecycleServiceFacade,
+  RuntimeApiFacade,
+  RuntimeManagerApi,
+  SessionServices,
+} from "../session-services.js";
 import {
   AdapterNativeHandler,
   LocalHandler,
@@ -71,9 +76,6 @@ import { SlashCommandRegistry } from "../slash/slash-command-registry.js";
 import { SlashCommandService } from "../slash/slash-command-service.js";
 import { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
-import { RuntimeApi } from "./runtime-api.js";
-import { RuntimeManager } from "./runtime-manager.js";
-import { SessionLifecycleService } from "./session-lifecycle-service.js";
 
 // ---------------------------------------------------------------------------
 // Inlined: bridge-event-forwarder
@@ -87,7 +89,7 @@ function isLifecycleSignal(type: string): type is LifecycleSignal {
 }
 
 function forwardBridgeEventWithLifecycle(
-  runtimeManager: Pick<RuntimeManager, "handleLifecycleSignal">,
+  runtimeManager: RuntimeManagerApi,
   emit: (type: string, payload: unknown) => void,
   type: string,
   payload: unknown,
@@ -95,7 +97,10 @@ function forwardBridgeEventWithLifecycle(
   if (payload && typeof payload === "object" && "sessionId" in payload && isLifecycleSignal(type)) {
     const sessionId = (payload as { sessionId?: unknown }).sessionId;
     if (typeof sessionId === "string") {
-      runtimeManager.handleLifecycleSignal(sessionId, type);
+      const runtime = runtimeManager.get(sessionId);
+      if (runtime) {
+        runtime.process({ type: "LIFECYCLE_SIGNAL", signal: type });
+      }
     }
   }
   emit(type, payload);
@@ -125,30 +130,43 @@ interface RuntimeManagerFactoryDeps {
   getCapabilitiesPolicy: () => SessionRuntimeDeps["capabilitiesPolicy"];
 }
 
-function createRuntimeManager(deps: RuntimeManagerFactoryDeps): RuntimeManager {
-  return new RuntimeManager(
-    (session: Session) =>
-      new SessionRuntimeImpl(session, {
-        now: deps.now,
-        maxMessageHistoryLength: deps.maxMessageHistoryLength,
-        broadcaster: deps.getBroadcaster(),
-        queueHandler: deps.getQueueHandler(),
-        slashService: deps.getSlashService(),
-        sendToBackend: deps.sendToBackend,
-        tracedNormalizeInbound: deps.tracedNormalizeInbound,
-        persistSession: deps.persistSession,
-        warnUnknownPermission: deps.warnUnknownPermission,
-        emitPermissionResolved: deps.emitPermissionResolved,
-        onSessionSeeded: deps.onSessionSeeded,
-        onInvalidLifecycleTransition: deps.onInvalidLifecycleTransition,
-        canMutateSession: deps.canMutateSession,
-        onMutationRejected: deps.onMutationRejected,
-        emitEvent: deps.emitEvent,
-        gitTracker: deps.getGitTracker(),
-        gitResolver: deps.gitResolver,
-        capabilitiesPolicy: deps.getCapabilitiesPolicy(),
-      }),
-  );
+function createRuntimeManager(deps: RuntimeManagerFactoryDeps): RuntimeManagerApi {
+  const runtimes = new Map<string, SessionRuntime>();
+  return {
+    getOrCreate: (session) => {
+      let r = runtimes.get(session.id);
+      if (!r) {
+        r = new SessionRuntimeImpl(session, {
+          now: deps.now,
+          maxMessageHistoryLength: deps.maxMessageHistoryLength,
+          broadcaster: deps.getBroadcaster(),
+          queueHandler: deps.getQueueHandler(),
+          slashService: deps.getSlashService(),
+          sendToBackend: deps.sendToBackend,
+          tracedNormalizeInbound: deps.tracedNormalizeInbound,
+          persistSession: deps.persistSession,
+          warnUnknownPermission: deps.warnUnknownPermission,
+          emitPermissionResolved: deps.emitPermissionResolved,
+          onSessionSeeded: deps.onSessionSeeded,
+          onInvalidLifecycleTransition: deps.onInvalidLifecycleTransition,
+          canMutateSession: deps.canMutateSession,
+          onMutationRejected: deps.onMutationRejected,
+          emitEvent: deps.emitEvent,
+          gitTracker: deps.getGitTracker(),
+          gitResolver: deps.gitResolver,
+          capabilitiesPolicy: deps.getCapabilitiesPolicy(),
+        });
+        runtimes.set(session.id, r);
+      }
+      return r;
+    },
+    get: (sessionId) => runtimes.get(sessionId),
+    has: (sessionId) => runtimes.has(sessionId),
+    delete: (sessionId) => runtimes.delete(sessionId),
+    clear: () => runtimes.clear(),
+    keys: () => runtimes.keys(),
+    getLifecycleState: (sessionId) => runtimes.get(sessionId)?.getLifecycleState(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +466,7 @@ export function buildSessionServices(
 
   // ── Lazy refs for circular dependency resolution ───────────────────────────
   // Each lazy getter is only called AFTER all services are constructed.
-  let runtimeManager!: RuntimeManager;
+  let runtimeManager!: RuntimeManagerApi;
   let broadcaster!: ConsumerBroadcaster;
   let queueHandler!: MessageQueueHandler;
   let slashService!: SlashCommandService;
@@ -495,13 +513,85 @@ export function buildSessionServices(
     getCapabilitiesPolicy: () => capabilitiesPolicy,
   });
 
-  const runtimeApi = new RuntimeApi({
-    store,
-    runtimeManager,
-    logger,
-    leaseCoordinator,
-    leaseOwnerId,
-  });
+  const withSession = <T>(sessionId: string, fallback: T, fn: (session: Session) => T): T => {
+    const session = store.get(sessionId);
+    return session ? fn(session) : fallback;
+  };
+
+  const withMutableSessionVoid = (
+    sessionId: string,
+    op: string,
+    fn: (session: Session) => void,
+  ) => {
+    if (!leaseCoordinator.ensureLease(sessionId, leaseOwnerId)) {
+      logger.warn(`Session mutation blocked: lease not owned by this runtime`, {
+        sessionId,
+        operation: op,
+      });
+      return;
+    }
+    const session = store.get(sessionId);
+    if (session) fn(session);
+  };
+
+  const runtimeApi: RuntimeApiFacade = {
+    sendUserMessage: (sessionId, text, options) =>
+      withMutableSessionVoid(sessionId, "sendUserMessage", (s) =>
+        runtimeManager.getOrCreate(s).sendUserMessage(text, options),
+      ),
+    executeSlashCommand: async (sessionId, command) => {
+      const session = store.get(sessionId);
+      return session ? runtimeManager.getOrCreate(session).executeSlashCommand(command) : null;
+    },
+    applyPolicyCommand: (sessionId, command) =>
+      withMutableSessionVoid(sessionId, "applyPolicyCommand", (s) =>
+        runtimeManager.getOrCreate(s).process({ type: "POLICY_COMMAND", command }),
+      ),
+    handleBackendMessage: (sessionId, message) =>
+      withMutableSessionVoid(sessionId, "handleBackendMessage", (s) =>
+        runtimeManager.getOrCreate(s).process({ type: "BACKEND_MESSAGE", message }),
+      ),
+    handleInboundCommand: (sessionId, command, ws) =>
+      withMutableSessionVoid(sessionId, "handleInboundCommand", (s) =>
+        runtimeManager.getOrCreate(s).process({ type: "INBOUND_COMMAND", command, ws }),
+      ),
+    handleLifecycleSignal: (sessionId, signal) =>
+      withMutableSessionVoid(sessionId, "handleLifecycleSignal", (s) =>
+        runtimeManager.getOrCreate(s).process({ type: "LIFECYCLE_SIGNAL", signal }),
+      ),
+    sendInterrupt: (sessionId) =>
+      withMutableSessionVoid(sessionId, "sendInterrupt", (s) =>
+        runtimeManager.getOrCreate(s).sendInterrupt(),
+      ),
+    sendSetModel: (sessionId, model) =>
+      withMutableSessionVoid(sessionId, "sendSetModel", (s) =>
+        runtimeManager.getOrCreate(s).sendSetModel(model),
+      ),
+    sendSetPermissionMode: (sessionId, mode) =>
+      withMutableSessionVoid(sessionId, "sendSetPermissionMode", (s) =>
+        runtimeManager.getOrCreate(s).sendSetPermissionMode(mode),
+      ),
+    sendPermissionResponse: (sessionId, requestId, behavior, options) =>
+      withMutableSessionVoid(sessionId, "sendPermissionResponse", (s) =>
+        runtimeManager.getOrCreate(s).sendPermissionResponse(requestId, behavior, options),
+      ),
+    getSupportedModels: (sessionId) =>
+      withSession(sessionId, [], (s) => runtimeManager.getOrCreate(s).getSupportedModels()),
+    getSupportedCommands: (sessionId) =>
+      withSession(sessionId, [], (s) => runtimeManager.getOrCreate(s).getSupportedCommands()),
+    getAccountInfo: (sessionId) =>
+      withSession(sessionId, null, (s) => runtimeManager.getOrCreate(s).getAccountInfo()),
+    sendToBackend: (sessionId, message) => {
+      const session = store.get(sessionId);
+      if (!session) {
+        logger.warn(`No backend session for ${sessionId}, cannot send message`);
+        return;
+      }
+      withMutableSessionVoid(sessionId, "sendToBackend", (s) =>
+        runtimeManager.getOrCreate(s).sendToBackend(message),
+      );
+    },
+  };
 
   // ── Consumer plane ────────────────────────────────────────────────────────
   const runtimeAccessors = createConsumerPlaneRuntimeAccessors((session) =>
@@ -542,16 +632,57 @@ export function buildSessionServices(
       (session) => store.persistSync(session),
     ),
   );
-  const lifecycleService = new SessionLifecycleService({
-    store,
-    runtimeManager,
-    capabilitiesPolicy,
-    metrics,
-    logger,
-    emitSessionClosed: (sessionId) => emitEvent("session:closed", { sessionId }),
-    leaseCoordinator,
-    leaseOwnerId,
-  });
+  const lifecycleService: LifecycleServiceFacade = {
+    getOrCreateSession: (sessionId) => {
+      if (!leaseCoordinator.ensureLease(sessionId, leaseOwnerId)) {
+        logger.warn("Session lifecycle getOrCreate blocked: lease not owned by this runtime", {
+          sessionId,
+          leaseOwnerId,
+          currentLeaseOwner: leaseCoordinator.currentOwner(sessionId),
+        });
+        throw new Error(`Session lease for ${sessionId} is owned by another runtime`);
+      }
+      const existed = store.has(sessionId);
+      const session = store.getOrCreate(sessionId);
+      runtimeManager.getOrCreate(session);
+      if (!existed) {
+        metrics?.recordEvent({ timestamp: Date.now(), type: "session:created", sessionId });
+      }
+      return session;
+    },
+    removeSession: (sessionId) => {
+      const session = store.get(sessionId);
+      if (session) capabilitiesPolicy.cancelPendingInitialize(session);
+      runtimeManager.delete(sessionId);
+      store.remove(sessionId);
+      leaseCoordinator.releaseLease(sessionId, leaseOwnerId);
+    },
+    closeSession: async (sessionId) => {
+      const session = store.get(sessionId);
+      if (!session) return;
+      const runtime = runtimeManager.getOrCreate(session);
+      runtime.transitionLifecycle("closing", "session:close");
+      capabilitiesPolicy.cancelPendingInitialize(session);
+      if (runtime.getBackendSession()) {
+        await runtime.closeBackendConnection().catch((err) => {
+          logger.warn("Failed to close backend session", { sessionId, error: err });
+        });
+      }
+      runtime.closeAllConsumers();
+      runtime.process({ type: "LIFECYCLE_SIGNAL", signal: "session:closed" });
+      store.remove(sessionId);
+      runtimeManager.delete(sessionId);
+      leaseCoordinator.releaseLease(sessionId, leaseOwnerId);
+      metrics?.recordEvent({ timestamp: Date.now(), type: "session:closed", sessionId });
+      emitEvent("session:closed", { sessionId });
+    },
+    closeAllSessions: async () => {
+      for (const sessionId of runtimeManager.keys()) {
+        await lifecycleService.closeSession(sessionId);
+      }
+      runtimeManager.clear();
+    },
+  };
   slashService = createSlashService({
     broadcaster,
     emitEvent,
