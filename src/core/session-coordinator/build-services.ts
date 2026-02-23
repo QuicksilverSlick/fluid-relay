@@ -1,30 +1,86 @@
 /**
- * buildSessionServices — flat factory that assembles the four compose planes
- * into a single SessionServices object.
+ * buildSessionServices — flat factory that assembles all session services.
  *
- * Extracts the wiring logic that previously lived in the SessionBridge
- * constructor, making it available to SessionCoordinator without the facade.
- *
- * Circular dependencies between planes are resolved via lazy closure variables
- * (the same pattern as the old SessionBridge constructor), because each lazy
- * getter is only called after all four planes have been assembled.
+ * Replaces the four separate compose-*-plane.ts files with a single flat
+ * function. Circular dependencies between planes are resolved via lazy closure
+ * variables (the same pattern as the old compose planes), because each lazy
+ * getter is only called after all services have been assembled.
  *
  * @module SessionControl
  */
 
+import { randomUUID } from "node:crypto";
+import type { Authenticator } from "../../interfaces/auth.js";
+import type { GitInfoResolver } from "../../interfaces/git-resolver.js";
+import type { Logger } from "../../interfaces/logger.js";
+import type { MetricsCollector } from "../../interfaces/metrics.js";
+import type { SessionStorage } from "../../interfaces/storage.js";
+import type { ProviderConfig } from "../../types/config.js";
+import { resolveConfig } from "../../types/config.js";
+import { noopLogger } from "../../utils/noop-logger.js";
+import { BackendConnector } from "../backend/backend-connector.js";
+import { BackendApi } from "../bridge/backend-api.js";
 import { forwardBridgeEventWithLifecycle } from "../bridge/bridge-event-forwarder.js";
-import { composeBackendPlane } from "../session-bridge/compose-backend-plane.js";
-import type { ConsumerPlane } from "../session-bridge/compose-consumer-plane.js";
-import { composeConsumerPlane } from "../session-bridge/compose-consumer-plane.js";
-import type { MessagePlane } from "../session-bridge/compose-message-plane.js";
-import { composeMessagePlane } from "../session-bridge/compose-message-plane.js";
-import type { RuntimePlane } from "../session-bridge/compose-runtime-plane.js";
-import { composeRuntimePlane } from "../session-bridge/compose-runtime-plane.js";
-import type { SessionBridgeInitOptions } from "../session-bridge/types.js";
+import {
+  generateSlashRequestId,
+  generateTraceId,
+  tracedNormalizeInbound,
+} from "../bridge/message-tracing-utils.js";
+import { RuntimeApi } from "../bridge/runtime-api.js";
+import { createRuntimeManager } from "../bridge/runtime-manager-factory.js";
+import {
+  createBackendConnectorDeps,
+  createCapabilitiesPolicyStateAccessors,
+  createConsumerGatewayDeps,
+  createConsumerPlaneRuntimeAccessors,
+  createQueueStateAccessors,
+} from "../bridge/session-bridge-deps-factory.js";
+import { SessionBroadcastApi } from "../bridge/session-broadcast-api.js";
+import { SessionInfoApi } from "../bridge/session-info-api.js";
+import { SessionLifecycleService } from "../bridge/session-lifecycle-service.js";
+import { SessionPersistenceService } from "../bridge/session-persistence-service.js";
+import { createSlashService } from "../bridge/slash-service-factory.js";
+import { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
+import {
+  ConsumerBroadcaster,
+  MAX_CONSUMER_MESSAGE_SIZE,
+} from "../consumer/consumer-broadcaster.js";
+import type { RateLimiterFactory } from "../consumer/consumer-gatekeeper.js";
+import { ConsumerGatekeeper } from "../consumer/consumer-gatekeeper.js";
+import { ConsumerGateway } from "../consumer/consumer-gateway.js";
+import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
+import type { BackendAdapter } from "../interfaces/backend-adapter.js";
+import type { MessageTracer } from "../messaging/message-tracer.js";
+import { noopTracer } from "../messaging/message-tracer.js";
+import { GitInfoTracker } from "../session/git-info-tracker.js";
+import { MessageQueueHandler } from "../session/message-queue-handler.js";
+import {
+  InMemorySessionLeaseCoordinator,
+  type SessionLeaseCoordinator,
+} from "../session/session-lease-coordinator.js";
+import { SessionRepository } from "../session/session-repository.js";
 import type { SessionServices } from "../session-services.js";
+import { SlashCommandRegistry } from "../slash/slash-command-registry.js";
+import { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
+
+/** All options accepted by buildSessionServices (formerly SessionBridgeInitOptions). */
+export type SessionBridgeInitOptions = {
+  storage?: SessionStorage;
+  gitResolver?: GitInfoResolver;
+  authenticator?: Authenticator;
+  logger?: Logger;
+  config?: ProviderConfig;
+  metrics?: MetricsCollector;
+  adapter?: BackendAdapter;
+  adapterResolver?: AdapterResolver;
+  rateLimiterFactory?: RateLimiterFactory;
+  tracer?: MessageTracer;
+  leaseCoordinator?: SessionLeaseCoordinator;
+  leaseOwnerId?: string;
+};
 
 /**
- * Assemble all four planes into a flat SessionServices object.
+ * Assemble all session services into a flat SessionServices object.
  *
  * @param options - Init options forwarded from SessionCoordinator
  * @param emit - Raw bridge-event emitter (typically a TypedEventEmitter.emit)
@@ -33,93 +89,202 @@ export function buildSessionServices(
   options: SessionBridgeInitOptions | undefined,
   emit: (type: string, payload: unknown) => void,
 ): SessionServices {
-  // Lazy-resolution refs — filled in as each plane is assembled.
-  // TypeScript `!` signals definite assignment; the lazy getters below
-  // are only called after all four assignments complete.
-  let runtimePlane!: RuntimePlane;
-  let consumerPlane!: ConsumerPlane;
-  let messagePlane!: MessagePlane;
+  // ── Core infra ────────────────────────────────────────────────────────────
+  const logger = options?.logger ?? noopLogger;
+  const config = resolveConfig(options?.config ?? { port: 9414 });
+  const tracer = (options?.tracer ?? noopTracer) as MessageTracer;
+  const gitResolver = options?.gitResolver ?? null;
+  const metrics = options?.metrics ?? null;
+  const leaseCoordinator = options?.leaseCoordinator ?? new InMemorySessionLeaseCoordinator();
+  const leaseOwnerId = options?.leaseOwnerId ?? `beamcode-${process.pid}-${randomUUID()}`;
 
-  // emitEvent wraps the raw emitter with lifecycle signal mirroring into
-  // RuntimeManager. Uses runtimePlane lazily (called only after init).
+  // ── Session repository ────────────────────────────────────────────────────
+  const store = new SessionRepository(options?.storage ?? null, {
+    createCorrelationBuffer: () => new TeamToolCorrelationBuffer(),
+    createRegistry: () => new SlashCommandRegistry(),
+  });
+
+  // ── Persistence ───────────────────────────────────────────────────────────
+  const persistenceService = new SessionPersistenceService({ store, logger });
+
+  // ── Lazy refs for circular dependency resolution ───────────────────────────
+  // Each lazy getter is only called AFTER all services are constructed.
+  let runtimeManager!: ReturnType<typeof createRuntimeManager>;
+  let broadcaster!: ConsumerBroadcaster;
+  let queueHandler!: MessageQueueHandler;
+  let slashService!: ReturnType<typeof createSlashService>;
+  let backendConnector!: BackendConnector;
+  let gitTracker!: GitInfoTracker;
+  let capabilitiesPolicy!: CapabilitiesPolicy;
+
+  // ── emitEvent ─────────────────────────────────────────────────────────────
+  // Wraps the raw emitter with lifecycle signal mirroring into RuntimeManager.
   const emitEvent = (type: string, payload: unknown) =>
-    forwardBridgeEventWithLifecycle(runtimePlane.runtimeManager, emit, type, payload);
+    forwardBridgeEventWithLifecycle(runtimeManager, emit, type, payload);
 
-  runtimePlane = composeRuntimePlane({
-    options,
+  // ── Runtime manager ───────────────────────────────────────────────────────
+  runtimeManager = createRuntimeManager({
+    now: () => Date.now(),
+    maxMessageHistoryLength: config.maxMessageHistoryLength,
+    getBroadcaster: () => broadcaster,
+    getQueueHandler: () => queueHandler,
+    getSlashService: () => slashService,
+    sendToBackend: (runtimeSession, message) =>
+      backendConnector.sendToBackend(runtimeSession, message),
+    tracedNormalizeInbound: (runtimeSession, inbound, trace) =>
+      tracedNormalizeInbound(tracer, inbound, runtimeSession.id, trace),
+    persistSession: (runtimeSession) => persistenceService.persist(runtimeSession),
+    warnUnknownPermission: (sessionId, requestId) =>
+      logger.warn(
+        `Permission response for unknown request_id ${requestId} in session ${sessionId}`,
+      ),
     emitPermissionResolved: (sessionId, requestId, behavior) =>
       emit("permission:resolved", { sessionId, requestId, behavior }),
-    getOrCreateSession: (sessionId) => messagePlane.lifecycleService.getOrCreateSession(sessionId),
-    getBroadcaster: () => consumerPlane.broadcaster,
-    getQueueHandler: () => messagePlane.queueHandler,
-    getSlashService: () => messagePlane.slashService,
-    getBackendConnector: () => backendServices.backendConnector,
-    getPersistenceService: () => runtimePlane.persistenceService,
-    getGitTracker: () => consumerPlane.gitTracker,
-    getCapabilitiesPolicy: () => messagePlane.capabilitiesPolicy,
+    onSessionSeeded: (runtimeSession) => gitTracker.resolveGitInfo(runtimeSession),
+    onInvalidLifecycleTransition: ({ sessionId, from, to, reason }) =>
+      logger.warn("Session lifecycle invalid transition", {
+        sessionId,
+        current: from,
+        next: to,
+        reason,
+      }),
+    canMutateSession: (sessionId) => leaseCoordinator.ensureLease(sessionId, leaseOwnerId),
+    onMutationRejected: (sessionId, operation) =>
+      logger.warn(`Mutation rejected for session ${sessionId}: ${operation}`),
     emitEvent,
+    getGitTracker: () => gitTracker,
+    gitResolver,
+    getCapabilitiesPolicy: () => capabilitiesPolicy,
   });
 
-  consumerPlane = composeConsumerPlane({
-    store: runtimePlane.store,
-    logger: runtimePlane.core.logger,
-    tracer: runtimePlane.core.tracer,
-    config: runtimePlane.core.config,
-    metrics: runtimePlane.core.metrics,
-    gitResolver: runtimePlane.core.gitResolver,
-    authenticator: options?.authenticator,
-    rateLimiterFactory: options?.rateLimiterFactory,
-    runtime: (session) => runtimePlane.runtimeManager.getOrCreate(session),
-    routeConsumerMessage: (session, msg, ws) =>
-      runtimePlane.runtimeApi.handleInboundCommand(session.id, msg, ws),
-    emit: (type, payload) => emitEvent(type, payload as unknown),
+  const runtimeApi = new RuntimeApi({
+    store,
+    runtimeManager,
+    logger,
+    leaseCoordinator,
+    leaseOwnerId,
+  });
+  const infoApi = new SessionInfoApi({
+    store,
+    runtimeManager,
+    getOrCreateSession: (sessionId) => lifecycleService.getOrCreateSession(sessionId),
   });
 
-  messagePlane = composeMessagePlane({
-    config: runtimePlane.core.config,
-    logger: runtimePlane.core.logger,
-    metrics: runtimePlane.core.metrics,
-    store: runtimePlane.store,
-    runtimeManager: runtimePlane.runtimeManager,
-    tracer: runtimePlane.core.tracer,
-    gitResolver: runtimePlane.core.gitResolver,
-    broadcaster: consumerPlane.broadcaster,
-    gitTracker: consumerPlane.gitTracker,
-    persistenceService: runtimePlane.persistenceService,
-    runtime: (session) => runtimePlane.runtimeManager.getOrCreate(session),
+  // ── Consumer plane ────────────────────────────────────────────────────────
+  const runtimeAccessors = createConsumerPlaneRuntimeAccessors((session) =>
+    runtimeManager.getOrCreate(session),
+  );
+  broadcaster = new ConsumerBroadcaster(
+    logger,
+    (sessionId, msg) => emitEvent("message:outbound", { sessionId, message: msg }),
+    tracer,
+    (session, ws) => runtimeAccessors.removeConsumer(session, ws),
+    {
+      getConsumerSockets: (session) => runtimeAccessors.getConsumerSockets(session),
+    },
+  );
+  const broadcastApi = new SessionBroadcastApi({ store, broadcaster });
+  const gatekeeper = new ConsumerGatekeeper(
+    options?.authenticator ?? null,
+    config,
+    options?.rateLimiterFactory,
+  );
+  gitTracker = new GitInfoTracker(gitResolver, {
+    getState: (session) => runtimeAccessors.getState(session),
+    setState: (session, state) => runtimeAccessors.setState(session, state),
+  });
+
+  // ── Message plane ─────────────────────────────────────────────────────────
+  capabilitiesPolicy = new CapabilitiesPolicy(
+    config,
+    logger,
+    broadcaster,
     emitEvent,
+    createCapabilitiesPolicyStateAccessors((session) => runtimeManager.getOrCreate(session)),
+  );
+  queueHandler = new MessageQueueHandler(
+    broadcaster,
+    (sessionId, content, opts) => runtimeApi.sendUserMessage(sessionId, content, opts),
+    createQueueStateAccessors(
+      (session) => runtimeManager.getOrCreate(session),
+      (session) => persistenceService.persistSync(session),
+    ),
+  );
+  const lifecycleService = new SessionLifecycleService({
+    store,
+    runtimeManager,
+    capabilitiesPolicy,
+    metrics,
+    logger,
     emitSessionClosed: (sessionId) => emitEvent("session:closed", { sessionId }),
-    leaseCoordinator: runtimePlane.leaseCoordinator,
-    leaseOwnerId: runtimePlane.leaseOwnerId,
-    sendUserMessage: (sessionId, content, opts) =>
-      runtimePlane.runtimeApi.sendUserMessage(sessionId, content, opts),
+    leaseCoordinator,
+    leaseOwnerId,
+  });
+  slashService = createSlashService({
+    broadcaster,
+    emitEvent,
+    tracer,
+    now: () => Date.now(),
+    generateTraceId: () => generateTraceId(),
+    generateSlashRequestId: () => generateSlashRequestId(),
+    registerPendingPassthrough: (session, entry) =>
+      runtimeManager.getOrCreate(session).enqueuePendingPassthrough(entry),
+    sendUserMessage: (sessionId, content, trace) =>
+      runtimeApi.sendUserMessage(sessionId, content, {
+        traceId: trace?.traceId,
+        slashRequestId: trace?.requestId,
+        slashCommand: trace?.command,
+      }),
   });
 
-  const backendServices = composeBackendPlane({
-    options,
-    store: runtimePlane.store,
-    logger: runtimePlane.core.logger,
-    metrics: runtimePlane.core.metrics,
-    tracer: runtimePlane.core.tracer,
-    broadcaster: consumerPlane.broadcaster,
-    capabilitiesPolicy: messagePlane.capabilitiesPolicy,
-    runtime: (session) => runtimePlane.runtimeManager.getOrCreate(session),
-    routeBackendMessage: (sessionId, message) =>
-      runtimePlane.runtimeApi.handleBackendMessage(sessionId, message),
-    emitEvent,
-    getOrCreateSession: (sessionId) => messagePlane.lifecycleService.getOrCreateSession(sessionId),
+  // ── Backend plane ─────────────────────────────────────────────────────────
+  backendConnector = new BackendConnector(
+    createBackendConnectorDeps({
+      adapter: options?.adapter ?? null,
+      adapterResolver: options?.adapterResolver ?? null,
+      logger,
+      metrics,
+      broadcaster,
+      routeUnifiedMessage: (session, msg) => runtimeApi.handleBackendMessage(session.id, msg),
+      emitEvent,
+      runtime: (session) => runtimeManager.getOrCreate(session),
+      tracer,
+    }),
+  );
+  const backendApi = new BackendApi({
+    store,
+    backendConnector,
+    capabilitiesPolicy,
+    getOrCreateSession: (sessionId) => lifecycleService.getOrCreateSession(sessionId),
   });
+
+  const consumerGateway = new ConsumerGateway(
+    createConsumerGatewayDeps({
+      store,
+      gatekeeper,
+      broadcaster,
+      gitTracker,
+      logger,
+      metrics,
+      emit: (type, payload) => emitEvent(type, payload as unknown),
+      routeConsumerMessage: (session, msg, ws) =>
+        runtimeApi.handleInboundCommand(session.id, msg, ws),
+      maxConsumerMessageSize: MAX_CONSUMER_MESSAGE_SIZE,
+      tracer,
+      runtimeAccessors,
+    }),
+  );
 
   return {
-    core: runtimePlane.core,
-    store: runtimePlane.store,
-    runtimeApi: runtimePlane.runtimeApi,
-    backendApi: backendServices.backendApi,
-    infoApi: runtimePlane.infoApi,
-    broadcastApi: consumerPlane.broadcastApi,
-    lifecycleService: messagePlane.lifecycleService,
-    persistenceService: runtimePlane.persistenceService,
-    consumerGateway: consumerPlane.consumerGateway,
-    broadcaster: consumerPlane.broadcaster,
+    core: { logger, config, tracer, gitResolver, metrics },
+    store,
+    runtimeApi,
+    backendApi,
+    infoApi,
+    broadcastApi,
+    lifecycleService,
+    persistenceService,
+    consumerGateway,
+    broadcaster,
   };
 }

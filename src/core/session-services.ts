@@ -8,6 +8,10 @@
  * @module SessionControl
  */
 
+import type { GitInfoResolver } from "../interfaces/git-resolver.js";
+import type { Logger } from "../interfaces/logger.js";
+import type { MetricsCollector } from "../interfaces/metrics.js";
+import type { ResolvedConfig } from "../types/config.js";
 import type { BackendApi } from "./bridge/backend-api.js";
 import type { RuntimeApi } from "./bridge/runtime-api.js";
 import type { SessionBroadcastApi } from "./bridge/session-broadcast-api.js";
@@ -16,8 +20,17 @@ import type { SessionLifecycleService } from "./bridge/session-lifecycle-service
 import type { SessionPersistenceService } from "./bridge/session-persistence-service.js";
 import type { ConsumerBroadcaster } from "./consumer/consumer-broadcaster.js";
 import type { ConsumerGateway } from "./consumer/consumer-gateway.js";
+import type { MessageTracer } from "./messaging/message-tracer.js";
 import type { SessionRepository } from "./session/session-repository.js";
-import type { BridgeCoreContext } from "./session-bridge/types.js";
+
+/** Core infra context threaded through all session services. */
+export type BridgeCoreContext = {
+  logger: Logger;
+  config: ResolvedConfig;
+  tracer: MessageTracer;
+  gitResolver: GitInfoResolver | null;
+  metrics: MetricsCollector | null;
+};
 
 export interface SessionServices {
   /** Resolved config, logger, tracer, gitResolver, metrics. */
