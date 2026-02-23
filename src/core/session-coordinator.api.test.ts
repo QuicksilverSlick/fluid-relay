@@ -401,3 +401,259 @@ describe("SessionCoordinator.renameSession", () => {
     await mgr.stop();
   });
 });
+
+describe("SessionCoordinator edge cases and internal wiring", () => {
+  it("covers setServer passing down to transportHub", async () => {
+    const pm = new TestProcessManager();
+    const storage = new MemoryStorage();
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+    const mockServer = { on: vi.fn(), close: vi.fn() } as any;
+    mgr.setServer(mockServer);
+
+    // Verify it was passed to transport hub (we can check internal references if needed or just trust the call finishes)
+    expect((mgr as any).transportHub["server"]).toBe(mockServer);
+  });
+
+  it("covers storage flush error during closeSessions", async () => {
+    const pm = new TestProcessManager();
+    const storage = new MemoryStorage();
+    const flushSpy = vi.fn().mockRejectedValue(new Error("Simulated flush error"));
+    (storage as any).flush = flushSpy;
+
+    const warnSpy = vi.spyOn(noopLogger, "warn");
+
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+
+    await mgr.start();
+    await mgr.stop(); // should catch the flush error and log warning
+
+    expect(flushSpy).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Failed to flush storage during shutdown",
+      expect.any(Object),
+    );
+  });
+
+  it("covers recoveryService.bridge.isBackendConnected and bridgeLifecycle edge cases", async () => {
+    const pm = new TestProcessManager();
+    const storage = new MemoryStorage();
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+
+    await mgr.start();
+    const session = await mgr.createSession({ cwd: process.cwd() });
+
+    // Test recoveryService bridge
+    const recoveryBridge = (mgr as any).recoveryService["bridge"];
+    expect(recoveryBridge.isBackendConnected(session.sessionId)).toBe(false);
+    expect(recoveryBridge.isBackendConnected("non-existent")).toBe(false);
+
+    // Test watchdog broadcast internal method given to policies
+    const reconnectBridge = (mgr as any).reconnectController["deps"]["bridge"];
+    const broadcastSpy = vi.spyOn((mgr as any).services.broadcaster, "broadcastWatchdogState");
+
+    // With valid session
+    reconnectBridge.broadcastWatchdogState(session.sessionId, {
+      gracePeriodMs: 1000,
+      startedAt: 0,
+    });
+    expect(broadcastSpy).toHaveBeenCalled();
+
+    // With invalid session (should not throw, just ignore)
+    reconnectBridge.broadcastWatchdogState("invalid", null);
+
+    await mgr.stop();
+  });
+
+  it("covers event relay handlers for edge cases (resume failed, process exited)", async () => {
+    const pm = new TestProcessManager();
+    const storage = new MemoryStorage();
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+
+    await mgr.start();
+    const session = await mgr.createSession({ cwd: process.cwd() });
+
+    const broadcaster = (mgr as any).services.broadcaster;
+    const resumeFailedSpy = vi.spyOn(broadcaster, "broadcastResumeFailed");
+    const circuitBreakerSpy = vi.spyOn(broadcaster, "broadcastCircuitBreakerState");
+
+    const relayHandlers = (mgr as any).relay["deps"].handlers;
+
+    // Simulate backend:resume_failed
+    relayHandlers.onProcessResumeFailed({ sessionId: session.sessionId });
+    expect(resumeFailedSpy).toHaveBeenCalledWith(expect.anything(), session.sessionId);
+
+    // Simulate process_exited with circuit breaker state
+    relayHandlers.onProcessExited({
+      sessionId: session.sessionId,
+      code: 1,
+      signal: "SIGKILL",
+      circuitBreaker: { status: "open", timeUntilResetMs: 5000 },
+    });
+    expect(circuitBreakerSpy).toHaveBeenCalledWith(expect.anything(), {
+      status: "open",
+      timeUntilResetMs: 5000,
+    });
+
+    await mgr.stop();
+  });
+
+  it("covers public bridge facade methods (isBackendConnected, broadcastProcessOutput, executeSlashCommand, on/off)", async () => {
+    const pm = new TestProcessManager();
+    const storage = new MemoryStorage();
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+
+    await mgr.start();
+    const session = await mgr.createSession({ cwd: process.cwd() });
+
+    // isBackendConnected
+    expect(mgr.bridge.isBackendConnected(session.sessionId)).toBe(false);
+    expect(mgr.bridge.isBackendConnected("missing-session")).toBe(false);
+
+    // broadcastProcessOutput
+    const broadcastSpy = vi.spyOn((mgr as any).services.broadcaster, "broadcastProcessOutput");
+    mgr.bridge.broadcastProcessOutput(session.sessionId, "stdout", "test");
+    expect(broadcastSpy).toHaveBeenCalled();
+    mgr.bridge.broadcastProcessOutput("missing-session", "stdout", "test");
+
+    // executeSlashCommand
+    const slashSpy = vi.spyOn((mgr as any).services.runtimeApi, "executeSlashCommand");
+    mgr.bridge.executeSlashCommand(session.sessionId, "/test");
+    expect(slashSpy).toHaveBeenCalled();
+
+    // on / off
+    const listener = vi.fn();
+    mgr.bridge.on("session:renamed", listener);
+    mgr.bridge.emit("session:renamed", { sessionId: session.sessionId, name: "New Name" });
+    expect(listener).toHaveBeenCalledWith({ sessionId: session.sessionId, name: "New Name" });
+    mgr.bridge.off("session:renamed", listener);
+
+    await mgr.stop();
+  });
+
+  it("covers bridgeLifecycle methods passed to policies and connectBackend in recoveryService", async () => {
+    const pm = new TestProcessManager();
+    const storage = new MemoryStorage();
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+
+    await mgr.start();
+    const session = await mgr.createSession({ cwd: process.cwd() });
+
+    // policy bridge (bridgeLifecycle)
+    const policyBridge = (mgr as any).reconnectController["deps"]["bridge"];
+
+    // getAllSessions
+    const sessions = policyBridge.getAllSessions();
+    expect(sessions.length).toBeGreaterThan(0);
+
+    // getSession
+    const snapshot = policyBridge.getSession(session.sessionId);
+    expect(snapshot).toBeDefined();
+
+    // applyPolicyCommand
+    const policySpy = vi.spyOn((mgr as any).services.runtimeApi, "applyPolicyCommand");
+    policyBridge.applyPolicyCommand(session.sessionId, { type: "idle_reap" });
+    expect(policySpy).toHaveBeenCalled();
+
+    // closeSession
+    const closeSpy = vi.spyOn((mgr as any).services.lifecycleService, "closeSession");
+    policyBridge.closeSession(session.sessionId);
+    expect(closeSpy).toHaveBeenCalled();
+
+    // recoveryService connectBackend
+    const connectSpy = vi.spyOn((mgr as any).services.backendConnector, "connectBackend");
+    const recoveryBridge = (mgr as any).recoveryService["bridge"];
+    await expect(recoveryBridge.connectBackend(session.sessionId, {})).rejects.toThrow(
+      "No BackendAdapter configured",
+    );
+    expect(connectSpy).toHaveBeenCalled();
+
+    await mgr.stop();
+  });
+
+  it("covers remaining missing branches for 100% coverage", async () => {
+    const pm = new TestProcessManager();
+    const storage = new MemoryStorage();
+    const mgr = new SessionCoordinator({
+      config: { port: 3456 },
+      storage,
+      logger: noopLogger,
+      launcher: createLauncher(pm, storage),
+    });
+
+    await mgr.start();
+    const session = await mgr.createSession({}); // missing cwd triggers default fallback
+
+    // broadcastNameUpdate with missing session
+    mgr.bridge.broadcastNameUpdate("missing-session", "name");
+
+    // restoreFromStorage returning 0
+    vi.spyOn((mgr as any).services.store, "restoreAll").mockReturnValue(0);
+    const restoreBridge = (mgr as any).startupRestoreService["bridge"];
+    restoreBridge.restoreFromStorage();
+
+    // getSessionSnapshot with missing session
+    const policyBridge = (mgr as any).reconnectController["deps"]["bridge"];
+    expect(policyBridge.getSession("missing-session")).toBeUndefined();
+
+    const relayHandlers = (mgr as any).relay["deps"].handlers;
+
+    // onProcessSpawned with missing registry info
+    relayHandlers.onProcessSpawned({ sessionId: "missing-session" });
+
+    // onProcessResumeFailed with missing session
+    relayHandlers.onProcessResumeFailed({ sessionId: "missing-session" });
+
+    // onFirstTurnCompleted branches (name mapping logic)
+    const renameSpy = vi.spyOn(mgr, "renameSession");
+    // empty user message
+    relayHandlers.onFirstTurnCompleted({ sessionId: session.sessionId, firstUserMessage: "   " });
+    // long truncated message
+    relayHandlers.onFirstTurnCompleted({
+      sessionId: session.sessionId,
+      firstUserMessage: "a".repeat(100),
+    });
+    expect(renameSpy).toHaveBeenCalledWith(session.sessionId, "a".repeat(47) + "...");
+
+    // trigger onCapabilitiesTimeout
+    const capSpy = vi.spyOn((mgr as any).services.runtimeApi, "applyPolicyCommand");
+    relayHandlers.onCapabilitiesTimeout({ sessionId: session.sessionId });
+    expect(capSpy).toHaveBeenCalled();
+
+    // trigger onBackendRelaunchNeeded
+    const relaunchSpy = vi.spyOn((mgr as any).recoveryService, "handleRelaunchNeeded");
+    relayHandlers.onBackendRelaunchNeeded({ sessionId: session.sessionId });
+    expect(relaunchSpy).toHaveBeenCalled();
+
+    await mgr.stop();
+  });
+});
