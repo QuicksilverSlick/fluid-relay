@@ -46,6 +46,7 @@ import {
   InMemorySessionLeaseCoordinator,
   type SessionLeaseCoordinator,
 } from "./session/session-lease-coordinator.js";
+import type { LifecycleState } from "./session/session-lifecycle.js";
 import type {
   Session,
   SessionRepository as SessionRepositoryType,
@@ -54,7 +55,6 @@ import { SessionRepository } from "./session/session-repository.js";
 import type { SessionRuntime } from "./session/session-runtime.js";
 import {
   type RuntimeTraceInfo,
-  type SessionRuntimeDeps,
   SessionRuntime as SessionRuntimeImpl,
 } from "./session/session-runtime.js";
 import type {
@@ -114,6 +114,52 @@ function forwardBridgeEventWithLifecycle(
 // ---------------------------------------------------------------------------
 // Inlined: runtime-manager-factory (createRuntimeManager)
 // ---------------------------------------------------------------------------
+export interface SessionRuntimeDeps {
+  now: () => number;
+  maxMessageHistoryLength: number;
+  broadcaster: Pick<
+    ConsumerBroadcaster,
+    "broadcast" | "broadcastToParticipants" | "broadcastPresence" | "sendTo"
+  >;
+  queueHandler: Pick<
+    MessageQueueHandler,
+    | "handleQueueMessage"
+    | "handleUpdateQueuedMessage"
+    | "handleCancelQueuedMessage"
+    | "autoSendQueuedMessage"
+  >;
+  slashService: Pick<SlashCommandService, "handleInbound" | "executeProgrammatic">;
+
+  sendToBackend: (session: Session, message: UnifiedMessage) => void;
+  tracedNormalizeInbound: (
+    session: Session,
+    msg: InboundCommand,
+    trace?: RuntimeTraceInfo,
+  ) => UnifiedMessage | null;
+  persistSession: (session: Session) => void;
+  warnUnknownPermission: (sessionId: string, requestId: string) => void;
+  emitPermissionResolved: (
+    sessionId: string,
+    requestId: string,
+    behavior: "allow" | "deny",
+  ) => void;
+  onSessionSeeded?: (session: Session) => void;
+  onInvalidLifecycleTransition?: (params: {
+    sessionId: string;
+    from: LifecycleState;
+    to: LifecycleState;
+    reason: string;
+  }) => void;
+  canMutateSession?: (sessionId: string, operation: string) => boolean;
+  onMutationRejected?: (sessionId: string, operation: string) => void;
+
+  // Orchestration dependencies
+  gitTracker: GitInfoTracker;
+  gitResolver: GitInfoResolver | null;
+  emitEvent: (type: string, payload: unknown) => void;
+  capabilitiesPolicy: CapabilitiesPolicy;
+}
+
 interface RuntimeManagerFactoryDeps {
   now: SessionRuntimeDeps["now"];
   maxMessageHistoryLength: SessionRuntimeDeps["maxMessageHistoryLength"];

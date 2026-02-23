@@ -1,3 +1,4 @@
+import type { SessionRuntimeDeps } from "../build-session-services.js";
 /**
  * SessionRuntime — per-session state owner.
  *
@@ -10,7 +11,7 @@
  */
 
 import type { ConsumerIdentity } from "../../interfaces/auth.js";
-import type { GitInfoResolver } from "../../interfaces/git-resolver.js";
+
 import type { RateLimiter } from "../../interfaces/rate-limiter.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import type {
@@ -22,22 +23,20 @@ import type {
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { BridgeEventMap } from "../../types/events.js";
 import type { SessionSnapshot, SessionState } from "../../types/session-state.js";
-import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
-import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import type { SessionData } from "../session/session-data.js";
-import type { SlashCommandService } from "../slash/slash-command-service.js";
+
 import { diffTeamState } from "../team/team-event-differ.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { executeEffects } from "./effect-executor.js";
-import type { GitInfoTracker } from "./git-info-tracker.js";
-import type { MessageQueueHandler } from "./message-queue-handler.js";
+
 import type { SessionEvent, SystemSignal } from "./session-event.js";
 import type { LifecycleState } from "./session-lifecycle.js";
 import { isLifecycleTransitionAllowed } from "./session-lifecycle.js";
+import { sessionReducer } from "./session-reducer.js";
 import type { Session } from "./session-repository.js";
-import { reduceSessionData } from "./session-state-reducer.js";
 
 export type RuntimeTraceInfo = {
   traceId?: string;
@@ -58,52 +57,6 @@ type RuntimeSendPermissionOptions = {
   updatedPermissions?: unknown[];
   message?: string;
 };
-
-export interface SessionRuntimeDeps {
-  now: () => number;
-  maxMessageHistoryLength: number;
-  broadcaster: Pick<
-    ConsumerBroadcaster,
-    "broadcast" | "broadcastToParticipants" | "broadcastPresence" | "sendTo"
-  >;
-  queueHandler: Pick<
-    MessageQueueHandler,
-    | "handleQueueMessage"
-    | "handleUpdateQueuedMessage"
-    | "handleCancelQueuedMessage"
-    | "autoSendQueuedMessage"
-  >;
-  slashService: Pick<SlashCommandService, "handleInbound" | "executeProgrammatic">;
-
-  sendToBackend: (session: Session, message: UnifiedMessage) => void;
-  tracedNormalizeInbound: (
-    session: Session,
-    msg: InboundCommand,
-    trace?: RuntimeTraceInfo,
-  ) => UnifiedMessage | null;
-  persistSession: (session: Session) => void;
-  warnUnknownPermission: (sessionId: string, requestId: string) => void;
-  emitPermissionResolved: (
-    sessionId: string,
-    requestId: string,
-    behavior: "allow" | "deny",
-  ) => void;
-  onSessionSeeded?: (session: Session) => void;
-  onInvalidLifecycleTransition?: (params: {
-    sessionId: string;
-    from: LifecycleState;
-    to: LifecycleState;
-    reason: string;
-  }) => void;
-  canMutateSession?: (sessionId: string, operation: string) => boolean;
-  onMutationRejected?: (sessionId: string, operation: string) => void;
-
-  // Orchestration dependencies
-  gitTracker: GitInfoTracker;
-  gitResolver: GitInfoResolver | null;
-  emitEvent: (type: string, payload: unknown) => void;
-  capabilitiesPolicy: CapabilitiesPolicy;
-}
 
 export class SessionRuntime {
   private dirty = false;
@@ -738,9 +691,9 @@ export class SessionRuntime {
     this.touchActivity();
 
     const prevData = this.session.data;
-    let [nextData, effects] = reduceSessionData(
+    let [nextData, effects] = sessionReducer(
       this.session.data,
-      msg,
+      { type: "BACKEND_MESSAGE", message: msg },
       this.session.teamCorrelationBuffer,
     );
 
