@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
+import type { SessionState } from "../../types/session-state.js";
+import { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
-import { reduce } from "./session-state-reducer.js";
+import type { SessionData } from "./session-data.js";
+import { reduce, reduceSessionData } from "./session-state-reducer.js";
+
+/** Minimal valid SessionData for testing. */
+function baseData(): SessionData {
+  return {
+    state: baseState(),
+    pendingPermissions: new Map(),
+    messageHistory: [],
+    pendingMessages: [],
+    queuedMessage: null,
+    lastStatus: null,
+    adapterSupportsSlashPassthrough: false,
+  };
+}
 
 /** Minimal valid SessionState for testing. */
 function baseState() {
@@ -21,7 +37,7 @@ function baseState() {
     last_duration_ms: 0,
     last_duration_api_ms: 0,
     context_used_percent: 0,
-  };
+  } as unknown as SessionState;
 }
 
 describe("reduce — configuration_change", () => {
@@ -97,5 +113,15 @@ describe("reduce — configuration_change", () => {
 
     const next = reduce(state, msg);
     expect(next).toBe(state);
+  });
+});
+
+describe("reduceSessionData", () => {
+  it("returns same reference when nothing changes", () => {
+    const data = baseData();
+    const msg = createUnifiedMessage({ type: "interrupt", role: "system", metadata: {} });
+    const buffer = new TeamToolCorrelationBuffer();
+    const next = reduceSessionData(data, msg, buffer);
+    expect(next).toBe(data);
   });
 });

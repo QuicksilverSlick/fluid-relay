@@ -29,6 +29,7 @@ import type { MessageQueueHandler } from "./message-queue-handler.js";
 import type { LifecycleState } from "./session-lifecycle.js";
 import { isLifecycleTransitionAllowed } from "./session-lifecycle.js";
 import type { Session } from "./session-repository.js";
+import { reduceSessionData } from "./session-state-reducer.js";
 
 export type RuntimeTraceInfo = {
   traceId?: string;
@@ -660,8 +661,15 @@ export class SessionRuntime {
     if (!this.ensureMutationAllowed("handleBackendMessage")) return;
     this.touchActivity();
     this.deps.onBackendMessageObserved?.(this.session, msg);
-    this.deps.routeBackendMessage?.(this.session, msg);
+
+    const nextData = reduceSessionData(this.session.data, msg, this.session.teamCorrelationBuffer);
+    if (nextData !== this.session.data) {
+      this.session = { ...this.session, data: nextData };
+      this.deps.persistSession(this.session);
+    }
+
     this.applyLifecycleFromBackendMessage(msg);
+    this.deps.routeBackendMessage?.(this.session, msg);
     this.deps.onBackendMessageHandled?.(this.session, msg);
   }
 

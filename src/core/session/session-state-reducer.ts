@@ -18,6 +18,25 @@ import { recognizeTeamToolUses } from "../team/team-tool-recognizer.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { isToolResultContent } from "../types/unified-message.js";
+import type { SessionData } from "./session-data.js";
+
+/**
+ * Outer reducer — operates on full SessionData.
+ * Delegates to reduce() for the state field.
+ * Additional fields (lastStatus, messageHistory, etc.) are migrated here one by one.
+ *
+ * @param correlationBuffer — per-session buffer from session.teamCorrelationBuffer.
+ *   Callers (SessionRuntime) must provide this; the reducer itself stays pure.
+ */
+export function reduceSessionData(
+  data: SessionData,
+  message: UnifiedMessage,
+  correlationBuffer: TeamToolCorrelationBuffer,
+): SessionData {
+  const nextState = reduce(data.state, message, correlationBuffer);
+  if (nextState === data.state) return data; // nothing changed
+  return { ...data, state: nextState };
+}
 
 /**
  * Apply a UnifiedMessage to session state, returning a new state.
