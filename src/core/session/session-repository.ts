@@ -163,6 +163,7 @@ export class SessionRepository {
     return {
       id,
       data: {
+        lifecycle: "awaiting_backend",
         state,
         pendingPermissions: overrides?.pendingPermissions ?? new Map(),
         messageHistory: overrides?.messageHistory ?? [],

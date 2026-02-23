@@ -87,6 +87,7 @@ export function createMockSession(
   // Extract SessionData properties from either top-level or data object
   const dataProps = overrides?.data || {};
   const dataKeys = [
+    "lifecycle",
     "state",
     "pendingPermissions",
     "messageHistory",
@@ -105,6 +106,7 @@ export function createMockSession(
   }
 
   const defaultData: SessionData = {
+    lifecycle: "awaiting_backend",
     state: makeDefaultState(id),
     pendingPermissions: new Map<string, PermissionRequest>(),
     messageHistory: [] as ConsumerMessage[],

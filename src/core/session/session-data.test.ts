@@ -8,6 +8,7 @@ describe("SessionData", () => {
     // Compile-time enforcement is verified by `pnpm typecheck`.
     const state = makeDefaultState("s1");
     const data: SessionData = {
+      lifecycle: "awaiting_backend",
       state,
       pendingPermissions: new Map(),
       messageHistory: [],

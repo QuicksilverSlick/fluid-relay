@@ -22,6 +22,7 @@ import type { AdapterSlashExecutor, BackendSession } from "../interfaces/backend
 import type { SlashCommandRegistry } from "../slash/slash-command-registry.js";
 import type { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
+import type { LifecycleState } from "./session-lifecycle.js";
 import type { QueuedMessage } from "./session-repository.js";
 
 // ── SessionHandles — mutable, non-serializable runtime references ────────────
@@ -58,6 +59,12 @@ export interface SessionHandles {
 // ── SessionData — immutable, serializable ────────────────────────────────────
 
 export interface SessionData {
+  /**
+   * The current lifecycle state of this session.
+   * Owned by SessionData so the reducer can drive lifecycle transitions purely.
+   * Default: "awaiting_backend".
+   */
+  readonly lifecycle: LifecycleState;
   /** Extracted from `session_init`. Absent until first backend connection. */
   readonly backendSessionId?: string;
   readonly state: SessionState;

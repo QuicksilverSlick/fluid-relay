@@ -106,7 +106,6 @@ export interface SessionRuntimeDeps {
 }
 
 export class SessionRuntime {
-  private lifecycle: LifecycleState = "awaiting_backend";
   private dirty = false;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -154,7 +153,7 @@ export class SessionRuntime {
   }
 
   getLifecycleState(): LifecycleState {
-    return this.lifecycle;
+    return this.session.data.lifecycle;
   }
 
   // ── Single entry point ──────────────────────────────────────────────────
@@ -184,7 +183,7 @@ export class SessionRuntime {
     return {
       id: this.session.id,
       state: this.session.data.state,
-      lifecycle: this.lifecycle,
+      lifecycle: this.session.data.lifecycle,
       cliConnected: this.session.backendSession !== null,
       consumerCount: this.session.consumerSockets.size,
       consumers: Array.from(this.session.consumerSockets.values()).map((id) => ({
@@ -477,7 +476,7 @@ export class SessionRuntime {
 
   transitionLifecycle(next: LifecycleState, reason: string): boolean {
     if (!this.ensureMutationAllowed("transitionLifecycle")) return false;
-    const current = this.lifecycle;
+    const current = this.session.data.lifecycle;
     if (current === next) return true;
     if (!isLifecycleTransitionAllowed(current, next)) {
       this.deps.onInvalidLifecycleTransition?.({
@@ -488,7 +487,7 @@ export class SessionRuntime {
       });
       return false;
     }
-    this.lifecycle = next;
+    this.session = { ...this.session, data: { ...this.session.data, lifecycle: next } };
     return true;
   }
 
