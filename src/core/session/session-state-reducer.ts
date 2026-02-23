@@ -10,6 +10,7 @@
  * No side effects — does not emit events, persist, or broadcast.
  */
 
+import type { PermissionRequest } from "../../types/cli-messages.js";
 import type { SessionState } from "../../types/session-state.js";
 import { reduceTeamState } from "../team/team-state-reducer.js";
 import type { CorrelatedToolUse } from "../team/team-tool-correlation.js";
@@ -41,12 +42,50 @@ export function reduceSessionData(
   const nextLastStatus = reduceLastStatus(data.lastStatus, message);
   if (nextLastStatus !== data.lastStatus) changed = true;
 
+  const nextBackendSessionId = reduceBackendSessionId(data.backendSessionId, message);
+  if (nextBackendSessionId !== data.backendSessionId) changed = true;
+
+  const nextPendingPermissions = reducePendingPermissions(data.pendingPermissions, message);
+  if (nextPendingPermissions !== data.pendingPermissions) changed = true;
+
   if (!changed) return data;
   return {
     ...data,
     state: nextState,
     lastStatus: nextLastStatus,
+    backendSessionId: nextBackendSessionId,
+    pendingPermissions: nextPendingPermissions,
   };
+}
+
+function reduceBackendSessionId(
+  current: string | undefined,
+  message: UnifiedMessage,
+): string | undefined {
+  if (message.type === "session_init" && message.metadata?.session_id) {
+    return message.metadata.session_id as string;
+  }
+  return current;
+}
+
+function reducePendingPermissions(
+  current: ReadonlyMap<string, PermissionRequest>,
+  message: UnifiedMessage,
+): ReadonlyMap<string, PermissionRequest> {
+  if (message.type === "permission_request" && message.metadata?.request_id) {
+    const next = new Map(current);
+    next.set(
+      message.metadata.request_id as string,
+      message.metadata as unknown as PermissionRequest,
+    );
+    return next;
+  }
+  if (message.type === "permission_response" && message.metadata?.request_id) {
+    const next = new Map(current);
+    next.delete(message.metadata.request_id as string);
+    return next;
+  }
+  return current;
 }
 
 function reduceLastStatus(

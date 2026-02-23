@@ -161,4 +161,47 @@ describe("reduceSessionData", () => {
     const next = reduceSessionData(data, msg, buffer);
     expect(next).toBe(data); // no change, same ref
   });
+
+  it("extracts backendSessionId from session_init", () => {
+    const data = baseData();
+    const msg = createUnifiedMessage({
+      type: "session_init",
+      role: "assistant",
+      metadata: { session_id: "cli-abc-123", model: "claude-sonnet-4-6" },
+    });
+    const buffer = new TeamToolCorrelationBuffer();
+    const next = reduceSessionData(data, msg, buffer);
+    expect(next.backendSessionId).toBe("cli-abc-123");
+  });
+
+  describe("pendingPermissions", () => {
+    it("stores permission request from permission_request message", () => {
+      const data = baseData();
+      const msg = createUnifiedMessage({
+        type: "permission_request",
+        role: "assistant",
+        metadata: {
+          request_id: "req-1",
+          tool_name: "bash",
+          input: { command: "ls" },
+        },
+      });
+      const buffer = new TeamToolCorrelationBuffer();
+      const next = reduceSessionData(data, msg, buffer);
+      expect(next.pendingPermissions.get("req-1")).toMatchObject({ tool_name: "bash" });
+    });
+
+    it("removes permission request on permission_response", () => {
+      const permissions = new Map([["req-1", { tool_name: "bash", request_id: "req-1" } as any]]);
+      const data = { ...baseData(), pendingPermissions: permissions };
+      const msg = createUnifiedMessage({
+        type: "permission_response",
+        role: "user",
+        metadata: { request_id: "req-1", behavior: "allow" },
+      });
+      const buffer = new TeamToolCorrelationBuffer();
+      const next = reduceSessionData(data, msg, buffer);
+      expect(next.pendingPermissions.has("req-1")).toBe(false);
+    });
+  });
 });

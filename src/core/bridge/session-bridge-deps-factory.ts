@@ -148,14 +148,12 @@ export function createUnifiedMessageRouterDeps(params: {
     getState: (session: Session) => params.runtime(session).getState(),
     setState: (session: Session, state: SessionData["state"]) =>
       params.runtime(session).setState(state),
-    setBackendSessionId: (session: Session, backendSessionId: string | undefined) =>
-      params.runtime(session).setBackendSessionId(backendSessionId),
+
     getMessageHistory: (session: Session) => params.runtime(session).getMessageHistory(),
     setMessageHistory: (session: Session, history: SessionData["messageHistory"]) =>
       params.runtime(session).setMessageHistory(history),
     getLastStatus: (session: Session) => params.runtime(session).getLastStatus(),
-    storePendingPermission: (session: Session, requestId: string, request) =>
-      params.runtime(session).storePendingPermission(requestId, request),
+
     clearDynamicSlashRegistry: (session: Session) =>
       params.runtime(session).clearDynamicSlashRegistry(),
     registerCLICommands: (session: Session, commands) =>

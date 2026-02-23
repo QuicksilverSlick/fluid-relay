@@ -74,7 +74,7 @@ describe("composeRuntimePlane", () => {
     expect(getMessageRouter).toHaveBeenCalledTimes(1);
     expect(getGitTracker).toHaveBeenCalledTimes(1);
     expect(sendToBackend).toHaveBeenCalledWith(session, { type: "noop" });
-    expect(route).toHaveBeenCalledWith(session, { type: "backend_noop" });
+    expect(route).toHaveBeenCalledWith(session, { type: "backend_noop" }, undefined);
     expect(resolveGitInfo).toHaveBeenCalledWith(session);
     expect(emitPermissionResolved).toHaveBeenCalledWith("s-runtime", "req-1", "allow");
   });

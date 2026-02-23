@@ -15,7 +15,6 @@ import type {
   InitializeAccount,
   InitializeCommand,
   InitializeModel,
-  PermissionRequest,
 } from "../../types/cli-messages.js";
 import { CONSUMER_PROTOCOL_VERSION, type ConsumerMessage } from "../../types/consumer-messages.js";
 import type { BridgeEventMap } from "../../types/events.js";
@@ -69,11 +68,9 @@ export interface UnifiedMessageRouterDeps {
   tracer: MessageTracer;
   getState: (session: Session) => SessionData["state"];
   setState: (session: Session, state: SessionData["state"]) => void;
-  setBackendSessionId: (session: Session, backendSessionId: string | undefined) => void;
   getMessageHistory: (session: Session) => SessionData["messageHistory"];
   setMessageHistory: (session: Session, history: SessionData["messageHistory"]) => void;
   getLastStatus: (session: Session) => SessionData["lastStatus"];
-  storePendingPermission: (session: Session, requestId: string, request: PermissionRequest) => void;
   clearDynamicSlashRegistry: (session: Session) => void;
   registerCLICommands: (session: Session, commands: InitializeCommand[]) => void;
   registerSkillCommands: (session: Session, skills: string[]) => void;
@@ -93,11 +90,9 @@ export class UnifiedMessageRouter {
   private tracer: MessageTracer;
   private getStateAccessor: UnifiedMessageRouterDeps["getState"];
   private setStateAccessor: UnifiedMessageRouterDeps["setState"];
-  private setBackendSessionIdAccessor: UnifiedMessageRouterDeps["setBackendSessionId"];
   private getMessageHistoryAccessor: UnifiedMessageRouterDeps["getMessageHistory"];
   private setMessageHistoryAccessor: UnifiedMessageRouterDeps["setMessageHistory"];
   private getLastStatusAccessor: UnifiedMessageRouterDeps["getLastStatus"];
-  private storePendingPermissionAccessor: UnifiedMessageRouterDeps["storePendingPermission"];
   private clearDynamicSlashRegistryAccessor: UnifiedMessageRouterDeps["clearDynamicSlashRegistry"];
   private registerCLICommandsAccessor: UnifiedMessageRouterDeps["registerCLICommands"];
   private registerSkillCommandsAccessor: UnifiedMessageRouterDeps["registerSkillCommands"];
@@ -114,11 +109,9 @@ export class UnifiedMessageRouter {
     this.tracer = deps.tracer;
     this.getStateAccessor = deps.getState;
     this.setStateAccessor = deps.setState;
-    this.setBackendSessionIdAccessor = deps.setBackendSessionId;
     this.getMessageHistoryAccessor = deps.getMessageHistory;
     this.setMessageHistoryAccessor = deps.setMessageHistory;
     this.getLastStatusAccessor = deps.getLastStatus;
-    this.storePendingPermissionAccessor = deps.storePendingPermission;
     this.clearDynamicSlashRegistryAccessor = deps.clearDynamicSlashRegistry;
     this.registerCLICommandsAccessor = deps.registerCLICommands;
     this.registerSkillCommandsAccessor = deps.registerSkillCommands;
@@ -132,10 +125,6 @@ export class UnifiedMessageRouter {
     this.setStateAccessor(session, state);
   }
 
-  private setBackendSessionId(session: Session, backendSessionId: string | undefined): void {
-    this.setBackendSessionIdAccessor(session, backendSessionId);
-  }
-
   private getMessageHistory(session: Session): SessionData["messageHistory"] {
     return this.getMessageHistoryAccessor(session);
   }
@@ -146,14 +135,6 @@ export class UnifiedMessageRouter {
 
   private getLastStatus(session: Session): SessionData["lastStatus"] {
     return this.getLastStatusAccessor(session);
-  }
-
-  private storePendingPermission(
-    session: Session,
-    requestId: string,
-    request: PermissionRequest,
-  ): void {
-    this.storePendingPermissionAccessor(session, requestId, request);
   }
 
   private clearDynamicSlashRegistry(session: Session): void {
@@ -261,7 +242,6 @@ export class UnifiedMessageRouter {
 
     // Store backend session ID for resume
     if (m.session_id) {
-      this.setBackendSessionId(session, m.session_id as string);
       this.emitEvent("backend:session_id", {
         sessionId: session.id,
         backendSessionId: m.session_id as string,
@@ -444,8 +424,6 @@ export class UnifiedMessageRouter {
     this.traceT4("mapPermissionRequest", session, msg, mapped.consumerPerm, trace);
 
     const { consumerPerm, cliPerm } = mapped;
-    this.storePendingPermission(session, consumerPerm.request_id, cliPerm);
-
     this.broadcaster.broadcastToParticipants(session, {
       type: "permission_request",
       request: consumerPerm,
