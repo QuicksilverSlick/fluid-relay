@@ -9,7 +9,6 @@ import { getE2EProfile, isRealCliProfile } from "../e2e/e2e-profile.js";
 import type { Authenticator } from "../interfaces/auth.js";
 import type { ProcessManager } from "../interfaces/process-manager.js";
 import type { ProviderConfig } from "../types/config.js";
-import { isClaudeAvailable } from "../utils/claude-detection.js";
 import { MockProcessManager } from "./mock-process-manager.js";
 
 // Prebuffer: WebSocket messages arriving before a test starts listening are

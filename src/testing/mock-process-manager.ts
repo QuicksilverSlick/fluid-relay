@@ -17,12 +17,15 @@ import type { ProcessHandle, ProcessManager, SpawnOptions } from "../interfaces/
 export class MockProcessManager implements ProcessManager {
   readonly spawnCalls: SpawnOptions[] = [];
   readonly spawnedProcesses: MockProcessHandle[] = [];
+  /** If true, kill() won't automatically resolve exit. Useful for testing escalation. */
+  disableAutoExitOnKill = false;
 
   private alivePids = new Set<number>();
   private nextPid = 10000;
   private _shouldFailSpawn = false;
 
   spawn(options: SpawnOptions): ProcessHandle {
+    const parent = this;
     // Record the spawn call for test assertions
     this.spawnCalls.push(options);
 
@@ -47,7 +50,7 @@ export class MockProcessManager implements ProcessManager {
         killCalls.push(signal);
         // Auto-resolve exit when killed (simulates real process behavior)
         // Use null exit code to indicate killed by signal
-        if (!handle._hasExited) {
+        if (!parent.disableAutoExitOnKill && !handle._hasExited) {
           handle._hasExited = true;
           resolveExit?.(null);
         }

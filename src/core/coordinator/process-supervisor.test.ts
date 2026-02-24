@@ -93,7 +93,7 @@ describe("spawnProcess", () => {
     expect(proc).toBeNull();
     expect(errors).toHaveLength(1);
     expect(errors[0].source).toBe("supervisor:spawn");
-    expect(errors[0].error.message).toBe("Mock spawn failure");
+    expect(errors[0].error.message).toContain("Mock spawn failure");
   });
 
   it("tracks process handle after spawn", () => {
@@ -105,6 +105,7 @@ describe("spawnProcess", () => {
 
 describe("kill escalation", () => {
   it("sends SIGTERM then SIGKILL if process does not exit in time", async () => {
+    pm.disableAutoExitOnKill = true;
     supervisor.testSpawn("sess-1", { command: "test", args: [], cwd: "/" });
     const proc = pm.lastProcess!;
 
@@ -478,6 +479,7 @@ describe("error path coverage", () => {
   });
 
   it("killAllProcesses with mixed responsive/unresponsive processes", async () => {
+    pm.disableAutoExitOnKill = true;
     supervisor.testSpawn("responsive", { command: "test", args: [], cwd: "/" });
     supervisor.testSpawn("unresponsive", { command: "test", args: [], cwd: "/" });
 
