@@ -18,6 +18,8 @@ import {
   connectConsumerAndWaitReady,
   deleteTrace,
   dumpTraceOnFailure,
+  getSessionSnapshot,
+  isBackendConnected,
   reservePort,
   type TestContextLike,
   waitForBackendConnectedOrExit,
@@ -308,6 +310,10 @@ describe("E2E Real SDK-URL SessionCoordinator", () => {
         90_000,
       );
       await waitForMessageType(consumer, "result", 90_000);
+
+      // Allow Claude CLI time to persist the conversation to disk before SIGTERM;
+      // without this, --resume may fail with "No conversation found".
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
 
       const disconnected = waitForMessageType(consumer, "cli_disconnected", 20_000);
       const killed = await coordinator.launcher.kill(sessionId);
