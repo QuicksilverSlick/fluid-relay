@@ -1,7 +1,7 @@
 # BeamCode Architecture (Post-Refactor)
 
 > Date: 2026-02-23
-> Status: Target state after completing all phases of architecture refactoring
+> Status: Current state — all refactoring phases complete
 > Scope: Full system architecture — core, adapters, consumer, relay, daemon
 
 ## Table of Contents
@@ -43,7 +43,6 @@
 - [Module Dependency Graph](#module-dependency-graph)
 - [File Layout](#file-layout)
 - [Key Interfaces](#key-interfaces)
-- [What Changed From Pre-Refactor](#what-changed-from-pre-refactor)
 
 ---
 
@@ -260,17 +259,20 @@ The SessionCoordinator is the **top-level orchestrator** and the only compositio
 
 ```typescript
 class SessionCoordinator {
-  private runtimes: Map<string, SessionRuntime>;
-  private services: SessionServices;
   readonly launcher: SessionLauncher;
   readonly registry: SessionRegistry;
   readonly domainEvents: DomainEventBus;
+  readonly store: SessionRepository;
+  readonly broadcaster: ConsumerBroadcaster;
+  readonly backendConnector: BackendConnector;
 
   async start(): Promise<void>
   async stop(): Promise<void>
   async createSession(options): Promise<SessionInfo>
   async deleteSession(id: string): Promise<boolean>
-  process(sessionId: string, event: SessionEvent): Promise<void>
+  renameSession(id: string, name: string): SessionInfo | null
+  async executeSlashCommand(sessionId: string, command: string): Promise<SlashResult>
+  // (routes events to runtimes via internal getOrCreateRuntime(session).process())
 }
 ```
 
@@ -367,7 +369,7 @@ The SessionReducer is the **single pure function** that contains all state-trans
 **Responsibilities:**
 - **State reduction for all backend messages:** session_init, status_change, assistant, result, permission_request, tool_use_summary, configuration_change, auth_status, session_lifecycle, stream_event, tool_progress, control_response
 - **State reduction for inbound commands:** user_message (echo + normalize), permission_response, interrupt, set_model, queue operations
-- **State reduction for system signals:** timeout, disconnect, git info resolved
+- **State reduction for system signals:** backend connected/disconnected, consumer connected/disconnected, idle reap, reconnect timeout, capabilities timeout, session closed, git info resolved
 - **History management:** Append, replace (dedup), trim to max length
 - **Status inference:** result → idle, status_change → update lastStatus
 - **Permission tracking:** Store pending permissions from backend requests
@@ -419,19 +421,15 @@ The EffectExecutor translates `Effect` descriptions into actual I/O operations. 
 
 **Responsibilities:**
 - **Broadcast to consumers:** `BROADCAST` → `ConsumerBroadcaster.broadcast()`
-- **Send to backend:** `SEND_TO_BACKEND` → `BackendConnector.sendToBackend()`
-- **Emit domain events:** `EMIT_EVENT` → `DomainEventBus.emit()`
-- **Async workflows:** `RESOLVE_GIT_INFO` → resolve, then feed result back as `SYSTEM_SIGNAL`
-- **Capabilities handshake:** `SEND_CAPABILITIES_REQUEST` → send control_request to backend
+- **Broadcast to participants:** `BROADCAST_TO_PARTICIPANTS` → `ConsumerBroadcaster.broadcastToParticipants()`
+- **Broadcast state patch:** `BROADCAST_SESSION_UPDATE` → `ConsumerBroadcaster.broadcast()` with `session_update` type
+- **Emit domain events:** `EMIT_EVENT` → injects `sessionId` and calls `emitEvent(type, payload)`
 - **Queue drain:** `AUTO_SEND_QUEUED` → `MessageQueueHandler.autoSendQueuedMessage()`
-- **Tracing:** `TRACE_T4` → `MessageTracer.recv()`
-
-**Async effect feedback loop:** Some effects produce new events (e.g., `RESOLVE_GIT_INFO` → `GIT_INFO_RESOLVED`). These feed back through `runtime.process()`. Max recursion depth is 2 (enforced by runtime).
 
 **Does NOT do:**
 - Decide which effects to produce (the reducer does that)
 - Hold any state
-- Know about message types or business rules
+- Send to backends, resolve git info, handle capabilities, or trace messages (those are done directly by `SessionRuntime` methods that have access to the live `SessionRuntimeDeps`)
 
 ---
 
@@ -526,9 +524,9 @@ Auth + RBAC + rate limiting. Validates consumer connections and messages. Plugga
 The BackendConnector manages adapter lifecycle, the backend message consumption loop, and passthrough interception.
 
 **Responsibilities:**
-- **Connect:** Resolve the adapter, call `adapter.connect()`, hand the `BackendSession` to the runtime via `process({ type: 'SYSTEM_SIGNAL', signal: 'BACKEND_CONNECTED', backendSession })`, start the consumption loop
-- **Disconnect:** Route as `process({ type: 'SYSTEM_SIGNAL', signal: 'BACKEND_DISCONNECTED', reason })`
-- **Consumption loop:** `for await (msg of backendSession.messages)` — for each message, route as `process({ type: 'BACKEND_MESSAGE', message: msg })`
+- **Connect:** Resolve the adapter, call `adapter.connect()`, call `runtime.attachBackendConnection()` with the `BackendSession`, start the consumption loop. The coordinator then emits `BACKEND_CONNECTED` signal to the runtime
+- **Disconnect:** Routes as `process({ type: 'SYSTEM_SIGNAL', signal: { kind: 'BACKEND_DISCONNECTED', reason } })`
+- **Consumption loop:** `for await (msg of backendSession.messages)` — for each message, routes as `process({ type: 'BACKEND_MESSAGE', message: msg })`
 - **Passthrough interception:** Intercept matching slash command responses during the consumption loop
 - **Stop adapters:** Call `AdapterResolver.stopAll?.()` for graceful shutdown
 
@@ -575,8 +573,8 @@ The single source of truth for a session. All fields are `readonly`. Only the re
 
 ```typescript
 interface SessionData {
-  readonly id: string;
   readonly lifecycle: LifecycleState;
+  readonly backendSessionId?: string;
   readonly state: SessionState;
   readonly messageHistory: readonly ConsumerMessage[];
   readonly lastStatus: "compacting" | "idle" | "running" | null;
@@ -588,7 +586,9 @@ interface SessionData {
 }
 ```
 
-**Persisted to disk** as `PersistedSession` (subset: id, state, messageHistory, pendingMessages, pendingPermissions, queuedMessage, adapterName).
+**Persisted to disk** as `PersistedSession` (subset: state, messageHistory, pendingMessages, pendingPermissions, queuedMessage, adapterName).
+
+**`Session`** (from `session-repository.ts`) wraps `SessionData` and `SessionHandles` and adds `readonly id: string` — the immutable lookup key.
 
 ### SessionHandles (Runtime)
 
@@ -616,48 +616,41 @@ All inputs to the runtime are typed as one of three `SessionEvent` variants:
 
 ```typescript
 type SessionEvent =
-  | { type: 'BACKEND_MESSAGE'; message: UnifiedMessage }
-  | { type: 'INBOUND_COMMAND'; command: InboundCommand }
-  | { type: 'SYSTEM_SIGNAL'; signal: SystemSignal };
+  | { type: "BACKEND_MESSAGE"; message: UnifiedMessage }
+  | { type: "INBOUND_COMMAND"; command: InboundCommand; ws: WebSocketLike }
+  | { type: "SYSTEM_SIGNAL"; signal: SystemSignal };
 
 type SystemSignal =
-  | { kind: 'TIMEOUT' }
-  | { kind: 'BACKEND_CONNECTED'; backendSession: BackendSession }
-  | { kind: 'BACKEND_DISCONNECTED'; reason: string }
-  | { kind: 'CONSUMER_CONNECTED'; ws: WebSocketLike; identity: ConsumerIdentity }
-  | { kind: 'CONSUMER_DISCONNECTED'; ws: WebSocketLike }
-  | { kind: 'GIT_INFO_RESOLVED'; gitInfo: GitInfo }
-  | { kind: 'CAPABILITIES_READY'; capabilities: InitializeCapabilities }
-  | { kind: 'IDLE_REAP' }
-  | { kind: 'RECONNECT_TIMEOUT' }
-  | { kind: 'CAPABILITIES_TIMEOUT' };
+  | { kind: "BACKEND_CONNECTED" }
+  | { kind: "BACKEND_DISCONNECTED"; reason: string }
+  | { kind: "CONSUMER_CONNECTED"; ws: WebSocketLike; identity: ConsumerIdentity }
+  | { kind: "CONSUMER_DISCONNECTED"; ws: WebSocketLike }
+  | { kind: "GIT_INFO_RESOLVED" }
+  | { kind: "CAPABILITIES_READY" }
+  | { kind: "IDLE_REAP" }
+  | { kind: "RECONNECT_TIMEOUT" }
+  | { kind: "CAPABILITIES_TIMEOUT" }
+  | { kind: "SESSION_CLOSED" };
 ```
 
 ### Effect (Output Union)
 
 Side effects returned by the reducer. Never executed inside the reducer — the runtime's `EffectExecutor` handles them.
 
+> **Note:** Backend sends (`sendToBackend`), git resolution, capabilities handshake, and trace I/O are performed directly by `SessionRuntime` methods (not through the `Effect` system), because they require live runtime handles (`BackendSession`, `GitTracker`, etc.) not available to the pure reducer.
+
 ```typescript
 type Effect =
   // Broadcast to consumers
-  | { type: 'BROADCAST'; message: ConsumerMessage }
-  | { type: 'BROADCAST_SESSION_UPDATE'; patch: Partial<SessionState> }
-  | { type: 'BROADCAST_TO_PARTICIPANTS'; message: ConsumerMessage }
-
-  // Backend communication
-  | { type: 'SEND_TO_BACKEND'; message: UnifiedMessage }
+  | { type: "BROADCAST"; message: ConsumerMessage }
+  | { type: "BROADCAST_TO_PARTICIPANTS"; message: ConsumerMessage }
+  | { type: "BROADCAST_SESSION_UPDATE"; patch: Partial<SessionState> }
 
   // Domain events
-  | { type: 'EMIT_EVENT'; eventType: string; payload: unknown }
+  | { type: "EMIT_EVENT"; eventType: string; payload: unknown }
 
-  // Async workflows (produce new SessionEvents when done)
-  | { type: 'RESOLVE_GIT_INFO'; cwd: string }
-  | { type: 'SEND_CAPABILITIES_REQUEST' }
-  | { type: 'APPLY_CAPABILITIES'; capabilities: unknown }
-  | { type: 'AUTO_SEND_QUEUED' }
-
-  // Tracing
-  | { type: 'TRACE_T4'; phase: string; input: UnifiedMessage; output: ConsumerMessage };
+  // Queue drain
+  | { type: "AUTO_SEND_QUEUED" };
 ```
 
 ---
@@ -774,15 +767,15 @@ Consumer → Backend:
 │  handleConnection(ws, ctx)                                       │
 │    ├── coordinator.getRuntime(sessionId) / reject 4004           │
 │    ├── gatekeeper.authenticate(ws, ctx) / reject 4001            │
-│    └── coordinator.process(sessionId, {                          │
+│    └── runtime.process({                                         │
 │          type: 'SYSTEM_SIGNAL',                                  │
 │          signal: { kind: 'CONSUMER_CONNECTED', ws, identity }    │
 │        })                                                        │
 │                                                                  │
 │  handleMessage(ws, sessionId, data)                              │
 │    ├── size check, JSON.parse, Zod validate, RBAC, rate limit    │
-│    └── coordinator.process(sessionId, {                          │
-│          type: 'INBOUND_COMMAND', command: validated             │
+│    └── runtime.process({                                         │
+│          type: 'INBOUND_COMMAND', command: validated, ws         │
 │        })                                                        │
 └──────────────────────────────────────────────────────────────────┘
                          │
@@ -877,8 +870,7 @@ Backend → Consumers:
 │  │                                      │                        │
 │  │  session_init:                       │                        │
 │  │    BROADCAST(session_init)      ─────│───▶ Consumers          │
-│  │    RESOLVE_GIT_INFO(cwd)        ─────│───▶ feeds back event   │
-│  │    SEND_CAPABILITIES_REQUEST    ─────│───▶ Backend            │
+│  │    (runtime: git resolve + caps req)                          │
 │  │                                      │                        │
 │  │  assistant:                          │                        │
 │  │    BROADCAST(consumerMsg)       ─────│───▶ Consumers          │
@@ -903,7 +895,7 @@ Backend → Consumers:
 │  │    BROADCAST(mapped)            ─────│───▶ Consumers          │
 │  │                                      │                        │
 │  │  control_response:                   │                        │
-│  │    APPLY_CAPABILITIES           ─────│───▶ feeds back event   │
+│  │    (runtime: apply capabilities)     │                        │
 │  └──────────────────────────────────────┘                        │
 └──────────────────────────────────────────────────────────────────┘
                     │
@@ -1344,13 +1336,13 @@ src/core/
 ├── index.ts                         — barrel exports
 │
 ├── backend/                         — BackendPlane
-│   └── backend-connector.ts         — adapter lifecycle + consumption + passthrough (~644L)
+│   └── backend-connector.ts         — adapter lifecycle + consumption + passthrough (~611L)
 │
 ├── capabilities/                    — Capabilities handshake policy
-│   └── capabilities-policy.ts       — observe + advise (~191L)
+│   └── capabilities-policy.ts       — observe + advise (~178L)
 │
 ├── consumer/                        — ConsumerPlane
-│   ├── consumer-gateway.ts          — WS accept/reject/message, emits SessionEvents (~287L)
+│   ├── consumer-gateway.ts          — WS accept/reject/message, emits SessionEvents (~291L)
 │   ├── consumer-broadcaster.ts      — broadcast + replay + presence (~170L)
 │   └── consumer-gatekeeper.ts       — auth + RBAC + rate limiting (~157L)
 │
@@ -1370,10 +1362,8 @@ src/core/
 │   ├── domain-events.ts             — DomainEvent union type, DomainEventBus interface
 │   ├── extensions.ts                — Composed adapter extensions
 │   ├── runtime-commands.ts          — InboundCommand, PolicyCommand types
-│   ├── session-events.ts            — SessionEvent, SystemSignal union types (NEW)
-│   ├── effects.ts                   — Effect union type (NEW)
-│   ├── session-data.ts              — SessionData, SessionHandles types (NEW)
-│   ├── session-services.ts          — SessionServices registry type (NEW)
+│   ├── session-coordination.ts      — Coordinator port interfaces
+│   ├── session-coordinator-coordination.ts — Transport integration interfaces
 │   ├── session-launcher.ts          — Session launcher interface
 │   ├── session-registry.ts          — Session registry interface
 │   └── adapter-names.ts             — Adapter name constants
@@ -1381,7 +1371,7 @@ src/core/
 ├── messaging/                       — Pure translation boundaries
 │   ├── consumer-message-mapper.ts   — pure T4 mapper (~343L)
 │   ├── inbound-normalizer.ts        — pure T1 mapper (~124L)
-│   ├── message-tracer.ts            — debug tracing at T1/T2/T3/T4 (~631L)
+│   ├── message-tracer.ts            — debug tracing at T1/T2/T3/T4 (~666L)
 │   └── trace-differ.ts              — diff computation for trace inspection (~143L)
 │
 ├── policies/                        — Policy services (observe + advise)
@@ -1389,13 +1379,17 @@ src/core/
 │   └── reconnect-policy.ts          — awaiting_backend watchdog (~119L)
 │
 ├── session/                         — Per-session state + lifecycle + reducer
-│   ├── session-runtime.ts           — per-session actor: process(event) (~400L, down from 659)
-│   ├── session-reducer.ts           — top-level pure reducer (NEW, ~500L)
-│   ├── session-state-reducer.ts     — AI context sub-reducer (~255L)
-│   ├── history-reducer.ts           — message history sub-reducer (NEW, ~150L)
-│   ├── effect-mapper.ts             — event → Effect[] mapping (NEW, ~300L)
-│   ├── effect-executor.ts           — Effect → I/O dispatch (NEW, ~150L)
-│   ├── session-repository.ts        — in-memory store + persistence (~253L)
+│   ├── session-runtime.ts           — per-session actor: process(event) (~859L)
+│   ├── session-reducer.ts           — top-level pure reducer (~468L)
+│   ├── session-state-reducer.ts     — AI context sub-reducer (~273L)
+│   ├── history-reducer.ts           — message history sub-reducer (~133L)
+│   ├── effect-mapper.ts             — event → Effect[] mapping (~104L)
+│   ├── effect-executor.ts           — Effect → I/O dispatch (~62L)
+│   ├── effect-types.ts              — Effect union type (~26L)
+│   ├── session-event.ts             — SessionEvent, SystemSignal types (~55L)
+│   ├── session-data.ts              — SessionData, SessionHandles types (~78L)
+│   ├── session-repository.ts        — in-memory store + persistence + Session type (~241L)
+│   ├── session-lease-coordinator.ts — per-session serial execution coordinator
 │   ├── session-lifecycle.ts         — lifecycle state transitions
 │   ├── session-transport-hub.ts     — transport wiring per session
 │   ├── cli-gateway.ts               — CLI WebSocket connection handler
@@ -1436,8 +1430,9 @@ src/core/
 │  SessionData           → readonly immutable session state            │
 │  SessionHandles        → mutable runtime references                  │
 │  SessionEvent          → BACKEND_MESSAGE | INBOUND_COMMAND | SIGNAL  │
-│  Effect                → BROADCAST | SEND_TO_BACKEND | EMIT_EVENT    │
-│                          RESOLVE_GIT_INFO | AUTO_SEND_QUEUED | ...   │
+│  Effect                → BROADCAST | BROADCAST_TO_PARTICIPANTS |     │
+│                          BROADCAST_SESSION_UPDATE | EMIT_EVENT |     │
+│                          AUTO_SEND_QUEUED                            │
 │  SessionServices       → broadcaster, connector, storage, tracer...  │
 │                                                                      │
 │  BackendAdapter        → connect(options): Promise<BackendSession>   │
