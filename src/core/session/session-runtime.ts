@@ -644,6 +644,7 @@ export class SessionRuntime {
       this.session.data,
       { type: "SYSTEM_SIGNAL", signal },
       this.session.teamCorrelationBuffer,
+      this.deps.config,
     );
     if (nextData !== prevData) {
       this.session = { ...this.session, data: nextData };
@@ -678,20 +679,12 @@ export class SessionRuntime {
     this.touchActivity();
 
     const prevData = this.session.data;
-    let [nextData, effects] = sessionReducer(
+    const [nextData, effects] = sessionReducer(
       this.session.data,
       { type: "BACKEND_MESSAGE", message: msg },
       this.session.teamCorrelationBuffer,
+      this.deps.config,
     );
-
-    // Apply history limits (centralized)
-    const maxLen = this.deps.config.maxMessageHistoryLength;
-    if (nextData.messageHistory.length > maxLen) {
-      nextData = {
-        ...nextData,
-        messageHistory: nextData.messageHistory.slice(-maxLen),
-      };
-    }
 
     if (nextData !== this.session.data) {
       this.session = { ...this.session, data: nextData };

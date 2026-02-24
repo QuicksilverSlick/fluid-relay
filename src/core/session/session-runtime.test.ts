@@ -203,6 +203,27 @@ describe("SessionRuntime", () => {
     );
   });
 
+  it("trims messageHistory to maxMessageHistoryLength when processing backend messages", () => {
+    const deps = makeDeps({ config: { maxMessageHistoryLength: 2 } });
+    const session = createMockSession({ id: "s1" });
+    const runtime = new SessionRuntime(session, deps);
+
+    // Three assistant messages should be reduced to 2
+    for (let i = 0; i < 3; i++) {
+      runtime.process({
+        type: "BACKEND_MESSAGE",
+        message: createUnifiedMessage({
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: `msg${i}` }],
+          metadata: { message_id: `id${i}` },
+        }),
+      });
+    }
+
+    expect(runtime.getMessageHistory().length).toBe(2);
+  });
+
   it("delegates slash_command handling to slash service", () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();

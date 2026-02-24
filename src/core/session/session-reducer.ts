@@ -49,6 +49,10 @@ import { reduce } from "./session-state-reducer.js";
 // Public API
 // ---------------------------------------------------------------------------
 
+export interface ReducerConfig {
+  readonly maxMessageHistoryLength: number;
+}
+
 /**
  * Top-level session reducer.
  *
@@ -62,10 +66,11 @@ export function sessionReducer(
   data: SessionData,
   event: SessionEvent,
   correlationBuffer: TeamToolCorrelationBuffer,
+  config: ReducerConfig = { maxMessageHistoryLength: Number.POSITIVE_INFINITY },
 ): [SessionData, Effect[]] {
   switch (event.type) {
     case "BACKEND_MESSAGE":
-      return reduceBackendMessage(data, event.message, correlationBuffer);
+      return reduceBackendMessage(data, event.message, correlationBuffer, config);
 
     case "SYSTEM_SIGNAL":
       return reduceSystemSignal(data, event.signal);
@@ -157,11 +162,15 @@ function reduceBackendMessage(
   data: SessionData,
   message: UnifiedMessage,
   correlationBuffer: TeamToolCorrelationBuffer,
+  config: ReducerConfig,
 ): [SessionData, Effect[]] {
   const nextState = reduce(data.state, message, correlationBuffer);
   const nextLastStatus = reduceLastStatus(data.lastStatus, message);
   const nextLifecycle = reduceLifecycle(data.lifecycle, message);
-  const nextMessageHistory = reduceMessageHistory(data.messageHistory, message);
+  const nextMessageHistory = trimHistory(
+    reduceMessageHistory(data.messageHistory, message),
+    config.maxMessageHistoryLength,
+  );
   const nextBackendSessionId = reduceBackendSessionId(data.backendSessionId, message);
   const nextPendingPermissions = reducePendingPermissions(data.pendingPermissions, message);
 
@@ -465,4 +474,11 @@ function reduceMessageHistory(
   }
 
   return current;
+}
+
+function trimHistory(
+  history: readonly ConsumerMessage[],
+  maxLen: number,
+): readonly ConsumerMessage[] {
+  return history.length > maxLen ? history.slice(-maxLen) : history;
 }
