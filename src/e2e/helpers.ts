@@ -15,10 +15,23 @@ import {
   collectMessages,
   waitForMessageType,
 } from "../test-utils/session-test-utils.js";
+import { getE2EProfile } from "./e2e-profile.js";
+import type { BackendPrereqState } from "./prereqs.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/**
+ * Centrally determines if smoke and/or full prompt-based tests should run.
+ */
+export function getTestRunConditions(prereqs: BackendPrereqState) {
+  const profile = getE2EProfile();
+  const canBindLocalhost = canBindLocalhostSync();
+  const runSmoke = prereqs.ok && canBindLocalhost;
+  const runFull = runSmoke && prereqs.canRunPromptTests && profile === "real-full";
+  return { runSmoke, runFull };
+}
 
 export function isBackendConnected(coordinator: SessionCoordinator, sessionId: string): boolean {
   return coordinator.isBackendConnected(sessionId);

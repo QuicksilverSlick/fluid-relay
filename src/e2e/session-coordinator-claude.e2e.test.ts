@@ -9,7 +9,6 @@ import { MemoryStorage } from "../adapters/memory-storage.js";
 import { NodeWebSocketServer } from "../adapters/node-ws-server.js";
 import { SessionCoordinator } from "../core/session-coordinator.js";
 import { createProcessManager } from "../test-utils/session-test-utils.js";
-import { getE2EProfile } from "./e2e-profile.js";
 import {
   assistantTextContains,
   attachTrace,
@@ -19,6 +18,7 @@ import {
   deleteTrace,
   dumpTraceOnFailure,
   getSessionSnapshot,
+  getTestRunConditions,
   isBackendConnected,
   reservePort,
   type TestContextLike,
@@ -32,11 +32,7 @@ import { getRealCliPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
 import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
-const profile = getE2EProfile();
-const prereqs = getRealCliPrereqState();
-const canBindLocalhost = canBindLocalhostSync();
-const runSmoke = prereqs.ok && canBindLocalhost;
-const runFull = runSmoke && prereqs.canRunPromptTests && profile === "real-full";
+const { runSmoke, runFull } = getTestRunConditions(getRealCliPrereqState());
 
 describe("E2E Real SDK-URL SessionCoordinator", () => {
   const activeCoordinators: SessionCoordinator[] = [];
