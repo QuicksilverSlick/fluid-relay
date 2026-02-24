@@ -237,6 +237,7 @@ function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnector
       broadcastToParticipants: vi.fn(),
     } as any,
     routeUnifiedMessage: vi.fn(),
+    routeSystemSignal: vi.fn(),
     emitEvent: vi.fn(),
     getRuntime: (session) => {
       if (!runtimeCache.has(session)) {
@@ -278,8 +279,7 @@ describe("BackendConnector", () => {
       await mgr.connectBackend(session);
 
       expect(session.backendSession).not.toBeNull();
-      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(session, { type: "cli_connected" });
-      expect(deps.emitEvent).toHaveBeenCalledWith("backend:connected", { sessionId: "sess-1" });
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(session, { kind: "BACKEND_CONNECTED" });
     });
 
     it("closes existing backend session on reconnect", async () => {
@@ -355,9 +355,9 @@ describe("BackendConnector", () => {
       } as CLIMessage);
 
       expect(result).toBe(true);
-      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(
         session,
-        expect.objectContaining({ type: "slash_command_result", content: "echo result" }),
+        expect.objectContaining({ kind: "SLASH_PASSTHROUGH_RESULT", content: "echo result" }),
       );
       expect(session.pendingPassthroughs).toHaveLength(0);
     });
@@ -492,8 +492,11 @@ describe("BackendConnector", () => {
 
       await mgr.disconnectBackend(session);
 
-      // Should not broadcast or emit events for disconnection
-      expect(deps.emitEvent).not.toHaveBeenCalledWith("backend:disconnected", expect.anything());
+      // Should not route signals for disconnection
+      expect(deps.routeSystemSignal).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "BACKEND_DISCONNECTED" }),
+      );
     });
 
     it("records metrics when disconnecting", async () => {
@@ -605,12 +608,12 @@ describe("BackendConnector", () => {
 
       await tick();
 
-      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(
         session,
         expect.objectContaining({
-          type: "slash_command_result",
+          kind: "SLASH_PASSTHROUGH_RESULT",
           command: "/context",
-          request_id: "req-ctx",
+          requestId: "req-ctx",
           content: "Context: 23% used",
           source: "cli",
         }),
@@ -641,12 +644,12 @@ describe("BackendConnector", () => {
 
       await tick();
 
-      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(
         session,
         expect.objectContaining({
-          type: "slash_command_result",
+          kind: "SLASH_PASSTHROUGH_RESULT",
           command: "/context",
-          request_id: "req-ctx",
+          requestId: "req-ctx",
           content: "Context summary line",
           source: "cli",
         }),
@@ -689,12 +692,12 @@ describe("BackendConnector", () => {
 
       await tick();
 
-      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(
         session,
         expect.objectContaining({
-          type: "slash_command_result",
+          kind: "SLASH_PASSTHROUGH_RESULT",
           command: "/context",
-          request_id: "req-ctx",
+          requestId: "req-ctx",
           content: "Context Usage\nTokens: 43.5k / 200k (22%)",
           source: "cli",
         }),
@@ -734,12 +737,12 @@ describe("BackendConnector", () => {
 
       await tick();
 
-      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(
         session,
         expect.objectContaining({
-          type: "slash_command_error",
+          kind: "SLASH_PASSTHROUGH_ERROR",
           command: "/context",
-          request_id: "req-ctx",
+          requestId: "req-ctx",
         }),
       );
       expect(session.pendingPassthroughs).toHaveLength(0);
@@ -783,7 +786,7 @@ describe("BackendConnector", () => {
       `);
     });
 
-    it("broadcasts cli_disconnected when stream ends unexpectedly", async () => {
+    it("routes BACKEND_DISCONNECTED signal when stream ends unexpectedly", async () => {
       const testSession = new TestBackendSession("sess-1");
       const adapter = new TestAdapter();
       adapter.nextSession = testSession;
@@ -799,16 +802,10 @@ describe("BackendConnector", () => {
 
       await tick(50);
 
-      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(session, {
-        type: "cli_disconnected",
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(session, {
+        kind: "BACKEND_DISCONNECTED",
+        reason: "stream ended",
       });
-      expect(deps.emitEvent).toHaveBeenCalledWith(
-        "backend:disconnected",
-        expect.objectContaining({
-          sessionId: "sess-1",
-          reason: "stream ended",
-        }),
-      );
       expect(session.backendSession).toBeNull();
     });
 
@@ -859,15 +856,9 @@ describe("BackendConnector", () => {
           error: expect.any(Error),
         }),
       );
-      expect(deps.emitEvent).toHaveBeenCalledWith(
-        "backend:disconnected",
-        expect.objectContaining({
-          sessionId: "sess-1",
-          reason: "stream ended",
-        }),
-      );
-      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(session, {
-        type: "cli_disconnected",
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(session, {
+        kind: "BACKEND_DISCONNECTED",
+        reason: "stream ended",
       });
       expect(session.backendSession).toBeNull();
     });
@@ -939,7 +930,7 @@ describe("BackendConnector — cliUserEchoToText via passthrough", () => {
       },
     } as unknown as CLIMessage);
 
-    expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+    expect(deps.routeSystemSignal).toHaveBeenCalledWith(
       session,
       expect.objectContaining({ content: "plain string and object" }),
     );
@@ -965,7 +956,7 @@ describe("BackendConnector — cliUserEchoToText via passthrough", () => {
       message: { content: { text: "object text" } },
     } as unknown as CLIMessage);
 
-    expect(deps2.broadcaster.broadcast).toHaveBeenCalledWith(
+    expect(deps2.routeSystemSignal).toHaveBeenCalledWith(
       session2,
       expect.objectContaining({ content: "object text" }),
     );
@@ -979,7 +970,7 @@ describe("BackendConnector — cliUserEchoToText via passthrough", () => {
       message: { content: null },
     } as unknown as CLIMessage);
 
-    expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+    expect(deps.routeSystemSignal).toHaveBeenCalledWith(
       session,
       expect.objectContaining({ content: "" }),
     );
@@ -1001,7 +992,7 @@ describe("BackendConnector — cliUserEchoToText via passthrough", () => {
       message: { content: { notText: "value" } },
     } as unknown as CLIMessage);
 
-    expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+    expect(deps.routeSystemSignal).toHaveBeenCalledWith(
       session,
       expect.objectContaining({ content: "" }),
     );
@@ -1023,7 +1014,7 @@ describe("BackendConnector — cliUserEchoToText via passthrough", () => {
       message: { content: { text: 42 } },
     } as unknown as CLIMessage);
 
-    expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+    expect(deps.routeSystemSignal).toHaveBeenCalledWith(
       session,
       expect.objectContaining({ content: "" }),
     );
@@ -1045,7 +1036,7 @@ describe("BackendConnector — cliUserEchoToText via passthrough", () => {
       message: { content: "<local-command-stdout>Context Usage</local-command-stdout>" },
     } as unknown as CLIMessage);
 
-    expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+    expect(deps.routeSystemSignal).toHaveBeenCalledWith(
       session,
       expect.objectContaining({ content: "Context Usage" }),
     );

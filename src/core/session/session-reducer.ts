@@ -113,6 +113,86 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
     }
   }
 
+  // Signals with custom effects but no lifecycle change
+  if (signal.kind === "BACKEND_RELAUNCH_NEEDED") {
+    return [data, [{ type: "EMIT_EVENT", eventType: "backend:relaunch_needed", payload: {} }]];
+  }
+
+  if (signal.kind === "SLASH_PASSTHROUGH_RESULT") {
+    return [
+      data,
+      [
+        {
+          type: "BROADCAST",
+          message: {
+            type: "slash_command_result",
+            command: signal.command,
+            request_id: signal.requestId,
+            content: signal.content,
+            source: signal.source,
+          },
+        },
+        {
+          type: "EMIT_EVENT",
+          eventType: "slash_command:executed",
+          payload: { command: signal.command, source: signal.source, durationMs: 0 },
+        },
+      ],
+    ];
+  }
+
+  if (signal.kind === "SLASH_PASSTHROUGH_ERROR") {
+    return [
+      data,
+      [
+        {
+          type: "BROADCAST",
+          message: {
+            type: "slash_command_error",
+            command: signal.command,
+            request_id: signal.requestId,
+            error: signal.error,
+          },
+        },
+        {
+          type: "EMIT_EVENT",
+          eventType: "slash_command:failed",
+          payload: { command: signal.command, error: signal.error },
+        },
+      ],
+    ];
+  }
+
+  // Signals with custom effects AND lifecycle transitions
+  if (signal.kind === "BACKEND_CONNECTED") {
+    const next: LifecycleState = "active";
+    const effects: Effect[] = [
+      { type: "BROADCAST", message: { type: "cli_connected" } },
+      { type: "EMIT_EVENT", eventType: "backend:connected", payload: {} },
+    ];
+    if (isLifecycleTransitionAllowed(data.lifecycle, next)) {
+      return [{ ...data, lifecycle: next }, effects];
+    }
+    return [data, effects];
+  }
+
+  if (signal.kind === "BACKEND_DISCONNECTED") {
+    const next: LifecycleState | null =
+      data.lifecycle === "active" || data.lifecycle === "idle" ? "degraded" : null;
+    const effects: Effect[] = [
+      { type: "BROADCAST", message: { type: "cli_disconnected" } },
+      {
+        type: "EMIT_EVENT",
+        eventType: "backend:disconnected",
+        payload: { code: 1000, reason: signal.reason },
+      },
+    ];
+    if (next && isLifecycleTransitionAllowed(data.lifecycle, next)) {
+      return [{ ...data, lifecycle: next }, effects];
+    }
+    return [data, effects];
+  }
+
   // Lifecycle-only signals
   const next = lifecycleForSignal(data.lifecycle, signal);
   if (!next || !isLifecycleTransitionAllowed(data.lifecycle, next)) {
@@ -122,24 +202,29 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
 }
 
 /** Map a SystemSignal kind to the target lifecycle state, or null if no transition. */
-function lifecycleForSignal(current: LifecycleState, signal: SystemSignal): LifecycleState | null {
+function lifecycleForSignal(_current: LifecycleState, signal: SystemSignal): LifecycleState | null {
   switch (signal.kind) {
+    // BACKEND_CONNECTED and BACKEND_DISCONNECTED are handled in reduceSystemSignal() directly
     case "BACKEND_CONNECTED":
-      return "active";
     case "BACKEND_DISCONNECTED":
-      return current === "active" || current === "idle" ? "degraded" : null;
+      return null;
+    case "SESSION_CLOSING":
+      return "closing";
     case "SESSION_CLOSED":
       return "closed";
     case "RECONNECT_TIMEOUT":
       return "degraded";
     case "IDLE_REAP":
       return "closing";
+    case "BACKEND_RELAUNCH_NEEDED":
+    case "SLASH_PASSTHROUGH_RESULT":
+    case "SLASH_PASSTHROUGH_ERROR":
     case "CAPABILITIES_TIMEOUT":
     case "CONSUMER_CONNECTED":
     case "CONSUMER_DISCONNECTED":
     case "GIT_INFO_RESOLVED":
     case "CAPABILITIES_READY":
-      // No pure data change for these — handled by runtime orchestration.
+      // No pure data change for these — handled by runtime orchestration or reduceSystemSignal().
       return null;
     // Data-patch signals handled above — not lifecycle transitions
     case "STATE_PATCHED":

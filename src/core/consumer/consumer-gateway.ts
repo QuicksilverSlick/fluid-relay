@@ -268,7 +268,7 @@ export class ConsumerGateway {
       this.deps.logger.info(
         `Consumer connected but CLI is dead for session ${sessionId}, requesting relaunch`,
       );
-      this.deps.emit("backend:relaunch_needed", { sessionId });
+      rt.process({ type: "SYSTEM_SIGNAL", signal: { kind: "BACKEND_RELAUNCH_NEEDED" } });
     }
   }
 

@@ -158,19 +158,13 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       payload &&
       typeof payload === "object" &&
       "sessionId" in payload &&
-      (type === "backend:connected" || type === "backend:disconnected" || type === "session:closed")
+      type === "session:closed"
     ) {
       const sessionId = (payload as { sessionId?: unknown }).sessionId;
       if (typeof sessionId === "string") {
         const runtime = this.runtimes.get(sessionId);
         if (runtime) {
-          const signal: SystemSignal =
-            type === "backend:connected"
-              ? { kind: "BACKEND_CONNECTED" }
-              : type === "backend:disconnected"
-                ? { kind: "BACKEND_DISCONNECTED", reason: "bridge-event" }
-                : { kind: "SESSION_CLOSED" };
-          runtime.process({ type: "SYSTEM_SIGNAL", signal });
+          runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSED" } });
         }
       }
     }
@@ -322,6 +316,13 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       routeUnifiedMessage: (session: Session, msg: UnifiedMessage) =>
         this.withMutableSession(session.id, "handleBackendMessage", (s) =>
           this.getOrCreateRuntime(s).process({ type: "BACKEND_MESSAGE", message: msg }),
+        ),
+      routeSystemSignal: (
+        session: Session,
+        signal: import("./session/session-event.js").SystemSignal,
+      ) =>
+        this.withMutableSession(session.id, "routeSystemSignal", (s) =>
+          this.getOrCreateRuntime(s).process({ type: "SYSTEM_SIGNAL", signal }),
         ),
       emitEvent: this.emitEvent as (
         type: keyof BridgeEventMap,
@@ -772,7 +773,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     const session = this.store.get(sessionId);
     if (!session) return;
     const runtime = this.getOrCreateRuntime(session);
-    runtime.transitionLifecycle("closing", "session:close");
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSING" } });
     this.capabilitiesPolicy.cancelPendingInitialize(session);
     if (runtime.getBackendSession()) {
       await runtime.closeBackendConnection().catch((err: unknown) => {

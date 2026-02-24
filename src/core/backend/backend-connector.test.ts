@@ -47,6 +47,7 @@ function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnector
       sendTo: vi.fn(),
     } as any,
     routeUnifiedMessage: vi.fn(),
+    routeSystemSignal: vi.fn(),
     emitEvent: vi.fn(),
     getRuntime: () => mockRuntime as any,
     ...overrides,
