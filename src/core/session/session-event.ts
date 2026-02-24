@@ -11,7 +11,9 @@
 
 import type { ConsumerIdentity } from "../../interfaces/auth.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
+import type { SessionState } from "../../types/session-state.js";
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
+import type { QueuedMessage } from "../session/session-repository.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 
 /**
@@ -40,7 +42,15 @@ export type SystemSignal =
   /** Capabilities did not arrive within the timeout window. */
   | { kind: "CAPABILITIES_TIMEOUT" }
   /** Explicit session close initiated by coordinator. */
-  | { kind: "SESSION_CLOSED" };
+  | { kind: "SESSION_CLOSED" }
+  /** Merge a partial SessionState patch into data.state (no lifecycle change). */
+  | { kind: "STATE_PATCHED"; patch: Partial<SessionState> }
+  /** Set lastStatus directly (e.g. optimistic "running" from MessageQueueHandler). */
+  | { kind: "LAST_STATUS_UPDATED"; status: "compacting" | "idle" | "running" | null }
+  /** Set queuedMessage (managed by MessageQueueHandler). */
+  | { kind: "QUEUED_MESSAGE_UPDATED"; message: QueuedMessage | null }
+  /** Optimistic model update with session_update broadcast (used by sendSetModel). */
+  | { kind: "MODEL_UPDATED"; model: string };
 
 /**
  * Discriminated union of all events that SessionRuntime.process() accepts.

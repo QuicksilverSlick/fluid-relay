@@ -13,14 +13,17 @@ import { MessageQueueHandler } from "./message-queue-handler.js";
 function createMockRuntime(session: any) {
   return {
     getLastStatus: () => session.data.lastStatus,
-    setLastStatus: (status: any) => {
-      session.data.lastStatus = status;
-    },
     getQueuedMessage: () => session.data.queuedMessage,
-    setQueuedMessage: (queued: any) => {
-      session.data.queuedMessage = queued;
-    },
     getConsumerIdentity: (ws: any) => session.consumerSockets.get(ws),
+    process: (event: any) => {
+      if (event.type === "SYSTEM_SIGNAL") {
+        if (event.signal.kind === "LAST_STATUS_UPDATED") {
+          session.data.lastStatus = event.signal.status;
+        } else if (event.signal.kind === "QUEUED_MESSAGE_UPDATED") {
+          session.data.queuedMessage = event.signal.message;
+        }
+      }
+    },
   } as any;
 }
 
@@ -59,14 +62,17 @@ describe("MessageQueueHandler", () => {
         () =>
           ({
             getLastStatus: () => status,
-            setLastStatus: (next: any) => {
-              status = next;
-            },
             getQueuedMessage: () => queued,
-            setQueuedMessage: (next: any) => {
-              queued = next;
-            },
             getConsumerIdentity: (ws: any) => session.consumerSockets.get(ws),
+            process: (event: any) => {
+              if (event.type === "SYSTEM_SIGNAL") {
+                if (event.signal.kind === "LAST_STATUS_UPDATED") {
+                  status = event.signal.status;
+                } else if (event.signal.kind === "QUEUED_MESSAGE_UPDATED") {
+                  queued = event.signal.message;
+                }
+              }
+            },
           }) as any,
       );
       const ws = createTestSocket();

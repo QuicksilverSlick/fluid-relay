@@ -32,7 +32,7 @@ export function applyGitInfo(state: SessionState, gitInfo: GitInfo): SessionStat
 
 type GitStateAccessors = {
   getState: (session: Session) => SessionData["state"];
-  setState: (session: Session, state: SessionData["state"]) => void;
+  patchState: (session: Session, patch: Partial<SessionData["state"]>) => void;
 };
 
 export class GitInfoTracker {
@@ -50,8 +50,8 @@ export class GitInfoTracker {
     return this.stateAccessors.getState(session);
   }
 
-  private setState(session: Session, state: SessionData["state"]): void {
-    this.stateAccessors.setState(session, state);
+  private patchState(session: Session, patch: Partial<SessionData["state"]>): void {
+    this.stateAccessors.patchState(session, patch);
   }
 
   /**
@@ -65,7 +65,13 @@ export class GitInfoTracker {
     this.resolveAttempted.add(session.id);
     try {
       const gitInfo = this.gitResolver.resolve(state.cwd);
-      if (gitInfo) this.setState(session, applyGitInfo(this.getState(session), gitInfo));
+      if (gitInfo) {
+        const { git_branch, is_worktree, repo_root, git_ahead, git_behind } = applyGitInfo(
+          this.getState(session),
+          gitInfo,
+        );
+        this.patchState(session, { git_branch, is_worktree, repo_root, git_ahead, git_behind });
+      }
     } catch {
       // Best-effort: git resolution failure should never crash consumer connections
     }
@@ -75,7 +81,7 @@ export class GitInfoTracker {
    * Re-resolve git info and return a partial state update if anything changed,
    * or null if nothing changed (or no resolver/cwd/info available).
    *
-   * Mutates session state via applyGitInfo when changes are detected.
+   * Updates session state via patchState when changes are detected.
    * The caller is responsible for broadcasting the returned update.
    */
   refreshGitInfo(session: Session): Partial<SessionState> | null {
@@ -94,14 +100,15 @@ export class GitInfoTracker {
     if (!changed) return null;
 
     const nextState = applyGitInfo(state, gitInfo);
-    this.setState(session, nextState);
-
-    return {
+    const broadcastPatch = {
       git_branch: nextState.git_branch,
       git_ahead: nextState.git_ahead,
       git_behind: nextState.git_behind,
       is_worktree: nextState.is_worktree,
     };
+    this.patchState(session, { ...broadcastPatch, repo_root: nextState.repo_root });
+
+    return broadcastPatch;
   }
 
   /** Reset attempt tracking for a session (called on re-init). */

@@ -20,7 +20,7 @@ import type {
   InitializeModel,
   PermissionRequest,
 } from "../../types/cli-messages.js";
-import type { ConsumerMessage } from "../../types/consumer-messages.js";
+
 import type { BridgeEventMap } from "../../types/events.js";
 import type { SessionSnapshot, SessionState } from "../../types/session-state.js";
 import type { BackendConnector } from "../backend/backend-connector.js";
@@ -35,7 +35,7 @@ import { diffTeamState } from "../team/team-event-differ.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { executeEffects } from "./effect-executor.js";
-import type { GitInfoTracker } from "./git-info-tracker.js";
+import { applyGitInfo, type GitInfoTracker } from "./git-info-tracker.js";
 import type { MessageQueueHandler } from "./message-queue-handler.js";
 import type { SessionEvent, SystemSignal } from "./session-event.js";
 import type { LifecycleState } from "./session-lifecycle.js";
@@ -203,14 +203,6 @@ export class SessionRuntime {
     return this.session.data.state;
   }
 
-  setLastStatus(status: SessionData["lastStatus"]): void {
-    this.session = { ...this.session, data: { ...this.session.data, lastStatus: status } };
-  }
-
-  setState(state: SessionData["state"]): void {
-    this.session = { ...this.session, data: { ...this.session.data, state } };
-  }
-
   setBackendSessionId(sessionId: string | undefined): void {
     this.session = { ...this.session, data: { ...this.session.data, backendSessionId: sessionId } };
   }
@@ -225,10 +217,6 @@ export class SessionRuntime {
 
   getQueuedMessage(): SessionData["queuedMessage"] {
     return this.session.data.queuedMessage;
-  }
-
-  setQueuedMessage(queued: SessionData["queuedMessage"]): void {
-    this.session = { ...this.session, data: { ...this.session.data, queuedMessage: queued } };
   }
 
   getPendingPermissions(): PermissionRequest[] {
@@ -442,27 +430,31 @@ export class SessionRuntime {
   private handleInboundCommand(msg: InboundCommand, ws: WebSocketLike): void {
     this.touchActivity();
     switch (msg.type) {
-      case "user_message":
-        // Preserve legacy optimistic running behavior for queue decisions.
-        {
-          const previousStatus = this.session.data.lastStatus;
-          this.session = { ...this.session, data: { ...this.session.data, lastStatus: "running" } };
-          const accepted = this.sendUserMessage(msg.content, {
+      case "user_message": {
+        // Route pure state mutations (lastStatus + messageHistory) through the reducer.
+        const prevData = this.session.data;
+        const [nextData, effects] = sessionReducer(
+          this.session.data,
+          { type: "INBOUND_COMMAND", command: msg, ws },
+          this.deps.config,
+        );
+        if (nextData !== prevData) {
+          // Reducer accepted the message — apply state + effects, then do I/O.
+          this.session = { ...this.session, data: nextData };
+          executeEffects(effects, this.session, this.effectDeps());
+          this.sendUserMessageIO(msg.content, {
             sessionIdOverride: msg.session_id,
             images: msg.images,
           });
-          if (!accepted) {
-            this.session = {
-              ...this.session,
-              data: { ...this.session.data, lastStatus: previousStatus },
-            };
-            this.deps.broadcaster.sendTo(ws, {
-              type: "error",
-              message: "Session is closing or closed and cannot accept new messages.",
-            });
-          }
+        } else {
+          // Lifecycle is closed/closing — send targeted error to the requesting consumer.
+          this.deps.broadcaster.sendTo(ws, {
+            type: "error",
+            message: "Session is closing or closed and cannot accept new messages.",
+          });
         }
         break;
+      }
       case "permission_response":
         this.sendPermissionResponse(msg.request_id, msg.behavior, {
           updatedInput: msg.updated_input,
@@ -504,7 +496,40 @@ export class SessionRuntime {
     }
   }
 
+  /**
+   * Send a user message: applies pure state mutations via the reducer, then
+   * executes I/O (backend send or queue). Returns `false` if the session
+   * lifecycle rejected the message (closed/closing).
+   */
   sendUserMessage(content: string, options?: RuntimeSendUserMessageOptions): boolean {
+    const prevData = this.session.data;
+    const [nextData, effects] = sessionReducer(
+      this.session.data,
+      {
+        type: "INBOUND_COMMAND",
+        command: { type: "user_message", content, session_id: options?.sessionIdOverride ?? "" },
+        ws: null as never, // ws not needed for pure state mutations
+      },
+      this.deps.config,
+    );
+
+    if (nextData === prevData) {
+      // Lifecycle is closed/closing — message rejected.
+      return false;
+    }
+
+    this.session = { ...this.session, data: nextData };
+    executeEffects(effects, this.session, this.effectDeps());
+    return this.sendUserMessageIO(content, options);
+  }
+
+  /**
+   * I/O side of user message handling: normalizes the message, transitions
+   * the lifecycle, sends to backend (or queues it), and persists.
+   * Called after the reducer has already applied the pure state mutations.
+   * Returns `false` if the lifecycle transition was rejected.
+   */
+  private sendUserMessageIO(content: string, options?: RuntimeSendUserMessageOptions): boolean {
     const unified = tracedNormalizeInbound(
       this.deps.tracer,
       {
@@ -530,23 +555,12 @@ export class SessionRuntime {
       return false;
     }
 
-    const userMsg: ConsumerMessage = {
-      type: "user_message",
-      content,
-      timestamp: Date.now(),
-    };
-    this.session = {
-      ...this.session,
-      data: {
-        ...this.session.data,
-        messageHistory: [...this.session.data.messageHistory, userMsg],
-      },
-    };
-    this.trimMessageHistory();
-    this.deps.broadcaster.broadcast(this.session, userMsg);
-
     if (backendSession) {
-      backendSession.send(unified);
+      executeEffects(
+        [{ type: "SEND_TO_BACKEND", message: unified }],
+        this.session,
+        this.effectDeps(),
+      );
     } else {
       this.session = {
         ...this.session,
@@ -558,17 +572,6 @@ export class SessionRuntime {
     }
     this.persistNow();
     return true;
-  }
-
-  private trimMessageHistory(): void {
-    const maxLength = this.deps.config.maxMessageHistoryLength;
-    const history = this.session.data.messageHistory;
-    if (history.length > maxLength) {
-      this.session = {
-        ...this.session,
-        data: { ...this.session.data, messageHistory: history.slice(-maxLength) },
-      };
-    }
   }
 
   sendPermissionResponse(
@@ -595,7 +598,6 @@ export class SessionRuntime {
       behavior,
     });
 
-    if (!this.session.backendSession) return;
     const unified = tracedNormalizeInbound(
       this.deps.tracer,
       {
@@ -611,7 +613,11 @@ export class SessionRuntime {
       this.session.id,
     );
     if (unified) {
-      this.session.backendSession.send(unified);
+      executeEffects(
+        [{ type: "SEND_TO_BACKEND", message: unified }],
+        this.session,
+        this.effectDeps(),
+      );
     }
   }
 
@@ -621,21 +627,35 @@ export class SessionRuntime {
 
   sendSetModel(model: string): void {
     if (!this.session.backendSession) return;
+    // Route pure state mutation (state.model + BROADCAST_SESSION_UPDATE) through reducer.
+    const [nextData, effects] = sessionReducer(
+      this.session.data,
+      {
+        type: "INBOUND_COMMAND",
+        command: { type: "set_model", model },
+        ws: null as never, // ws not needed for pure state mutations
+      },
+      this.deps.config,
+    );
+    if (nextData !== this.session.data) {
+      this.session = { ...this.session, data: nextData };
+      executeEffects(effects, this.session, this.effectDeps());
+    }
     this.sendControlRequest({ type: "set_model", model });
-    // Optimistically update session state — the backend never sends a
-    // configuration_change back, so we must reflect the change ourselves.
-    this.session = {
-      ...this.session,
-      data: { ...this.session.data, state: { ...this.session.data.state, model } },
-    };
-    this.deps.broadcaster.broadcast(this.session, {
-      type: "session_update",
-      session: { model },
-    });
   }
 
   sendSetPermissionMode(mode: string): void {
     this.sendControlRequest({ type: "set_permission_mode", mode });
+  }
+
+  private effectDeps() {
+    return {
+      broadcaster: this.deps.broadcaster,
+      emitEvent: this.deps.emitEvent,
+      queueHandler: this.deps.queueHandler,
+      backendConnector: this.deps.backendConnector,
+      store: this.deps.store,
+    };
   }
 
   private handleSystemSignal(signal: SystemSignal): void {
@@ -643,17 +663,13 @@ export class SessionRuntime {
     const [nextData, effects] = sessionReducer(
       this.session.data,
       { type: "SYSTEM_SIGNAL", signal },
-      this.session.teamCorrelationBuffer,
+      this.deps.config,
     );
     if (nextData !== prevData) {
       this.session = { ...this.session, data: nextData };
       this.markDirty();
     }
-    executeEffects(effects, this.session, {
-      broadcaster: this.deps.broadcaster,
-      emitEvent: this.deps.emitEvent,
-      queueHandler: this.deps.queueHandler,
-    });
+    executeEffects(effects, this.session, this.effectDeps());
   }
 
   async executeSlashCommand(
@@ -667,10 +683,13 @@ export class SessionRuntime {
   }
 
   private sendControlRequest(msg: InboundCommand): void {
-    if (!this.session.backendSession) return;
     const unified = tracedNormalizeInbound(this.deps.tracer, msg, this.session.id);
     if (unified) {
-      this.session.backendSession.send(unified);
+      executeEffects(
+        [{ type: "SEND_TO_BACKEND", message: unified }],
+        this.session,
+        this.effectDeps(),
+      );
     }
   }
 
@@ -678,20 +697,11 @@ export class SessionRuntime {
     this.touchActivity();
 
     const prevData = this.session.data;
-    let [nextData, effects] = sessionReducer(
+    const [nextData, effects] = sessionReducer(
       this.session.data,
       { type: "BACKEND_MESSAGE", message: msg },
-      this.session.teamCorrelationBuffer,
+      this.deps.config,
     );
-
-    // Apply history limits (centralized)
-    const maxLen = this.deps.config.maxMessageHistoryLength;
-    if (nextData.messageHistory.length > maxLen) {
-      nextData = {
-        ...nextData,
-        messageHistory: nextData.messageHistory.slice(-maxLen),
-      };
-    }
 
     if (nextData !== this.session.data) {
       this.session = { ...this.session, data: nextData };
@@ -699,11 +709,7 @@ export class SessionRuntime {
     }
 
     // Execute reducer effects (T4 broadcasts + event emissions + queue flush)
-    executeEffects(effects, this.session, {
-      broadcaster: this.deps.broadcaster,
-      emitEvent: this.deps.emitEvent,
-      queueHandler: this.deps.queueHandler,
-    });
+    executeEffects(effects, this.session, this.effectDeps());
 
     // High-level orchestration for complex side effects
     if (msg.type === "session_init") {
@@ -737,10 +743,7 @@ export class SessionRuntime {
       if (gitInfo) {
         this.session = {
           ...this.session,
-          data: {
-            ...this.session.data,
-            state: { ...this.session.data.state, ...gitInfo },
-          },
+          data: { ...this.session.data, state: applyGitInfo(this.session.data.state, gitInfo) },
         };
       }
     }

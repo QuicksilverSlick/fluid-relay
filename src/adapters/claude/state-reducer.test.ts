@@ -27,7 +27,7 @@ describe("state-reducer", () => {
         },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
 
       expect(next).not.toBe(state); // new object
       expect(next.model).toBe("claude-sonnet-4-5-20250929");
@@ -48,7 +48,7 @@ describe("state-reducer", () => {
         metadata: { model: "claude-opus-4-6" },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next.total_cost_usd).toBe(0.5);
       expect(next.num_turns).toBe(3);
       expect(next.model).toBe("claude-opus-4-6");
@@ -77,7 +77,7 @@ describe("state-reducer", () => {
         metadata: { status: "compacting" },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next.is_compacting).toBe(true);
     });
 
@@ -89,7 +89,7 @@ describe("state-reducer", () => {
         metadata: { status: null },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next.is_compacting).toBe(false);
     });
 
@@ -101,7 +101,7 @@ describe("state-reducer", () => {
         metadata: { status: null, permissionMode: "plan" },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next.permissionMode).toBe("plan");
     });
 
@@ -113,7 +113,7 @@ describe("state-reducer", () => {
         metadata: { status: null },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next.permissionMode).toBe("default");
     });
   });
@@ -130,7 +130,7 @@ describe("state-reducer", () => {
         },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next.total_cost_usd).toBe(0.05);
       expect(next.num_turns).toBe(3);
     });
@@ -148,7 +148,7 @@ describe("state-reducer", () => {
         },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next.total_lines_added).toBe(42);
       expect(next.total_lines_removed).toBe(10);
     });
@@ -174,7 +174,7 @@ describe("state-reducer", () => {
         },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       // (50000 + 10000) / 200000 * 100 = 30
       expect(next.context_used_percent).toBe(30);
       expect(next.last_model_usage).toBeDefined();
@@ -193,7 +193,7 @@ describe("state-reducer", () => {
         },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next.last_duration_ms).toBe(1200);
       expect(next.last_duration_api_ms).toBe(800);
     });
@@ -229,7 +229,7 @@ describe("state-reducer", () => {
         },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next).toBe(state); // no mutation — capabilities are set by the bridge handler
     });
 
@@ -245,7 +245,7 @@ describe("state-reducer", () => {
         },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next).toBe(state); // same reference — no mutation
     });
   });
@@ -253,7 +253,7 @@ describe("state-reducer", () => {
   describe("optimistic team state (no tool_result)", () => {
     it("applies TeamCreate immediately on tool_use without tool_result", () => {
       const state = makeDefaultSessionState();
-      const next = reduce(
+      const [next] = reduce(
         state,
         makeToolUseMessage("TeamCreate", "tu-opt-1", { team_name: "opt-team" }),
       );
@@ -267,7 +267,7 @@ describe("state-reducer", () => {
         ...makeDefaultSessionState(),
         team: { name: "opt-team", role: "lead", members: [], tasks: [] },
       };
-      const next = reduce(
+      const [next] = reduce(
         state,
         makeToolUseMessage("Task", "tu-opt-2", {
           team_name: "opt-team",
@@ -285,7 +285,7 @@ describe("state-reducer", () => {
         team: { name: "opt-team", role: "lead", members: [], tasks: [] },
       };
       const toolUseId = "abcd1234-5678-9abc-def0";
-      const next = reduce(
+      const [next] = reduce(
         state,
         makeToolUseMessage("TaskCreate", toolUseId, { subject: "Optimistic task" }),
       );
@@ -304,7 +304,7 @@ describe("state-reducer", () => {
         content: [{ type: "text", text: "Hello" }],
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next).toBe(state);
     });
 
@@ -316,7 +316,7 @@ describe("state-reducer", () => {
         metadata: { event: {} },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next).toBe(state);
     });
 
@@ -328,7 +328,7 @@ describe("state-reducer", () => {
         metadata: { tool_use_id: "tu-1" },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next).toBe(state);
     });
 
@@ -340,7 +340,7 @@ describe("state-reducer", () => {
         metadata: { isAuthenticating: true },
       });
 
-      const next = reduce(state, msg);
+      const [next] = reduce(state, msg);
       expect(next).toBe(state);
     });
   });

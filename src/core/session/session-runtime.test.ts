@@ -84,11 +84,10 @@ describe("SessionRuntime", () => {
   });
 
   it("handles user_message with optimistic running state", () => {
-    const send = vi.fn();
     const session = createMockSession({
       id: "s1",
       data: { lastStatus: null },
-      backendSession: { send } as any,
+      backendSession: { send: vi.fn() } as any,
     });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
@@ -108,7 +107,7 @@ describe("SessionRuntime", () => {
       expect.objectContaining({ id: "s1" }),
       expect.objectContaining({ type: "user_message", content: "hello" }),
     );
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledTimes(1);
     expect(runtime.getLifecycleState()).toBe("active");
     expect(deps.store.persist).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }));
   });
@@ -146,15 +145,8 @@ describe("SessionRuntime", () => {
       type: "error",
       message: "Session is closing or closed and cannot accept new messages.",
     });
-    expect(deps.logger.warn).toHaveBeenCalledWith(
-      "Session lifecycle invalid transition",
-      expect.objectContaining({
-        sessionId: "s1",
-        current: "closed",
-        next: "active",
-        reason: "inbound:user_message",
-      }),
-    );
+    // The reducer now short-circuits for closed/closing lifecycle before attempting
+    // a transitionLifecycle call, so no logger.warn is emitted.
   });
 
   it("trims message history using runtime-owned max length", () => {
@@ -201,6 +193,27 @@ describe("SessionRuntime", () => {
     expect(runtime.getMessageHistory()[1]).toEqual(
       expect.objectContaining({ type: "user_message", content: "third" }),
     );
+  });
+
+  it("trims messageHistory to maxMessageHistoryLength when processing backend messages", () => {
+    const deps = makeDeps({ config: { maxMessageHistoryLength: 2 } });
+    const session = createMockSession({ id: "s1" });
+    const runtime = new SessionRuntime(session, deps);
+
+    // Three assistant messages should be reduced to 2
+    for (let i = 0; i < 3; i++) {
+      runtime.process({
+        type: "BACKEND_MESSAGE",
+        message: createUnifiedMessage({
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: `msg${i}` }],
+          metadata: { message_id: `id${i}` },
+        }),
+      });
+    }
+
+    expect(runtime.getMessageHistory().length).toBe(2);
   });
 
   it("delegates slash_command handling to slash service", () => {
@@ -384,7 +397,6 @@ describe("SessionRuntime", () => {
   });
 
   it("sends deny permission response to backend when pending request exists", () => {
-    const send = vi.fn();
     const perm: any = {
       request_id: "perm-1",
       options: [],
@@ -396,7 +408,6 @@ describe("SessionRuntime", () => {
     const session = createMockSession({
       id: "s1",
       data: { pendingPermissions: new Map([["perm-1", perm]]) },
-      backendSession: { send } as any,
     });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
@@ -408,7 +419,8 @@ describe("SessionRuntime", () => {
       requestId: "perm-1",
       behavior: "deny",
     });
-    expect(send).toHaveBeenCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "permission_response",
         metadata: expect.objectContaining({ request_id: "perm-1", behavior: "deny" }),
@@ -592,7 +604,6 @@ describe("SessionRuntime", () => {
   });
 
   it("includes updated_permissions in permission response metadata", () => {
-    const send = vi.fn();
     const perm: any = {
       request_id: "perm-2",
       options: [],
@@ -604,7 +615,6 @@ describe("SessionRuntime", () => {
     const session = createMockSession({
       id: "s1",
       data: { pendingPermissions: new Map([["perm-2", perm]]) },
-      backendSession: { send } as any,
     });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
@@ -613,7 +623,8 @@ describe("SessionRuntime", () => {
       updatedPermissions: [{ type: "setMode", mode: "plan", destination: "session" }],
     });
 
-    expect(send).toHaveBeenCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "permission_response",
         metadata: expect.objectContaining({
@@ -624,8 +635,7 @@ describe("SessionRuntime", () => {
   });
 
   it("normalizes and sends control requests for interrupt/model/mode", () => {
-    const send = vi.fn();
-    const session = createMockSession({ id: "s1", backendSession: { send } as any });
+    const session = createMockSession({ id: "s1", backendSession: { send: vi.fn() } as any });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
@@ -633,21 +643,24 @@ describe("SessionRuntime", () => {
     runtime.sendSetModel("claude-opus");
     runtime.sendSetPermissionMode("plan");
 
-    expect(send).toHaveBeenNthCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenNthCalledWith(
       1,
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "interrupt",
       }),
     );
-    expect(send).toHaveBeenNthCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenNthCalledWith(
       2,
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "configuration_change",
         metadata: expect.objectContaining({ subtype: "set_model", model: "claude-opus" }),
       }),
     );
-    expect(send).toHaveBeenNthCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenNthCalledWith(
       3,
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "configuration_change",
         metadata: expect.objectContaining({ subtype: "set_permission_mode", mode: "plan" }),
@@ -756,6 +769,62 @@ describe("SessionRuntime", () => {
     expect(runtime.getLifecycleState()).toBe("closing");
   });
 
+  describe("SYSTEM_SIGNAL state-patch kinds", () => {
+    it("STATE_PATCHED merges patch into data.state", () => {
+      const session = createMockSession({ id: "s1" });
+      const runtime = new SessionRuntime(session, makeDeps());
+
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "STATE_PATCHED", patch: { model: "claude-opus-4" } },
+      });
+
+      expect(runtime.getState().model).toBe("claude-opus-4");
+    });
+
+    it("LAST_STATUS_UPDATED sets lastStatus", () => {
+      const session = createMockSession({ id: "s1" });
+      const runtime = new SessionRuntime(session, makeDeps());
+
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "LAST_STATUS_UPDATED", status: "running" },
+      });
+
+      expect(runtime.getLastStatus()).toBe("running");
+    });
+
+    it("QUEUED_MESSAGE_UPDATED sets queuedMessage", () => {
+      const session = createMockSession({ id: "s1" });
+      const runtime = new SessionRuntime(session, makeDeps());
+      const queued = { consumerId: "u1", displayName: "User", content: "hi", queuedAt: 1 };
+
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "QUEUED_MESSAGE_UPDATED", message: queued },
+      });
+
+      expect(runtime.getQueuedMessage()).toEqual(queued);
+    });
+
+    it("MODEL_UPDATED patches state.model and broadcasts session_update", () => {
+      const session = createMockSession({ id: "s1" });
+      const deps = makeDeps();
+      const runtime = new SessionRuntime(session, deps);
+
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "MODEL_UPDATED", model: "claude-haiku-4" },
+      });
+
+      expect(runtime.getState().model).toBe("claude-haiku-4");
+      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "s1" }),
+        expect.objectContaining({ type: "session_update", session: { model: "claude-haiku-4" } }),
+      );
+    });
+  });
+
   it("sets adapter name and persists session", () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
@@ -848,14 +917,22 @@ describe("SessionRuntime", () => {
       content: "queued",
       queuedAt: 1,
     };
-    const nextState = { ...session.data.state, model: "claude-sonnet-4-5" };
     const history = [{ type: "user_message", content: "hello", timestamp: 1 }] as any;
 
-    runtime.setState(nextState);
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "STATE_PATCHED", patch: { model: "claude-sonnet-4-5" } },
+    });
     runtime.setBackendSessionId("backend-123");
-    runtime.setLastStatus("running");
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "LAST_STATUS_UPDATED", status: "running" },
+    });
     runtime.setMessageHistory(history);
-    runtime.setQueuedMessage(queued as any);
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_UPDATED", message: queued as any },
+    });
 
     expect(runtime.getState().model).toBe("claude-sonnet-4-5");
     expect(runtime.getState().model).toBe("claude-sonnet-4-5");
@@ -1206,7 +1283,7 @@ describe("SessionRuntime", () => {
     });
 
     expect(gitResolver.resolve).toHaveBeenCalledWith("/project");
-    expect(runtime.getState().branch).toBe("main");
+    expect(runtime.getState().git_branch).toBe("main");
   });
 
   it("registers slash_commands and skills from session_init state into registry", () => {
@@ -1272,9 +1349,12 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    // Simulate handleControlResponse calling runtime.setState internally
+    // Simulate handleControlResponse patching state via process()
     (deps.capabilitiesPolicy.handleControlResponse as any).mockImplementationOnce(() => {
-      runtime.setState({ ...session.data.state, model: "injected-model" });
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "STATE_PATCHED", patch: { model: "injected-model" } },
+      });
     });
 
     runtime.process({

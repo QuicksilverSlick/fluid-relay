@@ -38,7 +38,10 @@ export class MessageQueueHandler {
   }
 
   private setLastStatus(session: Session, status: SessionData["lastStatus"]): void {
-    this.getRuntime(session).setLastStatus(status);
+    this.getRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "LAST_STATUS_UPDATED", status },
+    });
   }
 
   private getQueuedMessage(session: Session): QueuedMessage | null {
@@ -46,7 +49,10 @@ export class MessageQueueHandler {
   }
 
   private setQueuedMessage(session: Session, queued: QueuedMessage | null): void {
-    this.getRuntime(session).setQueuedMessage(queued);
+    this.getRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_UPDATED", message: queued },
+    });
     this.onQueuedMessageSet?.(session);
   }
 

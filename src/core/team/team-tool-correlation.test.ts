@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolResultContent } from "../types/unified-message.js";
-import { TeamToolCorrelationBuffer } from "./team-tool-correlation.js";
+import {
+  pureAddToolUse,
+  pureConsumeToolResult,
+  pureFlushStale,
+  TeamToolCorrelationBuffer,
+} from "./team-tool-correlation.js";
 import type { RecognizedTeamToolUse } from "./team-tool-recognizer.js";
 
 // ---------------------------------------------------------------------------
@@ -252,5 +257,60 @@ describe("TeamToolCorrelationBuffer", () => {
       buffer.onToolUse(makeRecognized({ toolUseId: "tu-dup" }));
       expect(buffer.pendingCount).toBe(1); // overwritten, not duplicated
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pure functional API tests
+// ---------------------------------------------------------------------------
+
+const makeUse = (id: string): RecognizedTeamToolUse =>
+  ({ toolUseId: id, toolName: "TaskCreate", category: "team_task_update", input: {} }) as any;
+
+const makeResult = (id: string): ToolResultContent =>
+  ({ type: "tool_result", tool_use_id: id, content: [], is_error: false }) as any;
+
+describe("pureAddToolUse", () => {
+  it("returns a new map with the entry added; does not mutate original", () => {
+    const empty: ReadonlyMap<string, any> = new Map();
+    const next = pureAddToolUse(empty, makeUse("t1"));
+    expect(next.size).toBe(1);
+    expect(empty.size).toBe(0);
+    expect(next.get("t1")?.recognized.toolUseId).toBe("t1");
+  });
+});
+
+describe("pureConsumeToolResult", () => {
+  it("removes the entry and returns the correlated pair", () => {
+    const map = pureAddToolUse(new Map(), makeUse("t1"));
+    const [next, correlated] = pureConsumeToolResult(map, makeResult("t1"));
+    expect(next.size).toBe(0);
+    expect(correlated?.recognized.toolUseId).toBe("t1");
+  });
+
+  it("returns original map reference and undefined when no match", () => {
+    const map: ReadonlyMap<string, any> = new Map();
+    const [next, correlated] = pureConsumeToolResult(map, makeResult("missing"));
+    expect(next).toBe(map);
+    expect(correlated).toBeUndefined();
+  });
+});
+
+describe("pureFlushStale", () => {
+  it("removes entries older than maxAgeMs", () => {
+    const old = { recognized: makeUse("t1"), receivedAt: Date.now() - 60_000 };
+    const fresh = { recognized: makeUse("t2"), receivedAt: Date.now() };
+    const map: ReadonlyMap<string, any> = new Map([
+      ["t1", old],
+      ["t2", fresh],
+    ]);
+    const next = pureFlushStale(map, 30_000);
+    expect(next.has("t1")).toBe(false);
+    expect(next.has("t2")).toBe(true);
+  });
+
+  it("returns original map reference when nothing is stale", () => {
+    const map: ReadonlyMap<string, any> = new Map();
+    expect(pureFlushStale(map, 30_000)).toBe(map);
   });
 });

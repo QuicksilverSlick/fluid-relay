@@ -14,8 +14,12 @@
 
 import type { SessionState } from "../../types/session-state.js";
 import { reduceTeamState } from "../team/team-state-reducer.js";
-import type { CorrelatedToolUse } from "../team/team-tool-correlation.js";
-import { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
+import type { CorrelatedToolUse, PendingToolUse } from "../team/team-tool-correlation.js";
+import {
+  pureAddToolUse,
+  pureConsumeToolResult,
+  pureFlushStale,
+} from "../team/team-tool-correlation.js";
 import { recognizeTeamToolUses } from "../team/team-tool-recognizer.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
@@ -26,34 +30,32 @@ import { isToolResultContent } from "../types/unified-message.js";
 // ---------------------------------------------------------------------------
 
 /**
- * Apply a UnifiedMessage to SessionState, returning a new state.
+ * Apply a UnifiedMessage to SessionState, returning [newState, newCorrelationMap].
  * Returns the original state reference if no fields changed.
  *
- * @param correlationBuffer — required; callers must provide a per-session buffer
- *   to prevent cross-session state corruption.
+ * @param correlationMap — per-session immutable map for team tool_use↔tool_result pairing.
  */
 export function reduce(
   state: SessionState,
   message: UnifiedMessage,
-  correlationBuffer: TeamToolCorrelationBuffer = new TeamToolCorrelationBuffer(),
-): SessionState {
+  correlationMap: ReadonlyMap<string, PendingToolUse> = new Map(),
+): [SessionState, ReadonlyMap<string, PendingToolUse>] {
   switch (message.type) {
     case "session_init":
-      return reduceSessionInit(state, message);
+      return [reduceSessionInit(state, message), correlationMap];
     case "status_change":
-      return reduceStatusChange(state, message);
+      return [reduceStatusChange(state, message), correlationMap];
     case "result":
-      return reduceResult(state, message);
+      return [reduceResult(state, message), correlationMap];
     case "control_response":
-      return reduceControlResponse(state, message);
+      return [reduceControlResponse(state, message), correlationMap];
     case "configuration_change":
-      return reduceConfigurationChange(state, message);
+      return [reduceConfigurationChange(state, message), correlationMap];
     default:
       break;
   }
 
-  // Process team tool_use and tool_result in any message
-  return reduceTeamTools(state, message, correlationBuffer);
+  return reduceTeamTools(state, message, correlationMap);
 }
 
 // ---------------------------------------------------------------------------
@@ -238,14 +240,15 @@ function applyTeamState(
  * 1. Scans for team tool_use blocks → buffers and optimistically applies them
  * 2. Scans for tool_result blocks → correlates with buffered tool_uses
  * 3. When correlated, applies reduceTeamState
- * 4. Flushes stale correlation buffer entries (30s TTL)
+ * 4. Flushes stale correlation map entries (30s TTL)
  */
 function reduceTeamTools(
   state: SessionState,
   message: UnifiedMessage,
-  correlationBuffer: TeamToolCorrelationBuffer,
-): SessionState {
+  correlationMap: ReadonlyMap<string, PendingToolUse>,
+): [SessionState, ReadonlyMap<string, PendingToolUse>] {
   let currentState = state;
+  let currentMap = correlationMap;
 
   // 1. Buffer + optimistic apply: apply team state immediately on tool_use
   //    without waiting for tool_result (which the CLI stream may never send).
@@ -253,7 +256,7 @@ function reduceTeamTools(
   //    environments where tool_result blocks do arrive.
   const teamUses = recognizeTeamToolUses(message);
   for (const use of teamUses) {
-    correlationBuffer.onToolUse(use);
+    currentMap = pureAddToolUse(currentMap, use);
     const optimistic: CorrelatedToolUse = { recognized: use, result: undefined };
     currentState = applyTeamState(currentState, reduceTeamState(currentState.team, optimistic));
   }
@@ -261,13 +264,14 @@ function reduceTeamTools(
   // 2. Correlate any tool_result blocks with buffered team tool_uses
   for (const block of message.content) {
     if (!isToolResultContent(block)) continue;
-    const correlated = correlationBuffer.onToolResult(block);
+    let correlated: CorrelatedToolUse | undefined;
+    [currentMap, correlated] = pureConsumeToolResult(currentMap, block);
     if (!correlated) continue;
     currentState = applyTeamState(currentState, reduceTeamState(currentState.team, correlated));
   }
 
   // 3. Flush stale entries (30s TTL)
-  correlationBuffer.flush(30_000);
+  currentMap = pureFlushStale(currentMap, 30_000);
 
-  return currentState;
+  return [currentState, currentMap];
 }

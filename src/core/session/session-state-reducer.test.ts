@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
 import { mapAssistantMessage } from "../messaging/consumer-message-mapper.js";
-import { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
 import type { SessionData } from "./session-data.js";
 import { sessionReducer } from "./session-reducer.js";
@@ -19,6 +18,7 @@ function baseData(): SessionData {
     queuedMessage: null,
     lastStatus: null,
     adapterSupportsSlashPassthrough: false,
+    teamCorrelation: new Map(),
   };
 }
 
@@ -53,7 +53,7 @@ describe("reduce — configuration_change", () => {
       metadata: { subtype: "set_model", model: "gpt-4" },
     });
 
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.model).toBe("gpt-4");
     expect(next).not.toBe(state);
   });
@@ -66,7 +66,7 @@ describe("reduce — configuration_change", () => {
       metadata: { subtype: "set_permission_mode", mode: "plan" },
     });
 
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.permissionMode).toBe("plan");
     expect(next).not.toBe(state);
   });
@@ -79,7 +79,7 @@ describe("reduce — configuration_change", () => {
       metadata: { permissionMode: "bypassPermissions" },
     });
 
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.permissionMode).toBe("bypassPermissions");
   });
 
@@ -91,7 +91,7 @@ describe("reduce — configuration_change", () => {
       metadata: { mode: "plan", permissionMode: "bypassPermissions" },
     });
 
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.permissionMode).toBe("plan");
   });
 
@@ -103,7 +103,7 @@ describe("reduce — configuration_change", () => {
       metadata: { subtype: "available_commands_update" },
     });
 
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next).toBe(state);
   });
 
@@ -115,7 +115,7 @@ describe("reduce — configuration_change", () => {
       metadata: { model: state.model, mode: state.permissionMode },
     });
 
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next).toBe(state);
   });
 });
@@ -124,8 +124,7 @@ describe("reduceSessionData", () => {
   it("returns same reference when nothing changes", () => {
     const data = baseData();
     const msg = createUnifiedMessage({ type: "interrupt", role: "system", metadata: {} });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
     expect(next).toBe(data);
   });
 
@@ -136,8 +135,7 @@ describe("reduceSessionData", () => {
       role: "assistant",
       metadata: { status: "running" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
     expect(next.lastStatus).toBe("running");
     expect(next).not.toBe(data);
   });
@@ -149,8 +147,7 @@ describe("reduceSessionData", () => {
       role: "assistant",
       metadata: { subtype: "success" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
     expect(next.lastStatus).toBe("idle");
   });
 
@@ -161,8 +158,7 @@ describe("reduceSessionData", () => {
       role: "assistant",
       metadata: { status: "idle" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
     expect(next).toBe(data); // no change, same ref
   });
 
@@ -173,8 +169,7 @@ describe("reduceSessionData", () => {
       role: "assistant",
       metadata: { session_id: "cli-abc-123", model: "claude-sonnet-4-6" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
     expect(next.backendSessionId).toBe("cli-abc-123");
   });
 
@@ -190,8 +185,7 @@ describe("reduceSessionData", () => {
           input: { command: "ls" },
         },
       });
-      const buffer = new TeamToolCorrelationBuffer();
-      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
       expect(next.pendingPermissions.get("req-1")).toMatchObject({ tool_name: "bash" });
     });
 
@@ -203,8 +197,7 @@ describe("reduceSessionData", () => {
         role: "user",
         metadata: { request_id: "req-1", behavior: "allow" },
       });
-      const buffer = new TeamToolCorrelationBuffer();
-      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
       expect(next.pendingPermissions.has("req-1")).toBe(false);
     });
   });
@@ -218,8 +211,7 @@ describe("reduceSessionData", () => {
         content: [{ type: "text", text: "hello" }],
         metadata: {},
       });
-      const buffer = new TeamToolCorrelationBuffer();
-      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
       expect(next.messageHistory).toHaveLength(1);
       expect(next.messageHistory[0]).toMatchObject({ type: "assistant" });
     });
@@ -235,8 +227,7 @@ describe("reduceSessionData", () => {
           is_error: false,
         },
       });
-      const buffer = new TeamToolCorrelationBuffer(); // Renamed from correlationBuffer
-      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: m }, buffer); // Renamed from state
+      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: m }); // Renamed from state
       expect(next.messageHistory).toHaveLength(1);
       expect(next.messageHistory[0].type).toBe("result");
     });
@@ -252,8 +243,7 @@ describe("reduceSessionData", () => {
           output: "ok",
         },
       });
-      const buffer = new TeamToolCorrelationBuffer(); // Renamed from correlationBuffer
-      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: m }, buffer); // Renamed from state
+      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: m }); // Renamed from state
       expect(next.messageHistory).toHaveLength(1);
       expect(next.messageHistory[0].type).toBe("tool_use_summary");
     });
@@ -283,8 +273,7 @@ describe("reduceSessionData", () => {
         },
       });
 
-      const buffer = new TeamToolCorrelationBuffer(); // Renamed from correlationBuffer
-      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: m }, buffer); // Renamed from state
+      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: m }); // Renamed from state
       expect(next.messageHistory).toHaveLength(1);
       expect((next.messageHistory[0] as any).summary).toBe("Finished");
       expect((next.messageHistory[0] as any).output).toBe("line 1\nline 2");
@@ -315,8 +304,7 @@ describe("reduceSessionData", () => {
         },
       });
 
-      const buffer = new TeamToolCorrelationBuffer(); // Renamed from correlationBuffer
-      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: m }, buffer); // Renamed from state
+      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: m }); // Renamed from state
       expect(next).toBe(data); // Reference equality means no change
     });
 
@@ -337,8 +325,7 @@ describe("reduceSessionData", () => {
         content: [{ type: "text", text: "hello" }],
         metadata: { message_id: messageId },
       });
-      const buffer = new TeamToolCorrelationBuffer();
-      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: second }, buffer);
+      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: second });
       expect(next.messageHistory).toHaveLength(1);
       expect((next.messageHistory[0] as any).message.content[0].text).toBe("hello");
     });
@@ -360,8 +347,7 @@ describe("reduceSessionData", () => {
         content: [{ type: "text", text: "hello" }],
         metadata: { message_id: messageId },
       });
-      const buffer = new TeamToolCorrelationBuffer();
-      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: same }, buffer);
+      const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: same });
       expect(next.messageHistory).toBe(data.messageHistory);
     });
   });
@@ -379,7 +365,7 @@ describe("reduce — session_init with non-array fields (asStringArray fallback)
       role: "assistant",
       metadata: { model: "claude-4", tools: "not-an-array" },
     });
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.tools).toEqual(state.tools);
   });
 
@@ -390,7 +376,7 @@ describe("reduce — session_init with non-array fields (asStringArray fallback)
       role: "assistant",
       metadata: { slash_commands: 42 },
     });
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.slash_commands).toEqual(state.slash_commands);
   });
 
@@ -401,7 +387,7 @@ describe("reduce — session_init with non-array fields (asStringArray fallback)
       role: "assistant",
       metadata: { tools: ["bash", "read", 42, null] },
     });
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.tools).toEqual(["bash", "read"]);
   });
 });
@@ -414,7 +400,7 @@ describe("reduce — reduceStatusChange compacting branch", () => {
       role: "assistant",
       metadata: { status: "compacting" },
     });
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.is_compacting).toBe(true);
     expect(next).not.toBe(state);
   });
@@ -426,7 +412,7 @@ describe("reduce — reduceStatusChange compacting branch", () => {
       role: "assistant",
       metadata: { status: "running" },
     });
-    const next = reduce(compactingState, msg);
+    const [next] = reduce(compactingState, msg);
     expect(next.is_compacting).toBe(false);
   });
 });
@@ -439,7 +425,7 @@ describe("reduce — control_response returns state unchanged", () => {
       role: "assistant",
       metadata: { request_id: "req-1", capabilities: {} },
     });
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     // reduceControlResponse is a no-op — state is unchanged
     expect(next).toBe(state);
   });
@@ -455,9 +441,8 @@ describe("reduce — tool_result with no buffered correlation", () => {
       content: [{ type: "tool_result", tool_use_id: "unknown-id", content: "output" }],
       metadata: {},
     });
-    const buffer = new TeamToolCorrelationBuffer();
     // Should not throw and should return stable state
-    const next = reduce(state, msg, buffer);
+    const [next] = reduce(state, msg);
     expect(next).toBeDefined();
   });
 });
@@ -474,8 +459,7 @@ describe("sessionReducer BACKEND_MESSAGE — configuration_change effects", () =
       role: "system",
       metadata: { model: "gpt-4-turbo" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
 
     const types = effects.map((e) => e.type);
     expect(types).toContain("BROADCAST");
@@ -491,8 +475,7 @@ describe("sessionReducer BACKEND_MESSAGE — configuration_change effects", () =
       role: "system",
       metadata: { subtype: "available_commands_update" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
 
     expect(effects.map((e) => e.type)).toEqual(["BROADCAST"]);
   });
@@ -504,8 +487,7 @@ describe("sessionReducer BACKEND_MESSAGE — configuration_change effects", () =
       role: "system",
       metadata: { permissionMode: "bypassPermissions" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
 
     const update = effects.find((e) => e.type === "BROADCAST_SESSION_UPDATE") as any;
     expect(update?.patch.permissionMode).toBe("bypassPermissions");
@@ -520,7 +502,7 @@ describe("reduce — reduceResult metrics (lines 115-125)", () => {
       role: "assistant",
       metadata: { subtype: "success", total_lines_added: 50, total_lines_removed: 20 },
     });
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.total_lines_added).toBe(50);
     expect(next.total_lines_removed).toBe(20);
   });
@@ -532,7 +514,7 @@ describe("reduce — reduceResult metrics (lines 115-125)", () => {
       role: "assistant",
       metadata: { subtype: "success", duration_ms: 1500, duration_api_ms: 800 },
     });
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.last_duration_ms).toBe(1500);
     expect(next.last_duration_api_ms).toBe(800);
   });
@@ -556,7 +538,7 @@ describe("reduce — reduceResult with modelUsage (lines 143-151)", () => {
       role: "assistant",
       metadata: { subtype: "success", modelUsage },
     });
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.last_model_usage).toEqual(modelUsage);
     expect(next.context_used_percent).toBe(1); // (1000+200)/200000 = 0.6% → rounds to 1
   });
@@ -580,7 +562,7 @@ describe("reduce — reduceResult with modelUsage (lines 143-151)", () => {
         },
       },
     });
-    const next = reduce(state, msg);
+    const [next] = reduce(state, msg);
     expect(next.context_used_percent).toBe(state.context_used_percent);
   });
 });
@@ -593,8 +575,7 @@ describe("sessionReducer BACKEND_MESSAGE — session_lifecycle effects", () => {
       role: "assistant",
       metadata: { subtype: "session_created" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
     expect(effects.some((e) => e.type === "BROADCAST")).toBe(true);
   });
 });
@@ -607,8 +588,7 @@ describe("sessionReducer BACKEND_MESSAGE — reduceLastStatus edge cases", () =>
       role: "assistant",
       metadata: { status: "some_unknown_value" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
     expect(next.lastStatus).toBe("running");
   });
 
@@ -622,8 +602,7 @@ describe("sessionReducer BACKEND_MESSAGE — reduceLastStatus edge cases", () =>
         parent_tool_use_id: "tu-parent",
       },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [next] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
     expect(next.lastStatus).toBe("idle");
   });
 });
@@ -640,8 +619,7 @@ describe("sessionReducer BACKEND_MESSAGE — status_change with permissionMode (
       role: "system",
       metadata: { status: "idle", permissionMode: "acceptEdits" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
 
     const update = effects.find((e) => e.type === "BROADCAST_SESSION_UPDATE") as any;
     expect(update).toBeDefined();
@@ -657,8 +635,7 @@ describe("sessionReducer BACKEND_MESSAGE — tool_progress (lines 304-305)", () 
       role: "assistant",
       metadata: { tool_use_id: "tu-1", content: "running..." },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
 
     expect(effects.some((e) => e.type === "BROADCAST")).toBe(true);
   });
@@ -672,8 +649,7 @@ describe("sessionReducer BACKEND_MESSAGE — configuration_change with mode fiel
       role: "system",
       metadata: { mode: "plan" },
     });
-    const buffer = new TeamToolCorrelationBuffer();
-    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg }, buffer);
+    const [, effects] = sessionReducer(data, { type: "BACKEND_MESSAGE", message: msg });
 
     const update = effects.find((e) => e.type === "BROADCAST_SESSION_UPDATE") as any;
     expect(update?.patch.permissionMode).toBe("plan");
@@ -685,28 +661,62 @@ describe("sessionReducer BACKEND_MESSAGE — configuration_change with mode fiel
 // ---------------------------------------------------------------------------
 
 describe("sessionReducer INBOUND_COMMAND", () => {
-  it("returns data unchanged and empty effects for user_message on active session", () => {
+  it("sets lastStatus=running and appends to messageHistory for user_message on active session", () => {
     const data = baseData();
-    const buffer = new TeamToolCorrelationBuffer();
-    const [next, effects] = sessionReducer(
-      data,
-      { type: "INBOUND_COMMAND", command: { type: "user_message", content: "hi", session_id: "" } },
-      buffer,
-    );
+    const [next, effects] = sessionReducer(data, {
+      type: "INBOUND_COMMAND",
+      command: { type: "user_message", content: "hi", session_id: "" },
+    });
+    expect(next).not.toBe(data);
+    expect(next.lastStatus).toBe("running");
+    expect(next.messageHistory).toHaveLength(1);
+    expect(next.messageHistory[0]).toMatchObject({ type: "user_message", content: "hi" });
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST",
+      message: { type: "user_message", content: "hi" },
+    });
+  });
+
+  it("returns data unchanged and empty effects for user_message when lifecycle is closing", () => {
+    const data = { ...baseData(), lifecycle: "closing" as const };
+    const [next, effects] = sessionReducer(data, {
+      type: "INBOUND_COMMAND",
+      command: { type: "user_message", content: "hi", session_id: "" },
+    });
+    // Closed/closing: no-op — runtime will send targeted sendTo error
     expect(next).toBe(data);
     expect(effects).toHaveLength(0);
   });
 
-  it("returns BROADCAST error effect for user_message when lifecycle is closing", () => {
-    const data = { ...baseData(), lifecycle: "closing" as const };
-    const buffer = new TeamToolCorrelationBuffer();
-    const [next, effects] = sessionReducer(
-      data,
-      { type: "INBOUND_COMMAND", command: { type: "user_message", content: "hi", session_id: "" } },
-      buffer,
-    );
-    expect(next).toBe(data);
+  it("updates state.model and returns BROADCAST_SESSION_UPDATE for set_model", () => {
+    const data = baseData();
+    const [next, effects] = sessionReducer(data, {
+      type: "INBOUND_COMMAND",
+      command: { type: "set_model", model: "claude-opus-4-6" },
+    });
+    expect(next.state.model).toBe("claude-opus-4-6");
     expect(effects).toHaveLength(1);
-    expect(effects[0]).toMatchObject({ type: "BROADCAST", message: { type: "error" } });
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST_SESSION_UPDATE",
+      patch: { model: "claude-opus-4-6" },
+    });
+  });
+
+  it("trims messageHistory to config.maxMessageHistoryLength for user_message", () => {
+    const data = {
+      ...baseData(),
+      messageHistory: [{ type: "user_message", content: "old", timestamp: 1 }] as any,
+    };
+    const [next] = sessionReducer(
+      data,
+      {
+        type: "INBOUND_COMMAND",
+        command: { type: "user_message", content: "new", session_id: "" },
+      },
+      { maxMessageHistoryLength: 1 },
+    );
+    expect(next.messageHistory).toHaveLength(1);
+    expect(next.messageHistory[0]).toMatchObject({ content: "new" });
   });
 });

@@ -24,7 +24,6 @@ function createMockStorage(): SessionStorage {
 
 function createFactories(): SessionStoreFactories {
   return {
-    createCorrelationBuffer: () => ({ queue: vi.fn(), flush: vi.fn() }) as any,
     createRegistry: () =>
       ({
         registerFromCLI: vi.fn(),

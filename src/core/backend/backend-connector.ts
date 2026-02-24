@@ -219,8 +219,10 @@ export class BackendConnector {
   }
 
   private applySlashCommandsState(session: Session, commands: string[]): void {
-    const rt = this.runtime(session);
-    rt.setState({ ...rt.getState(), slash_commands: commands });
+    this.runtime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "STATE_PATCHED", patch: { slash_commands: commands } },
+    });
   }
 
   private applySlashRegistryCommands(session: Session, commands: string[]): void {

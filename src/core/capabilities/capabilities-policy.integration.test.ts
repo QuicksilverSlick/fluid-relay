@@ -11,8 +11,10 @@ import { CapabilitiesPolicy } from "./capabilities-policy.js";
 function createMockRuntime(session: any) {
   return {
     getState: () => session.data.state,
-    setState: (state: any) => {
-      session.data.state = state;
+    process: (event: any) => {
+      if (event.type === "SYSTEM_SIGNAL" && event.signal.kind === "STATE_PATCHED") {
+        session.data.state = { ...session.data.state, ...event.signal.patch };
+      }
     },
     getPendingInitialize: () => session.pendingInitialize,
     setPendingInitialize: (pi: any) => {
@@ -37,7 +39,7 @@ function createDeps(
   configOverrides?: Partial<ResolvedConfig>,
   runtimeOverrides?: {
     getState?: () => any;
-    setState?: (state: any) => void;
+    process?: (event: any) => void;
   },
 ) {
   const config = { ...DEFAULT_CONFIG, ...configOverrides };
@@ -567,8 +569,10 @@ describe("CapabilitiesPolicy", () => {
       let state = { ...session.state, skills: ["commit"] };
       const { protocol, broadcaster } = createDeps(undefined, {
         getState: () => state,
-        setState: (next: any) => {
-          state = next;
+        process: (event: any) => {
+          if (event.type === "SYSTEM_SIGNAL" && event.signal.kind === "STATE_PATCHED") {
+            state = { ...state, ...event.signal.patch };
+          }
         },
       });
 

@@ -13,7 +13,6 @@ import { vi } from "vitest";
 import type { SessionData } from "../core/session/session-data.js";
 import type { Session } from "../core/session/session-repository.js";
 import { makeDefaultState } from "../core/session/session-repository.js";
-import { TeamToolCorrelationBuffer } from "../core/team/team-tool-correlation.js";
 import type { AuthContext } from "../interfaces/auth.js";
 import type { WebSocketLike } from "../interfaces/transport.js";
 import type { PermissionRequest } from "../types/cli-messages.js";
@@ -97,6 +96,7 @@ export function createMockSession(
     "adapterSupportsSlashPassthrough",
     "adapterName",
     "backendSessionId",
+    "teamCorrelation",
   ];
 
   for (const key of dataKeys) {
@@ -114,6 +114,7 @@ export function createMockSession(
     queuedMessage: null,
     lastStatus: null,
     adapterSupportsSlashPassthrough: false,
+    teamCorrelation: new Map(),
     ...dataProps,
   };
 
@@ -134,7 +135,6 @@ export function createMockSession(
     anonymousCounter: 0,
     lastActivity: Date.now(),
     pendingInitialize: null,
-    teamCorrelationBuffer: new TeamToolCorrelationBuffer(),
     registry: {
       registerFromCLI: vi.fn(),
       registerSkills: vi.fn(),

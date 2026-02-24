@@ -17,7 +17,6 @@ import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionSnapshot, SessionState } from "../../types/session-state.js";
 import type { AdapterSlashExecutor } from "../interfaces/backend-adapter.js";
 import type { SlashCommandRegistry } from "../slash/slash-command-registry.js";
-import type { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import type { SessionData, SessionHandles } from "./session-data.js";
 
@@ -76,7 +75,6 @@ export function toPresenceEntry(id: ConsumerIdentity): {
 }
 
 export interface SessionStoreFactories {
-  createCorrelationBuffer: () => TeamToolCorrelationBuffer;
   createRegistry: () => SlashCommandRegistry;
 }
 
@@ -172,6 +170,7 @@ export class SessionRepository {
         lastStatus: null,
         adapterName: state.adapterName,
         adapterSupportsSlashPassthrough: false,
+        teamCorrelation: new Map(),
       },
       backendSession: null,
       backendAbort: null,
@@ -180,7 +179,6 @@ export class SessionRepository {
       anonymousCounter: 0,
       lastActivity: Date.now(),
       pendingInitialize: null,
-      teamCorrelationBuffer: this.factories.createCorrelationBuffer(),
       registry: this.factories.createRegistry(),
       pendingPassthroughs: [],
       adapterSlashExecutor: null,

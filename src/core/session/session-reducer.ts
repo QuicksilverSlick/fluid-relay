@@ -23,6 +23,7 @@ import type { PermissionRequest } from "../../types/cli-messages.js";
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import { CONSUMER_PROTOCOL_VERSION } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
+import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import {
   mapAssistantMessage,
   mapAuthStatus,
@@ -34,7 +35,6 @@ import {
   mapToolProgress,
   mapToolUseSummary,
 } from "../messaging/consumer-message-mapper.js";
-import type { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { mapInboundCommandEffects } from "./effect-mapper.js";
 import type { Effect } from "./effect-types.js";
@@ -49,23 +49,25 @@ import { reduce } from "./session-state-reducer.js";
 // Public API
 // ---------------------------------------------------------------------------
 
+export interface ReducerConfig {
+  readonly maxMessageHistoryLength: number;
+}
+
 /**
  * Top-level session reducer.
  *
  * Pure function — no I/O, no closures over external state.
- * The `correlationBuffer` is a per-session mutable buffer passed in by the
- * runtime; it is the only "impure" parameter and is logged as a known
- * exception in the architecture doc (team tool correlation is inherently
- * stateful).
+ * teamCorrelation is now carried inside SessionData (data.teamCorrelation),
+ * making the reducer fully pure with no external mutable state.
  */
 export function sessionReducer(
   data: SessionData,
   event: SessionEvent,
-  correlationBuffer: TeamToolCorrelationBuffer,
+  config: ReducerConfig = { maxMessageHistoryLength: Number.POSITIVE_INFINITY },
 ): [SessionData, Effect[]] {
   switch (event.type) {
     case "BACKEND_MESSAGE":
-      return reduceBackendMessage(data, event.message, correlationBuffer);
+      return reduceBackendMessage(data, event.message, config);
 
     case "SYSTEM_SIGNAL":
       return reduceSystemSignal(data, event.signal);
@@ -73,7 +75,7 @@ export function sessionReducer(
     case "INBOUND_COMMAND":
       // Pure data side of inbound commands.
       // I/O side (backend sends, slash execution) stays in SessionRuntime.
-      return reduceInboundCommand(data, event.command.type);
+      return reduceInboundCommand(data, event.command, config);
   }
 }
 
@@ -82,12 +84,36 @@ export function sessionReducer(
 // ---------------------------------------------------------------------------
 
 /**
- * Apply a SystemSignal to SessionData — only lifecycle transitions.
+ * Apply a SystemSignal to SessionData.
+ *
+ * Data-patch signals (STATE_PATCHED, LAST_STATUS_UPDATED, QUEUED_MESSAGE_UPDATED,
+ * MODEL_UPDATED) are handled first. All other signals are lifecycle-only transitions.
  *
  * Returns the same data reference if nothing changed (cheap equality check
  * for the caller's markDirty() guard).
  */
 function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionData, Effect[]] {
+  // Data-patch signals — no lifecycle transition
+  switch (signal.kind) {
+    case "STATE_PATCHED":
+      return [{ ...data, state: { ...data.state, ...signal.patch } }, []];
+    case "LAST_STATUS_UPDATED":
+      return [{ ...data, lastStatus: signal.status }, []];
+    case "QUEUED_MESSAGE_UPDATED":
+      return [{ ...data, queuedMessage: signal.message }, []];
+    case "MODEL_UPDATED": {
+      const newState = { ...data.state, model: signal.model };
+      const effects: Effect[] = [
+        {
+          type: "BROADCAST_SESSION_UPDATE",
+          patch: { model: signal.model },
+        },
+      ];
+      return [{ ...data, state: newState }, effects];
+    }
+  }
+
+  // Lifecycle-only signals
   const next = lifecycleForSignal(data.lifecycle, signal);
   if (!next || !isLifecycleTransitionAllowed(data.lifecycle, next)) {
     return [data, []];
@@ -115,6 +141,12 @@ function lifecycleForSignal(current: LifecycleState, signal: SystemSignal): Life
     case "CAPABILITIES_READY":
       // No pure data change for these — handled by runtime orchestration.
       return null;
+    // Data-patch signals handled above — not lifecycle transitions
+    case "STATE_PATCHED":
+    case "LAST_STATUS_UPDATED":
+    case "QUEUED_MESSAGE_UPDATED":
+    case "MODEL_UPDATED":
+      return null;
   }
 }
 
@@ -125,21 +157,69 @@ function lifecycleForSignal(current: LifecycleState, signal: SystemSignal): Life
 /**
  * Apply the pure data mutations for an inbound command.
  *
- * This only handles the parts of inbound command processing that are pure:
- *   - Generating error effects for closed/closing sessions
- *   - No state mutations for most commands (the impure I/O side stays in runtime)
+ * Handles the pure-state side of inbound commands:
+ *   - `user_message`: sets lastStatus="running", appends to messageHistory, trims history.
+ *     Returns `[data, []]` unchanged for closed/closing sessions — the runtime detects
+ *     the no-op and sends a targeted `sendTo` error to the requesting WebSocket.
+ *   - `set_model`: updates state.model, returns BROADCAST_SESSION_UPDATE effect.
+ *   - Other commands: delegates to mapInboundCommandEffects for any pure effects
+ *     (e.g., error for set_adapter).
  *
- * Note: Most inbound command handling (sending to backend, slash execution,
- * queue management) requires handles that aren't serializable — those stay in
- * SessionRuntime.handleInboundCommand(). This function produces the Effects
- * that describe the pure output of the command.
+ * I/O side (backend sends, lifecycle transition, slash execution, queue management)
+ * stays in SessionRuntime.handleInboundCommand().
  */
-function reduceInboundCommand(data: SessionData, commandType: string): [SessionData, Effect[]] {
-  const effects = mapInboundCommandEffects(commandType, {
-    sessionId: "", // sessionId not needed for pure effect mapping
-    lifecycle: data.lifecycle,
-  });
-  return [data, effects];
+function reduceInboundCommand(
+  data: SessionData,
+  command: InboundCommand,
+  config: ReducerConfig,
+): [SessionData, Effect[]] {
+  switch (command.type) {
+    case "user_message": {
+      // Closed/closing: no state change — runtime will send targeted error via sendTo(ws).
+      if (data.lifecycle === "closing" || data.lifecycle === "closed") {
+        return [data, []];
+      }
+      const userMsg: ConsumerMessage = {
+        type: "user_message",
+        content: command.content,
+        timestamp: Date.now(),
+      };
+      const nextHistory = trimHistory(
+        [...data.messageHistory, userMsg],
+        config.maxMessageHistoryLength,
+      );
+      const nextData: SessionData = {
+        ...data,
+        lastStatus: "running",
+        messageHistory: nextHistory,
+      };
+      return [nextData, [{ type: "BROADCAST", message: userMsg }]];
+    }
+
+    case "set_model": {
+      const nextData: SessionData = {
+        ...data,
+        state: { ...data.state, model: command.model },
+      };
+      return [
+        nextData,
+        [
+          {
+            type: "BROADCAST_SESSION_UPDATE",
+            patch: { model: command.model } as Partial<SessionState>,
+          },
+        ],
+      ];
+    }
+
+    default: {
+      const effects = mapInboundCommandEffects(command.type, {
+        sessionId: "", // sessionId not needed for pure effect mapping
+        lifecycle: data.lifecycle,
+      });
+      return [data, effects];
+    }
+  }
 }
 
 // Public API
@@ -149,24 +229,25 @@ function reduceInboundCommand(data: SessionData, commandType: string): [SessionD
  * Outer reducer — operates on full SessionData.
  * Returns `[nextData, effects]` where effects describe all side effects to
  * be executed by the caller (broadcasts, event emissions, etc.).
- *
- * @param correlationBuffer — per-session buffer from session.teamCorrelationBuffer.
- *   Callers (SessionRuntime) must provide this; the reducer itself stays pure.
  */
 function reduceBackendMessage(
   data: SessionData,
   message: UnifiedMessage,
-  correlationBuffer: TeamToolCorrelationBuffer,
+  config: ReducerConfig,
 ): [SessionData, Effect[]] {
-  const nextState = reduce(data.state, message, correlationBuffer);
+  const [nextState, nextCorrelation] = reduce(data.state, message, data.teamCorrelation);
   const nextLastStatus = reduceLastStatus(data.lastStatus, message);
   const nextLifecycle = reduceLifecycle(data.lifecycle, message);
-  const nextMessageHistory = reduceMessageHistory(data.messageHistory, message);
+  const nextMessageHistory = trimHistory(
+    reduceMessageHistory(data.messageHistory, message),
+    config.maxMessageHistoryLength,
+  );
   const nextBackendSessionId = reduceBackendSessionId(data.backendSessionId, message);
   const nextPendingPermissions = reducePendingPermissions(data.pendingPermissions, message);
 
   const changed =
     nextState !== data.state ||
+    nextCorrelation !== data.teamCorrelation ||
     nextLastStatus !== data.lastStatus ||
     nextLifecycle !== data.lifecycle ||
     nextMessageHistory !== data.messageHistory ||
@@ -177,6 +258,7 @@ function reduceBackendMessage(
     ? {
         ...data,
         state: nextState,
+        teamCorrelation: nextCorrelation,
         lastStatus: nextLastStatus,
         lifecycle: nextLifecycle,
         messageHistory: nextMessageHistory,
@@ -465,4 +547,11 @@ function reduceMessageHistory(
   }
 
   return current;
+}
+
+function trimHistory(
+  history: readonly ConsumerMessage[],
+  maxLen: number,
+): readonly ConsumerMessage[] {
+  return history.length > maxLen ? history.slice(-maxLen) : history;
 }

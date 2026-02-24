@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createUnifiedMessage } from "../types/unified-message.js";
 import { executeEffects } from "./effect-executor.js";
 import type { Session } from "./session-repository.js";
 
@@ -14,6 +15,8 @@ function makeDeps() {
     },
     emitEvent: vi.fn(),
     queueHandler: { autoSendQueuedMessage: vi.fn() },
+    backendConnector: { sendToBackend: vi.fn() },
+    store: { persist: vi.fn() },
   };
 }
 
@@ -99,6 +102,30 @@ describe("executeEffects", () => {
     executeEffects([], makeSession(), deps);
     expect(deps.broadcaster.broadcast).not.toHaveBeenCalled();
     expect(deps.emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("SEND_TO_BACKEND effect calls backendConnector.sendToBackend", () => {
+    const deps = makeDeps();
+    const session = makeSession("s1");
+    const msg = createUnifiedMessage({
+      type: "user_message",
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+      metadata: {},
+    });
+
+    executeEffects([{ type: "SEND_TO_BACKEND", message: msg }], session, deps);
+
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(session, msg);
+  });
+
+  it("PERSIST_NOW effect calls store.persist", () => {
+    const deps = makeDeps();
+    const session = makeSession("s1");
+
+    executeEffects([{ type: "PERSIST_NOW" }], session, deps);
+
+    expect(deps.store.persist).toHaveBeenCalledWith(session);
   });
 
   it("executes multiple effects in order", () => {

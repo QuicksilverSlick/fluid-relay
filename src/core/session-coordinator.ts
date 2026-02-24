@@ -79,7 +79,6 @@ import {
 import { SlashCommandExecutor } from "./slash/slash-command-executor.js";
 import { SlashCommandRegistry } from "./slash/slash-command-registry.js";
 import { SlashCommandService } from "./slash/slash-command-service.js";
-import { TeamToolCorrelationBuffer } from "./team/team-tool-correlation.js";
 import type { UnifiedMessage } from "./types/unified-message.js";
 
 /**
@@ -199,7 +198,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
 
     // ── Session store ────────────────────────────────────────────────────────
     this.store = new SessionRepository(options.storage ?? null, {
-      createCorrelationBuffer: () => new TeamToolCorrelationBuffer(),
       createRegistry: () => new SlashCommandRegistry(),
     });
 
@@ -225,8 +223,11 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
 
     this.gitTracker = new GitInfoTracker(this.gitResolver, {
       getState: (session: Session) => this.getOrCreateRuntime(session).getState(),
-      setState: (session: Session, state: SessionData["state"]) =>
-        this.getOrCreateRuntime(session).setState(state),
+      patchState: (session: Session, patch: Partial<SessionData["state"]>) =>
+        this.getOrCreateRuntime(session).process({
+          type: "SYSTEM_SIGNAL",
+          signal: { kind: "STATE_PATCHED", patch },
+        }),
     });
 
     // ── Message plane ────────────────────────────────────────────────────────

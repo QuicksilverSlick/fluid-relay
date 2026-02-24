@@ -12,6 +12,7 @@
 
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
+import type { UnifiedMessage } from "../types/unified-message.js";
 
 export type Effect =
   /** Broadcast a consumer message to all connected consumers. */
@@ -23,4 +24,8 @@ export type Effect =
   /** Emit a domain event (type + payload). */
   | { type: "EMIT_EVENT"; eventType: string; payload: unknown }
   /** Auto-send a queued message now that the session is idle. */
-  | { type: "AUTO_SEND_QUEUED" };
+  | { type: "AUTO_SEND_QUEUED" }
+  /** Send a pre-normalized UnifiedMessage to the backend (no-op if no backend session). */
+  | { type: "SEND_TO_BACKEND"; message: UnifiedMessage }
+  /** Flush state to disk immediately (for critical user-visible writes). */
+  | { type: "PERSIST_NOW" };
