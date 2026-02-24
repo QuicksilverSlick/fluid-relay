@@ -721,8 +721,6 @@ export class SessionRuntime {
     }
 
     this.emitTeamEvents(prevData.state.team);
-
-    this.applyLifecycleFromBackendMessage(msg);
   }
 
   private orchestrateSessionInit(msg: UnifiedMessage): void {
@@ -787,17 +785,9 @@ export class SessionRuntime {
   }
 
   private orchestrateResult(_msg: UnifiedMessage): void {
-    // Re-resolve git info (first-turn event + auto-send handled by effects)
+    // refreshGitInfo already calls patchState → process(STATE_PATCHED) internally.
     const gitUpdate = this.deps.gitTracker.refreshGitInfo(this.session);
     if (gitUpdate) {
-      this.session = {
-        ...this.session,
-        data: {
-          ...this.session.data,
-          state: { ...this.session.data.state, ...gitUpdate },
-        },
-      };
-      // Broadcast update to consumers
       this.deps.broadcaster.broadcast(this.session, {
         type: "session_update",
         session: gitUpdate,
@@ -824,30 +814,6 @@ export class SessionRuntime {
 
   private handleSlashCommand(msg: Extract<InboundCommand, { type: "slash_command" }>): void {
     this.deps.slashService.handleInbound(this.session, msg);
-  }
-
-  private applyLifecycleFromBackendMessage(msg: UnifiedMessage): void {
-    if (msg.type === "status_change") {
-      const status = typeof msg.metadata.status === "string" ? msg.metadata.status : null;
-      if (status === "idle") {
-        this.transitionLifecycle("idle", "backend:status_change:idle");
-      } else if (status === "running" || status === "compacting") {
-        this.transitionLifecycle("active", `backend:status_change:${status}`);
-      }
-      return;
-    }
-
-    if (msg.type === "result") {
-      this.transitionLifecycle("idle", "backend:result");
-      return;
-    }
-
-    if (msg.type === "stream_event") {
-      const event = msg.metadata.event as { type?: unknown } | undefined;
-      if (event?.type === "message_start" && !msg.metadata.parent_tool_use_id) {
-        this.transitionLifecycle("active", "backend:stream_event:message_start");
-      }
-    }
   }
 
   private touchActivity(): void {

@@ -1373,7 +1373,7 @@ describe("SessionRuntime", () => {
   // orchestrateResult — git update broadcast branch
   // ---------------------------------------------------------------------------
 
-  it("broadcasts git update and updates state when refreshGitInfo returns truthy", () => {
+  it("broadcasts git update when refreshGitInfo returns truthy", () => {
     const session = createMockSession({ id: "s1" });
     const gitUpdate = { branch: "feature/new", repoRoot: "/repo" };
     const deps = makeDeps({
@@ -1394,7 +1394,8 @@ describe("SessionRuntime", () => {
       }),
     });
 
-    expect(runtime.getState().branch).toBe("feature/new");
+    // State update is handled internally by gitTracker.refreshGitInfo → patchState → process(STATE_PATCHED).
+    // The mock doesn't dispatch that signal, so we only assert the broadcast here.
     expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }), {
       type: "session_update",
       session: gitUpdate,
