@@ -11,14 +11,15 @@
 /** The active E2E test profile. */
 export type E2EProfile = "mock" | "real-smoke" | "real-full";
 
-function normalizeProfile(value: string | undefined): E2EProfile {
+function normalizeProfile(value: string | undefined): E2EProfile | undefined {
   if (value === "real-smoke") return "real-smoke";
+  if (value === "real-full") return "real-full";
   if (value === "mock") return "mock";
-  return "real-full";
+  return undefined;
 }
 
 /** Read the E2E profile from the `E2E_PROFILE` environment variable. */
-export function getE2EProfile(): E2EProfile {
+export function getE2EProfile(): E2EProfile | undefined {
   return normalizeProfile(process.env.E2E_PROFILE);
 }
 

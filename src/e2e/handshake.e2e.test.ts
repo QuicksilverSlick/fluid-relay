@@ -8,7 +8,8 @@ describe("E2E Real CLI handshake smoke", () => {
 
   it("runs under real profile", () => {
     const profile = getE2EProfile();
-    expect(["real-smoke", "real-full"]).toContain(profile);
+    // In e2e tests, undefined (not set) is treated as real-full default
+    expect(["real-smoke", "real-full", undefined]).toContain(profile);
   });
 
   it.runIf(prereqs.ok)("spawns claude --version and exits cleanly", async () => {

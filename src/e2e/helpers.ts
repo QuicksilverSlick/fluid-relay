@@ -29,7 +29,9 @@ export function getTestRunConditions(prereqs: BackendPrereqState) {
   const profile = getE2EProfile();
   const canBindLocalhost = canBindLocalhostSync();
   const runSmoke = prereqs.ok && canBindLocalhost;
-  const runFull = runSmoke && prereqs.canRunPromptTests && profile === "real-full";
+  // Default to real-full if no profile is specified (profile === undefined)
+  const isFullProfile = profile === "real-full" || profile === undefined;
+  const runFull = runSmoke && prereqs.canRunPromptTests && isFullProfile;
   return { runSmoke, runFull };
 }
 
