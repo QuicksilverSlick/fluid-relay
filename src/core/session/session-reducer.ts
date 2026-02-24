@@ -115,7 +115,10 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
 
   // Signals with custom effects but no lifecycle change
   if (signal.kind === "BACKEND_RELAUNCH_NEEDED") {
-    return [data, [{ type: "EMIT_EVENT", eventType: "backend:relaunch_needed", payload: {} }]];
+    return [data, [
+      { type: "EMIT_EVENT", eventType: "backend:relaunch_needed", payload: {} },
+      { type: "BROADCAST", message: { type: "cli_disconnected" } }
+    ]];
   }
 
   if (signal.kind === "SLASH_PASSTHROUGH_RESULT") {
