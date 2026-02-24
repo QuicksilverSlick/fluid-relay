@@ -785,17 +785,9 @@ export class SessionRuntime {
   }
 
   private orchestrateResult(_msg: UnifiedMessage): void {
-    // Re-resolve git info (first-turn event + auto-send handled by effects)
+    // refreshGitInfo already calls patchState → process(STATE_PATCHED) internally.
     const gitUpdate = this.deps.gitTracker.refreshGitInfo(this.session);
     if (gitUpdate) {
-      this.session = {
-        ...this.session,
-        data: {
-          ...this.session.data,
-          state: { ...this.session.data.state, ...gitUpdate },
-        },
-      };
-      // Broadcast update to consumers
       this.deps.broadcaster.broadcast(this.session, {
         type: "session_update",
         session: gitUpdate,
