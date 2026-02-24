@@ -88,7 +88,13 @@ export class GitInfoTracker {
     const state = this.getState(session);
     if (!state.cwd || !this.gitResolver) return null;
 
-    const gitInfo = this.gitResolver.resolve(state.cwd);
+    let gitInfo: GitInfo | null;
+    try {
+      gitInfo = this.gitResolver.resolve(state.cwd);
+    } catch {
+      // Best-effort: git resolution failure should never crash consumer connections
+      return null;
+    }
     if (!gitInfo) return null;
 
     const changed =

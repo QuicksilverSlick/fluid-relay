@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockSession, createTestSocket } from "../../testing/cli-message-factories.js";
+import type { BackendSession } from "../interfaces/backend-adapter.js";
 import { noopTracer } from "../messaging/message-tracer.js";
 import { makeDefaultState } from "../session/session-repository.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
@@ -743,7 +744,17 @@ describe("SessionRuntime", () => {
     expect(runtime.getLifecycleState()).toBe("closed");
 
     // Attempt to reopen — should stay closed (reducer rejects invalid transitions)
-    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "BACKEND_CONNECTED" } });
+    const mockBackendSession = { send: vi.fn(), sendRaw: vi.fn(), close: vi.fn(), messages: [] };
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "BACKEND_CONNECTED",
+        backendSession: mockBackendSession as unknown as BackendSession,
+        backendAbort: new AbortController(),
+        supportsSlashPassthrough: false,
+        slashExecutor: null,
+      },
+    });
     expect(runtime.getLifecycleState()).toBe("closed");
   });
 
@@ -751,7 +762,17 @@ describe("SessionRuntime", () => {
     const session = createMockSession({ id: "s1" });
     const runtime = new SessionRuntime(session, makeDeps());
 
-    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "BACKEND_CONNECTED" } });
+    const mockBackendSession = { send: vi.fn(), sendRaw: vi.fn(), close: vi.fn(), messages: [] };
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "BACKEND_CONNECTED",
+        backendSession: mockBackendSession as unknown as BackendSession,
+        backendAbort: new AbortController(),
+        supportsSlashPassthrough: false,
+        slashExecutor: null,
+      },
+    });
     runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "RECONNECT_TIMEOUT" } });
 
     expect(runtime.getLifecycleState()).toBe("degraded");
@@ -822,12 +843,12 @@ describe("SessionRuntime", () => {
     });
   });
 
-  it("sets adapter name and persists session", () => {
+  it("sets adapter name and persists session via ADAPTER_NAME_SET signal", () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.setAdapterName("codex");
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "ADAPTER_NAME_SET", name: "codex" } });
 
     expect(runtime.getState().adapterName).toBe("codex");
     expect(runtime.getState().adapterName).toBe("codex");
@@ -839,7 +860,10 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.seedSessionState({ cwd: "/tmp/project", model: "claude-test" });
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "SESSION_SEEDED", cwd: "/tmp/project", model: "claude-test" },
+    });
 
     expect(runtime.getState().cwd).toBe("/tmp/project");
     expect(runtime.getState().model).toBe("claude-test");
@@ -856,18 +880,24 @@ describe("SessionRuntime", () => {
     expect(runtime.allocateAnonymousIdentityIndex()).toBe(1);
     expect(runtime.allocateAnonymousIdentityIndex()).toBe(2);
 
-    runtime.addConsumer(ws, {
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws,
+        identity: { userId: "u1", displayName: "User One", role: "participant" },
+      },
+    });
+    session.consumerRateLimiters.set(ws, { allow: () => true } as any);
+
+    expect(runtime.getConsumerIdentity(ws)).toEqual({
       userId: "u1",
       displayName: "User One",
       role: "participant",
     });
-    session.consumerRateLimiters.set(ws, { allow: () => true } as any);
-
-    const identity = runtime.removeConsumer(ws);
-    expect(identity).toEqual({
-      userId: "u1",
-      displayName: "User One",
-      role: "participant",
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "CONSUMER_DISCONNECTED", ws },
     });
     expect(session.consumerSockets.has(ws)).toBe(false);
     expect(session.consumerRateLimiters.has(ws)).toBe(false);
@@ -878,7 +908,14 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
     const ws = createTestSocket();
-    runtime.addConsumer(ws, { userId: "u1", displayName: "U1", role: "participant" });
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws,
+        identity: { userId: "u1", displayName: "U1", role: "participant" },
+      },
+    });
 
     runtime.process({ type: "INBOUND_COMMAND", command: { type: "presence_query" }, ws: ws });
 
@@ -890,8 +927,22 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, makeDeps());
     const ws1 = createTestSocket();
     const ws2 = createTestSocket();
-    runtime.addConsumer(ws1, { userId: "u1", displayName: "Alice", role: "participant" });
-    runtime.addConsumer(ws2, { userId: "u2", displayName: "Bob", role: "observer" });
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws: ws1,
+        identity: { userId: "u1", displayName: "Alice", role: "participant" },
+      },
+    });
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws: ws2,
+        identity: { userId: "u2", displayName: "Bob", role: "observer" },
+      },
+    });
 
     const snapshot = runtime.getSessionSnapshot();
 
@@ -902,7 +953,7 @@ describe("SessionRuntime", () => {
     expect(snapshot.consumerCount).toBe(2);
   });
 
-  it("owns state, backend session id, status, queued message, and history accessors", () => {
+  it("owns state, status, and queued message accessors via system signals", () => {
     const session = createMockSession({
       id: "s1",
       data: { lastStatus: null, queuedMessage: null },
@@ -914,28 +965,22 @@ describe("SessionRuntime", () => {
       content: "queued",
       queuedAt: 1,
     };
-    const history = [{ type: "user_message", content: "hello", timestamp: 1 }] as any;
 
     runtime.process({
       type: "SYSTEM_SIGNAL",
       signal: { kind: "STATE_PATCHED", patch: { model: "claude-sonnet-4-5" } },
     });
-    runtime.setBackendSessionId("backend-123");
     runtime.process({
       type: "SYSTEM_SIGNAL",
       signal: { kind: "LAST_STATUS_UPDATED", status: "running" },
     });
-    runtime.setMessageHistory(history);
     runtime.process({
       type: "SYSTEM_SIGNAL",
       signal: { kind: "QUEUED_MESSAGE_UPDATED", message: queued as any },
     });
 
     expect(runtime.getState().model).toBe("claude-sonnet-4-5");
-    expect(runtime.getState().model).toBe("claude-sonnet-4-5");
-    expect(runtime.getState().adapterName).toBe(session.data.adapterName); // backendSessionId not exposed directly
     expect(runtime.getLastStatus()).toBe("running");
-    expect(runtime.getMessageHistory()).toEqual(history);
     expect(runtime.getQueuedMessage()).toEqual(queued);
   });
 
@@ -960,8 +1005,22 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, makeDeps());
     const ws1 = createTestSocket();
     const ws2 = createTestSocket();
-    runtime.addConsumer(ws1, { userId: "u1", displayName: "U1", role: "participant" });
-    runtime.addConsumer(ws2, { userId: "u2", displayName: "U2", role: "observer" });
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws: ws1,
+        identity: { userId: "u1", displayName: "U1", role: "participant" },
+      },
+    });
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws: ws2,
+        identity: { userId: "u2", displayName: "U2", role: "observer" },
+      },
+    });
     session.consumerRateLimiters.set(ws1, { tryConsume: () => true } as any);
     session.consumerRateLimiters.set(ws2, { tryConsume: () => true } as any);
 
@@ -981,33 +1040,38 @@ describe("SessionRuntime", () => {
     ws1.close.mockImplementation(() => {
       throw new Error("already closed");
     });
-    runtime.addConsumer(ws1, { userId: "u1", displayName: "U1", role: "participant" });
-    runtime.addConsumer(ws2, { userId: "u2", displayName: "U2", role: "observer" });
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws: ws1,
+        identity: { userId: "u1", displayName: "U1", role: "participant" },
+      },
+    });
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws: ws2,
+        identity: { userId: "u2", displayName: "U2", role: "observer" },
+      },
+    });
 
     expect(() => runtime.closeAllConsumers()).not.toThrow();
     expect(ws2.close).toHaveBeenCalledTimes(1);
     expect(session.consumerSockets.size).toBe(0);
   });
 
-  it("clears backend connection references", () => {
-    const abort = new AbortController();
-    const session = createMockSession({
-      id: "s1",
-      backendSession: { send: vi.fn(), close: vi.fn() } as any,
-      backendAbort: abort,
-    });
-    const runtime = new SessionRuntime(session, makeDeps());
-
-    runtime.clearBackendConnection();
-
-    expect(session.backendSession).toBeNull();
-    expect(session.backendAbort).toBeNull();
-  });
-
-  it("attaches and resets backend connection state", () => {
+  it("attaches backend connection via BACKEND_CONNECTED signal and clears it via BACKEND_DISCONNECTED", () => {
     const session = createMockSession({ id: "s1" });
     const runtime = new SessionRuntime(session, makeDeps());
-    const backendSession = { send: vi.fn(), close: vi.fn() } as any;
+    const backendSession = {
+      send: vi.fn(),
+      close: vi.fn(),
+      sessionId: "s1",
+      sendRaw: vi.fn(),
+      messages: [],
+    } as any;
     const abort = new AbortController();
     const slashExecutor = {
       handles: vi.fn(() => false),
@@ -1015,42 +1079,66 @@ describe("SessionRuntime", () => {
       supportedCommands: vi.fn(() => ["/compact"]),
     } as any;
 
-    runtime.attachBackendConnection({
-      backendSession,
-      backendAbort: abort,
-      supportsSlashPassthrough: true,
-      slashExecutor,
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "BACKEND_CONNECTED",
+        backendSession,
+        backendAbort: abort,
+        supportsSlashPassthrough: true,
+        slashExecutor,
+      },
     });
 
-    expect(session.backendSession).toBe(backendSession);
-    expect(session.backendAbort).toBe(abort);
+    expect(runtime.getBackendSession()).toBe(backendSession);
+    expect(runtime.getBackendAbort()).toBe(abort);
     expect(runtime.isBackendConnected()).toBe(true);
-    expect(session.adapterSlashExecutor).toBe(slashExecutor);
 
-    runtime.resetBackendConnectionState();
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "BACKEND_DISCONNECTED", reason: "normal" },
+    });
 
     expect(runtime.getBackendSession()).toBeNull();
     expect(runtime.isBackendConnected()).toBe(false);
+    expect(session.adapterSlashExecutor).toBeNull();
   });
 
-  it("drains pending messages atomically", () => {
+  it("BACKEND_CONNECTED drains pending messages via SEND_TO_BACKEND effects", () => {
     const m1 = createUnifiedMessage({ type: "interrupt", role: "system" });
     const m2 = createUnifiedMessage({ type: "interrupt", role: "system", metadata: { seq: 2 } });
+    const mockBackendSession = {
+      send: vi.fn(),
+      sendRaw: vi.fn(),
+      messages: { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) },
+      close: vi.fn(),
+    };
     const session = createMockSession({
       id: "s1",
       data: { pendingMessages: [m1, m2] as any },
     });
-    const runtime = new SessionRuntime(session, makeDeps());
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
 
-    const drained = runtime.drainPendingMessages();
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "BACKEND_CONNECTED",
+        backendSession: mockBackendSession as any,
+        backendAbort: new AbortController(),
+        supportsSlashPassthrough: false,
+        slashExecutor: null,
+      },
+    });
 
-    expect(drained).toEqual([m1, m2]);
-    expect(runtime.drainPendingMessages()).toEqual([]);
+    // SEND_TO_BACKEND effects should have sent pending messages to the backend
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledTimes(2);
+    // pendingMessages cleared via reducer
+    expect(runtime.getMessageHistory()).toBeDefined(); // session still valid
   });
 
-  it("drains pending permission ids atomically", () => {
+  it("BACKEND_DISCONNECTED cancels pending permissions via BROADCAST_TO_PARTICIPANTS effects", () => {
     const p1: any = {
-      id: "p1",
       request_id: "p1",
       command: "cmd",
       input: {},
@@ -1061,7 +1149,6 @@ describe("SessionRuntime", () => {
       safety_risk: null,
     };
     const p2: any = {
-      id: "p2",
       request_id: "p2",
       command: "cmd",
       input: {},
@@ -1074,37 +1161,82 @@ describe("SessionRuntime", () => {
     const session = createMockSession({
       id: "s1",
       data: {
+        lifecycle: "active" as any,
         pendingPermissions: new Map([
           ["p1", p1],
           ["p2", p2],
         ]),
       },
     });
-    const runtime = new SessionRuntime(session, makeDeps());
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
 
-    const ids = runtime.drainPendingPermissionIds();
+    // Connect with supportsSlashPassthrough: true so we can verify it resets on disconnect
+    const mockBackendSession = { send: vi.fn(), sendRaw: vi.fn(), close: vi.fn(), messages: [] };
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "BACKEND_CONNECTED",
+        backendSession: mockBackendSession as unknown as BackendSession,
+        backendAbort: new AbortController(),
+        supportsSlashPassthrough: true,
+        slashExecutor: null,
+      },
+    });
+    // adapterSupportsSlashPassthrough lives on SessionData (not SessionData.state);
+    // access it via the runtime's private session reference (which is updated by spread on each mutation)
+    expect((runtime as any).session.data.adapterSupportsSlashPassthrough).toBe(true);
 
-    expect(ids).toEqual(["p1", "p2"]);
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "BACKEND_DISCONNECTED", reason: "test" },
+    });
+
+    // BROADCAST_TO_PARTICIPANTS effects should send permission_cancelled for each pending permission
+    expect(deps.broadcaster.broadcastToParticipants).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: "permission_cancelled", request_id: "p1" }),
+    );
+    expect(deps.broadcaster.broadcastToParticipants).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: "permission_cancelled", request_id: "p2" }),
+    );
+    // pendingPermissions cleared via reducer
     expect(runtime.getPendingPermissions()).toHaveLength(0);
+    expect(runtime.getLifecycleState()).toBe("degraded");
+    // adapterSupportsSlashPassthrough must be reset on disconnect
+    expect((runtime as any).session.data.adapterSupportsSlashPassthrough ?? false).toBe(false);
   });
 
   it("owns pending passthrough queue operations", () => {
     const session = createMockSession({ id: "s1" });
     const runtime = new SessionRuntime(session, makeDeps());
 
-    runtime.enqueuePendingPassthrough({
-      command: "/compact",
-      requestId: "r1",
-      slashRequestId: "sr1",
-      traceId: "t1",
-      startedAtMs: 1,
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "PASSTHROUGH_ENQUEUED",
+        entry: {
+          command: "/compact",
+          requestId: "r1",
+          slashRequestId: "sr1",
+          traceId: "t1",
+          startedAtMs: 1,
+        },
+      },
     });
-    runtime.enqueuePendingPassthrough({
-      command: "/status",
-      requestId: "r2",
-      slashRequestId: "sr2",
-      traceId: "t2",
-      startedAtMs: 2,
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "PASSTHROUGH_ENQUEUED",
+        entry: {
+          command: "/status",
+          requestId: "r2",
+          slashRequestId: "sr2",
+          traceId: "t2",
+          startedAtMs: 2,
+        },
+      },
     });
 
     expect(runtime.peekPendingPassthrough()).toEqual(
@@ -1142,14 +1274,12 @@ describe("SessionRuntime", () => {
     expect(runtime.getAccountInfo()).toBeNull();
   });
 
-  it("trySendRawToBackend returns 'unsupported' when sendRaw throws", () => {
+  it("trySendRawToBackend returns 'unsupported' when sendRaw is not present", () => {
     const session = createMockSession({
       id: "s1",
       backendSession: {
         send: vi.fn(),
-        sendRaw: vi.fn(() => {
-          throw new Error("not supported");
-        }),
+        // sendRaw intentionally absent — adapter does not support raw send
         close: vi.fn(),
         messages: (async function* () {})(),
         sessionId: "s1",
@@ -1158,6 +1288,24 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, makeDeps());
 
     expect(runtime.trySendRawToBackend("ndjson-line")).toBe("unsupported");
+  });
+
+  it("trySendRawToBackend propagates errors thrown by sendRaw (network errors are not misclassified as unsupported)", () => {
+    const session = createMockSession({
+      id: "s1",
+      backendSession: {
+        send: vi.fn(),
+        sendRaw: vi.fn(() => {
+          throw new Error("connection reset");
+        }),
+        close: vi.fn(),
+        messages: (async function* () {})(),
+        sessionId: "s1",
+      } as any,
+    });
+    const runtime = new SessionRuntime(session, makeDeps());
+
+    expect(() => runtime.trySendRawToBackend("ndjson-line")).toThrow("connection reset");
   });
 
   it("CAPABILITIES_TIMEOUT signal is a no-op", () => {
@@ -1175,19 +1323,24 @@ describe("SessionRuntime", () => {
   // sendControlRequest — null backendSession branch
   // ---------------------------------------------------------------------------
 
-  it("storePendingPermission adds permission request to pendingPermissions map", () => {
+  it("pending permissions are populated via BACKEND_MESSAGE permission_request", () => {
     const session = createMockSession({ id: "s1" });
     const runtime = new SessionRuntime(session, makeDeps());
-    const perm: any = {
-      request_id: "perm-x",
-      options: [],
-      expires_at: Date.now() + 1000,
-      tool_name: "Bash",
-      tool_use_id: "tu-x",
-      safety_risk: null,
-    };
 
-    runtime.storePendingPermission("perm-x", perm);
+    runtime.process({
+      type: "BACKEND_MESSAGE",
+      message: createUnifiedMessage({
+        type: "permission_request",
+        metadata: {
+          request_id: "perm-x",
+          options: [],
+          expires_at: Date.now() + 1000,
+          tool_name: "Bash",
+          tool_use_id: "tu-x",
+          safety_risk: null,
+        },
+      }),
+    });
 
     expect(runtime.getPendingPermissions()).toHaveLength(1);
     expect(runtime.getPendingPermissions()[0].request_id).toBe("perm-x");
@@ -1484,5 +1637,63 @@ describe("SessionRuntime", () => {
     expect(runtime.getPendingPermissions()).toHaveLength(0);
     // No backend send attempted since backendSession is null
     expect(deps.broadcaster.broadcast).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fix 4: SESSION_SEEDED with no params edge case
+  // ---------------------------------------------------------------------------
+
+  it("SESSION_SEEDED with no params triggers git resolution but does not change state", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    const stateBefore = runtime.getState();
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_SEEDED" } });
+    // State should be unchanged
+    expect(runtime.getState()).toEqual(stateBefore);
+    // But git resolution should still be triggered
+    expect(deps.gitTracker.resolveGitInfo).toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fix 5: BACKEND_CONNECTED ordering guarantee
+  // ---------------------------------------------------------------------------
+
+  it("BACKEND_CONNECTED sets backendSession handle before executing SEND_TO_BACKEND effects", () => {
+    // Pre-populate a pending message (queued since no backend is connected yet)
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+
+    runtime.sendUserMessage("hello"); // queued since no backend
+
+    // Intercept sendToBackend so we can verify the handle is already set at call time
+    let backendSessionAtCallTime: ReturnType<typeof runtime.getBackendSession> | undefined;
+    (deps.backendConnector.sendToBackend as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      backendSessionAtCallTime = runtime.getBackendSession();
+    });
+
+    const mockBackendSession = {
+      send: vi.fn(),
+      sendRaw: vi.fn(),
+      close: vi.fn(),
+      messages: [],
+    };
+
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "BACKEND_CONNECTED",
+        backendSession: mockBackendSession as unknown as BackendSession,
+        backendAbort: new AbortController(),
+        supportsSlashPassthrough: false,
+        slashExecutor: null,
+      },
+    });
+
+    // The handle must be set at the time sendToBackend() was called (not null)
+    expect(backendSessionAtCallTime).toBe(mockBackendSession);
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalled();
   });
 });

@@ -33,31 +33,8 @@ function makePassthrough(command: string, requestId = "req-1") {
 
 function createMockRuntime(session: any) {
   return {
-    attachBackendConnection: (params: any) => {
-      session.backendSession = params.backendSession;
-      session.backendAbort = params.backendAbort;
-      session.data.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
-      session.adapterSlashExecutor = params.slashExecutor;
-    },
-    resetBackendConnectionState: () => {
-      session.backendSession = null;
-      session.backendAbort = null;
-      session.data.backendSessionId = undefined;
-      session.data.adapterSupportsSlashPassthrough = false;
-      session.adapterSlashExecutor = null;
-    },
     getBackendSession: () => session.backendSession ?? null,
     getBackendAbort: () => session.backendAbort ?? null,
-    drainPendingMessages: () => {
-      const p = session.data.pendingMessages;
-      session.data.pendingMessages = [];
-      return p;
-    },
-    drainPendingPermissionIds: () => {
-      const ids = Array.from(session.data.pendingPermissions.keys());
-      session.data.pendingPermissions.clear();
-      return ids;
-    },
     peekPendingPassthrough: () => session.pendingPassthroughs[0],
     shiftPendingPassthrough: () => session.pendingPassthroughs.shift(),
     getState: () => session.data.state,
@@ -74,21 +51,32 @@ function buildConnectorDeps(
   adapter: InstanceType<typeof FailureInjectionBackendAdapter>,
   session: any,
   emitEvent = vi.fn(),
-  broadcaster = { broadcast: vi.fn(), broadcastToParticipants: vi.fn(), sendTo: vi.fn() } as any,
 ) {
-  const routeSystemSignal = vi.fn();
+  const routeSystemSignal = vi.fn((sess: any, signal: any) => {
+    if (signal.kind === "BACKEND_CONNECTED") {
+      sess.backendSession = signal.backendSession;
+      sess.backendAbort = signal.backendAbort;
+      sess.data.adapterSupportsSlashPassthrough = signal.supportsSlashPassthrough;
+      sess.adapterSlashExecutor = signal.slashExecutor;
+    } else if (signal.kind === "BACKEND_DISCONNECTED") {
+      sess.backendSession = null;
+      sess.backendAbort = null;
+      sess.data.backendSessionId = undefined;
+      sess.data.adapterSupportsSlashPassthrough = false;
+      sess.adapterSlashExecutor = null;
+    }
+  });
   const manager = new BackendConnector({
     adapter,
     adapterResolver: null,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
     metrics: null,
-    broadcaster,
     routeUnifiedMessage: vi.fn(),
     routeSystemSignal,
     emitEvent,
     getRuntime: () => createMockRuntime(session),
   });
-  return { manager, emitEvent, broadcaster, routeSystemSignal };
+  return { manager, emitEvent, routeSystemSignal };
 }
 
 async function waitForAssertion(assertFn: () => void, timeoutMs = 500): Promise<void> {
@@ -108,19 +96,9 @@ describe("BackendConnector failure injection", () => {
   it("emits disconnect and error events when backend stream fails", async () => {
     const adapter = new FailureInjectionBackendAdapter();
     const emitEvent = vi.fn();
-    const broadcaster = {
-      broadcast: vi.fn(),
-      broadcastToParticipants: vi.fn(),
-      sendTo: vi.fn(),
-    } as any;
 
     const session = createSession("sess-fi");
-    const { manager, routeSystemSignal } = buildConnectorDeps(
-      adapter,
-      session,
-      emitEvent,
-      broadcaster,
-    );
+    const { manager, routeSystemSignal } = buildConnectorDeps(adapter, session, emitEvent);
 
     await manager.connectBackend(session);
 
@@ -145,18 +123,8 @@ describe("BackendConnector failure injection", () => {
   it("drains pending passthroughs with slash_command_error when stream fails (lines 594-605)", async () => {
     const adapter = new FailureInjectionBackendAdapter();
     const emitEvent = vi.fn();
-    const broadcaster = {
-      broadcast: vi.fn(),
-      broadcastToParticipants: vi.fn(),
-      sendTo: vi.fn(),
-    } as any;
     const session = createSession("sess-drain-fail");
-    const { manager, routeSystemSignal } = buildConnectorDeps(
-      adapter,
-      session,
-      emitEvent,
-      broadcaster,
-    );
+    const { manager, routeSystemSignal } = buildConnectorDeps(adapter, session, emitEvent);
 
     // Pre-populate pending passthrough entries
     session.pendingPassthroughs.push(makePassthrough("/compact", "req-compact"));
@@ -179,18 +147,8 @@ describe("BackendConnector failure injection", () => {
   it("drains pending passthroughs with slash_command_error when stream ends unexpectedly (lines 619-630)", async () => {
     const adapter = new FailureInjectionBackendAdapter();
     const emitEvent = vi.fn();
-    const broadcaster = {
-      broadcast: vi.fn(),
-      broadcastToParticipants: vi.fn(),
-      sendTo: vi.fn(),
-    } as any;
     const session = createSession("sess-drain-end");
-    const { manager, routeSystemSignal } = buildConnectorDeps(
-      adapter,
-      session,
-      emitEvent,
-      broadcaster,
-    );
+    const { manager, routeSystemSignal } = buildConnectorDeps(adapter, session, emitEvent);
 
     session.pendingPassthroughs.push(makePassthrough("/status", "req-status"));
 

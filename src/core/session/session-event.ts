@@ -12,6 +12,7 @@
 import type { ConsumerIdentity } from "../../interfaces/auth.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { SessionState } from "../../types/session-state.js";
+import type { AdapterSlashExecutor, BackendSession } from "../interfaces/backend-adapter.js";
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import type { QueuedMessage } from "../session/session-repository.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
@@ -24,7 +25,13 @@ import type { UnifiedMessage } from "../types/unified-message.js";
  */
 export type SystemSignal =
   /** Backend adapter connected — hand off the BackendSession. */
-  | { kind: "BACKEND_CONNECTED" }
+  | {
+      kind: "BACKEND_CONNECTED";
+      backendSession: BackendSession;
+      backendAbort: AbortController;
+      supportsSlashPassthrough: boolean;
+      slashExecutor: AdapterSlashExecutor | null;
+    }
   /** Backend adapter disconnected unexpectedly (stream ended or error). */
   | { kind: "BACKEND_DISCONNECTED"; reason: string }
   /** A consumer WebSocket connected and was authenticated. */
@@ -55,6 +62,8 @@ export type SystemSignal =
   | { kind: "QUEUED_MESSAGE_UPDATED"; message: QueuedMessage | null }
   /** Optimistic model update with session_update broadcast (used by sendSetModel). */
   | { kind: "MODEL_UPDATED"; model: string }
+  /** Set the adapter name for the session (used during session creation / process spawn). */
+  | { kind: "ADAPTER_NAME_SET"; name: string }
   /** Slash passthrough command completed successfully. */
   | {
       kind: "SLASH_PASSTHROUGH_RESULT";
@@ -64,7 +73,20 @@ export type SystemSignal =
       source: "cli" | "emulated";
     }
   /** Slash passthrough command failed. */
-  | { kind: "SLASH_PASSTHROUGH_ERROR"; command: string; requestId?: string; error: string };
+  | { kind: "SLASH_PASSTHROUGH_ERROR"; command: string; requestId?: string; error: string }
+  /** A passthrough slash command was enqueued for the CLI. */
+  | {
+      kind: "PASSTHROUGH_ENQUEUED";
+      entry: {
+        command: string;
+        requestId?: string;
+        slashRequestId: string;
+        traceId: string;
+        startedAtMs: number;
+      };
+    }
+  /** Seed initial session state (cwd, model) and trigger git info resolution. */
+  | { kind: "SESSION_SEEDED"; cwd?: string; model?: string };
 
 /**
  * Discriminated union of all events that SessionRuntime.process() accepts.

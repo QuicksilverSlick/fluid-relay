@@ -4,12 +4,8 @@ import { BackendConnector } from "./backend-connector.js";
 
 function createMockRuntime() {
   return {
-    attachBackendConnection: vi.fn(),
-    resetBackendConnectionState: vi.fn(),
     getBackendSession: vi.fn(() => null),
     getBackendAbort: vi.fn(() => null),
-    drainPendingMessages: vi.fn(() => []),
-    drainPendingPermissionIds: vi.fn(() => []),
     peekPendingPassthrough: vi.fn(() => undefined),
     shiftPendingPassthrough: vi.fn(() => undefined),
     getState: vi.fn(() => ({ slash_commands: [] })),
@@ -41,11 +37,6 @@ function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnector
     adapterResolver: null,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
     metrics: null,
-    broadcaster: {
-      broadcast: vi.fn(),
-      broadcastToParticipants: vi.fn(),
-      sendTo: vi.fn(),
-    } as any,
     routeUnifiedMessage: vi.fn(),
     routeSystemSignal: vi.fn(),
     emitEvent: vi.fn(),
@@ -165,7 +156,6 @@ describe("BackendConnector", () => {
     const mockRuntime = createMockRuntime();
     mockRuntime.getBackendSession.mockReturnValue(backendSession);
     mockRuntime.getBackendAbort.mockReturnValue({ abort: vi.fn() } as any);
-    mockRuntime.drainPendingPermissionIds.mockReturnValue([]);
 
     const deps = createDeps({
       getRuntime: () => mockRuntime as any,

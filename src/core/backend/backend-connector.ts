@@ -16,7 +16,6 @@ import type { Logger } from "../../interfaces/logger.js";
 import type { MetricsCollector } from "../../interfaces/metrics.js";
 import type { CLIMessage } from "../../types/cli-messages.js";
 import type { BridgeEventMap } from "../../types/events.js";
-import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import { CLI_ADAPTER_NAMES, type CliAdapterName } from "../interfaces/adapter-names.js";
 import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter, BackendSession } from "../interfaces/backend-adapter.js";
@@ -38,7 +37,6 @@ export interface BackendConnectorDeps {
   adapterResolver: AdapterResolver | null;
   logger: Logger;
   metrics: MetricsCollector | null;
-  broadcaster: ConsumerBroadcaster;
   routeUnifiedMessage: (session: Session, msg: UnifiedMessage) => void;
   routeSystemSignal: (session: Session, signal: SystemSignal) => void;
   emitEvent: EmitEvent;
@@ -53,7 +51,6 @@ export class BackendConnector {
   private adapterResolver: AdapterResolver | null;
   private logger: Logger;
   private metrics: MetricsCollector | null;
-  private broadcaster: ConsumerBroadcaster;
   private routeUnifiedMessage: (session: Session, msg: UnifiedMessage) => void;
   private routeSystemSignal: (session: Session, signal: SystemSignal) => void;
   private emitEvent: EmitEvent;
@@ -66,7 +63,6 @@ export class BackendConnector {
     this.adapterResolver = deps.adapterResolver;
     this.logger = deps.logger;
     this.metrics = deps.metrics;
-    this.broadcaster = deps.broadcaster;
     this.routeUnifiedMessage = deps.routeUnifiedMessage;
     this.routeSystemSignal = deps.routeSystemSignal;
     this.emitEvent = deps.emitEvent;
@@ -198,22 +194,6 @@ export class BackendConnector {
     );
   }
 
-  private applyBackendConnectedState(
-    session: Session,
-    params: {
-      backendSession: BackendSession;
-      backendAbort: AbortController;
-      supportsSlashPassthrough: boolean;
-      slashExecutor: Session["adapterSlashExecutor"] | null;
-    },
-  ): void {
-    this.runtime(session).attachBackendConnection(params);
-  }
-
-  private applyBackendDisconnectedState(session: Session): void {
-    this.runtime(session).resetBackendConnectionState();
-  }
-
   private getBackendSessionRef(session: Session): BackendSession | null {
     return this.runtime(session).getBackendSession();
   }
@@ -231,14 +211,6 @@ export class BackendConnector {
 
   private applySlashRegistryCommands(session: Session, commands: string[]): void {
     this.runtime(session).registerSlashCommandNames(commands);
-  }
-
-  private drainPendingMessagesQueue(session: Session): UnifiedMessage[] {
-    return this.runtime(session).drainPendingMessages();
-  }
-
-  private drainPendingPermissionRequestIds(session: Session): string[] {
-    return this.runtime(session).drainPendingPermissionIds();
   }
 
   private peekPendingPassthroughEntry(
@@ -428,12 +400,6 @@ export class BackendConnector {
     }
 
     const abort = new AbortController();
-    this.applyBackendConnectedState(session, {
-      backendSession,
-      backendAbort: abort,
-      supportsSlashPassthrough: adapter.capabilities.slashCommands,
-      slashExecutor,
-    });
 
     this.logger.info(`Backend connected for session ${session.id} via ${adapter.name}`);
     this.metrics?.recordEvent({
@@ -441,18 +407,13 @@ export class BackendConnector {
       type: "backend:connected",
       sessionId: session.id,
     });
-    this.routeSystemSignal(session, { kind: "BACKEND_CONNECTED" });
-
-    // Flush any pending messages
-    const pendingMessages = this.drainPendingMessagesQueue(session);
-    if (pendingMessages.length > 0) {
-      this.logger.info(
-        `Flushing ${pendingMessages.length} queued message(s) for session ${session.id}`,
-      );
-      for (const msg of pendingMessages) {
-        backendSession.send(msg);
-      }
-    }
+    this.routeSystemSignal(session, {
+      kind: "BACKEND_CONNECTED",
+      backendSession,
+      backendAbort: abort,
+      supportsSlashPassthrough: adapter.capabilities.slashCommands,
+      slashExecutor,
+    });
 
     // Start consuming backend messages in the background
     this.startBackendConsumption(session, abort.signal);
@@ -467,7 +428,6 @@ export class BackendConnector {
     await backendSession.close().catch((err) => {
       this.logger.warn("Failed to close backend session", { sessionId: session.id, error: err });
     });
-    this.applyBackendDisconnectedState(session);
     this.passthroughTextBuffers.delete(session.id);
 
     this.logger.info(`Backend disconnected for session ${session.id}`);
@@ -477,8 +437,6 @@ export class BackendConnector {
       sessionId: session.id,
     });
     this.routeSystemSignal(session, { kind: "BACKEND_DISCONNECTED", reason: "normal" });
-
-    this.cancelPendingPermissions(session);
   }
 
   /** Whether a backend session is connected for a given session. */
@@ -501,17 +459,6 @@ export class BackendConnector {
         source: "sendToBackend",
         error: err instanceof Error ? err : new Error(String(err)),
         sessionId: session.id,
-      });
-    }
-  }
-
-  /** Cancel all pending permission requests and notify consumers. */
-  private cancelPendingPermissions(session: Session): void {
-    const reqIds = this.drainPendingPermissionRequestIds(session);
-    for (const reqId of reqIds) {
-      this.broadcaster.broadcastToParticipants(session, {
-        type: "permission_cancelled",
-        request_id: reqId,
       });
     }
   }
@@ -569,10 +516,8 @@ export class BackendConnector {
           });
           this.emitSlashSummary(sessionId, pending, "backend_error", "none", ["stream ended"]);
         }
-        this.applyBackendDisconnectedState(session);
         this.passthroughTextBuffers.delete(session.id);
         this.routeSystemSignal(session, { kind: "BACKEND_DISCONNECTED", reason: "stream ended" });
-        this.cancelPendingPermissions(session);
       }
     })();
   }

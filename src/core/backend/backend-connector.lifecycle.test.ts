@@ -167,38 +167,8 @@ function tick(ms = 10): Promise<void> {
  */
 function createSessionAwareRuntime(session: any) {
   return {
-    attachBackendConnection: vi.fn((params: any) => {
-      session.backendSession = params.backendSession;
-      session.backendAbort = params.backendAbort;
-      if (!session.data) session.data = session;
-      session.data.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
-      session.adapterSlashExecutor = params.slashExecutor;
-    }),
-    resetBackendConnectionState: vi.fn(() => {
-      session.backendSession = null;
-      session.backendAbort = null;
-      if (!session.data) session.data = session;
-      session.data.backendSessionId = undefined;
-      session.data.adapterSupportsSlashPassthrough = false;
-      session.adapterSlashExecutor = null;
-    }),
     getBackendSession: vi.fn(() => session.backendSession ?? null),
     getBackendAbort: vi.fn(() => session.backendAbort ?? null),
-    drainPendingMessages: vi.fn(() => {
-      const pending = ((session as any).pendingMessages ?? []) as UnifiedMessage[];
-      (session as any).pendingMessages = [];
-      if (session.data) session.data.pendingMessages = [];
-      return pending;
-    }),
-    drainPendingPermissionIds: vi.fn(() => {
-      const pendingPermissions =
-        ((session as any).pendingPermissions as Map<string, unknown> | undefined) ?? new Map();
-      const ids = Array.from(pendingPermissions.keys());
-      pendingPermissions.clear();
-      (session as any).pendingPermissions = pendingPermissions;
-      if (session.data) session.data.pendingPermissions = pendingPermissions;
-      return ids;
-    }),
     peekPendingPassthrough: vi.fn(() => (session as any).pendingPassthroughs?.[0]),
     shiftPendingPassthrough: vi.fn(() => (session as any).pendingPassthroughs?.shift()),
     getState: vi.fn(() => {
@@ -227,17 +197,31 @@ function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnector
   // We use a proxy-based getRuntime so each session gets its own runtime instance
   // that mutates the session's own fields (mirroring the real SessionRuntime behavior).
   const runtimeCache = new WeakMap<object, ReturnType<typeof createSessionAwareRuntime>>();
+  // routeSystemSignal mock applies BACKEND_CONNECTED and BACKEND_DISCONNECTED handle mutations
+  // (mirroring the real SessionRuntime post-reducer hook behavior).
+  const routeSystemSignal = vi.fn((session: any, signal: any) => {
+    if (signal.kind === "BACKEND_CONNECTED") {
+      session.backendSession = signal.backendSession;
+      session.backendAbort = signal.backendAbort;
+      if (!session.data) session.data = session;
+      session.data.adapterSupportsSlashPassthrough = signal.supportsSlashPassthrough;
+      session.adapterSlashExecutor = signal.slashExecutor;
+    } else if (signal.kind === "BACKEND_DISCONNECTED") {
+      session.backendSession = null;
+      session.backendAbort = null;
+      if (!session.data) session.data = session;
+      session.data.backendSessionId = undefined;
+      session.data.adapterSupportsSlashPassthrough = false;
+      session.adapterSlashExecutor = null;
+    }
+  });
   return {
     adapter: new TestAdapter(),
     adapterResolver: null,
     logger: noopLogger,
     metrics: null,
-    broadcaster: {
-      broadcast: vi.fn(),
-      broadcastToParticipants: vi.fn(),
-    } as any,
     routeUnifiedMessage: vi.fn(),
-    routeSystemSignal: vi.fn(),
+    routeSystemSignal,
     emitEvent: vi.fn(),
     getRuntime: (session) => {
       if (!runtimeCache.has(session)) {
@@ -279,7 +263,10 @@ describe("BackendConnector", () => {
       await mgr.connectBackend(session);
 
       expect(session.backendSession).not.toBeNull();
-      expect(deps.routeSystemSignal).toHaveBeenCalledWith(session, { kind: "BACKEND_CONNECTED" });
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(
+        session,
+        expect.objectContaining({ kind: "BACKEND_CONNECTED" }),
+      );
     });
 
     it("closes existing backend session on reconnect", async () => {
@@ -314,7 +301,7 @@ describe("BackendConnector", () => {
       );
     });
 
-    it("flushes pending messages on connect", async () => {
+    it("routes BACKEND_CONNECTED signal (pending messages are drained via reducer effects)", async () => {
       const testSession = new TestBackendSession("sess-1");
       const adapter = new TestAdapter();
       adapter.nextSession = testSession;
@@ -328,8 +315,12 @@ describe("BackendConnector", () => {
 
       await mgr.connectBackend(session);
 
-      expect(testSession.sentMessages).toEqual([msg1, msg2]);
-      expect(session.data.pendingMessages).toEqual([]);
+      // The connector routes BACKEND_CONNECTED — the reducer drains pending messages
+      // via SEND_TO_BACKEND effects executed by SessionRuntime.
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(
+        session,
+        expect.objectContaining({ kind: "BACKEND_CONNECTED", backendSession: testSession }),
+      );
     });
 
     it("sets up passthrough handler when session supports it", async () => {
@@ -463,7 +454,7 @@ describe("BackendConnector", () => {
   });
 
   describe("disconnectBackend", () => {
-    it("disconnects and cancels pending permissions", async () => {
+    it("disconnects and routes BACKEND_DISCONNECTED signal (permission cancellation handled by reducer)", async () => {
       const deps = createDeps();
       const mgr = new BackendConnector(deps);
       const testSession = new TestBackendSession("sess-1");
@@ -478,10 +469,11 @@ describe("BackendConnector", () => {
       expect(testSession.closed).toBe(true);
       expect(session.backendSession).toBeNull();
       expect(session.backendAbort).toBeNull();
-      expect(session.data.pendingPermissions.size).toBe(0);
-      expect(deps.broadcaster.broadcastToParticipants).toHaveBeenCalledWith(
+      // Permission cancellation is now handled via BACKEND_DISCONNECTED reducer effects
+      // (BROADCAST_TO_PARTICIPANTS effects executed by SessionRuntime.executeEffects).
+      expect(deps.routeSystemSignal).toHaveBeenCalledWith(
         session,
-        expect.objectContaining({ type: "permission_cancelled" }),
+        expect.objectContaining({ kind: "BACKEND_DISCONNECTED" }),
       );
     });
 
