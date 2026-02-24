@@ -36,7 +36,7 @@ const profile = getE2EProfile();
 const prereqs = getRealCliPrereqState();
 const canBindLocalhost = canBindLocalhostSync();
 const runSmoke = prereqs.ok && canBindLocalhost;
-const runFull = runSmoke && profile === "real-full";
+const runFull = runSmoke && prereqs.canRunPromptTests && profile === "real-full";
 
 describe("E2E Real SDK-URL SessionCoordinator", () => {
   const activeCoordinators: SessionCoordinator[] = [];

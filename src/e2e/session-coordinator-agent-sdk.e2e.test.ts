@@ -19,14 +19,16 @@ import {
   dumpTraceOnFailure,
   type TestContextLike,
 } from "./helpers.js";
+import { getE2EProfile } from "./e2e-profile.js";
 import { getAgentSdkPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
 import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
+const profile = getE2EProfile();
 const prereqs = getAgentSdkPrereqState();
 const canBindLocalhost = canBindLocalhostSync();
 const runSmoke = prereqs.ok && canBindLocalhost;
-const runFull = runSmoke && prereqs.canRunPromptTests;
+const runFull = runSmoke && prereqs.canRunPromptTests && profile === "real-full";
 
 describe("E2E Real Agent SDK SessionCoordinator", () => {
   const activeCoordinators: SessionCoordinator[] = [];

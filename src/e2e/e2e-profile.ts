@@ -2,9 +2,9 @@
  * E2E test profile resolution.
  *
  * Tests run in one of three profiles controlled by the `E2E_PROFILE` env var:
- * - `"mock"` — default; uses MockProcessManager, no real CLI needed
+ * - `"mock"` — uses MockProcessManager, no real CLI needed
  * - `"real-smoke"` — lightweight subset against a real CLI binary
- * - `"real-full"` — full test suite against a real CLI binary
+ * - `"real-full"` — default; full test suite against a real CLI binary
  * @module
  */
 
@@ -13,8 +13,8 @@ export type E2EProfile = "mock" | "real-smoke" | "real-full";
 
 function normalizeProfile(value: string | undefined): E2EProfile {
   if (value === "real-smoke") return "real-smoke";
-  if (value === "real-full") return "real-full";
-  return "mock";
+  if (value === "mock") return "mock";
+  return "real-full";
 }
 
 /** Read the E2E profile from the `E2E_PROFILE` environment variable. */

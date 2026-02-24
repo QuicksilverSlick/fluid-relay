@@ -19,14 +19,16 @@ import {
   waitForBackendConnectedOrExit,
   waitForMessageType,
 } from "./helpers.js";
+import { getE2EProfile } from "./e2e-profile.js";
 import { getOpencodePrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
 import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
+const profile = getE2EProfile();
 const prereqs = getOpencodePrereqState();
 const canBindLocalhost = canBindLocalhostSync();
 const runSmoke = prereqs.ok && canBindLocalhost;
-const runFull = runSmoke && prereqs.canRunPromptTests;
+const runFull = runSmoke && prereqs.canRunPromptTests && profile === "real-full";
 
 describe("E2E Real Opencode SessionCoordinator", () => {
   const activeCoordinators: SessionCoordinator[] = [];
