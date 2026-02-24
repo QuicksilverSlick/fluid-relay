@@ -14,7 +14,7 @@ import {
   attachPrebuffer,
   collectMessages,
   waitForMessageType,
-} from "../test-utils/session-test-utils.js";
+} from "../testing/session-test-utils.js";
 import { getE2EProfile } from "./e2e-profile.js";
 import type { BackendPrereqState } from "./prereqs.js";
 
@@ -418,4 +418,4 @@ export {
   closeWebSockets,
   waitForMessage,
   waitForMessageType,
-} from "../test-utils/session-test-utils.js";
+} from "../testing/session-test-utils.js";

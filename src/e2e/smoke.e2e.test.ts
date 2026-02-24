@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { NodeProcessManager } from "../adapters/node-process-manager.js";
-import { createProcessManager } from "../test-utils/session-test-utils.js";
+import { createProcessManager } from "../testing/session-test-utils.js";
 import { getE2EProfile, isRealCliProfile } from "./e2e-profile.js";
 import { getRealCliPrereqState } from "./prereqs.js";
 

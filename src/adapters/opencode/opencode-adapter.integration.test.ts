@@ -33,7 +33,7 @@ import {
   createPermissionResponse,
   createUserMessage,
   waitForUnifiedMessageType,
-} from "../../test-utils/backend-test-utils.js";
+} from "../../testing/backend-test-utils.js";
 import { OpencodeSession } from "./opencode-session.js";
 
 describe("E2E: OpencodeAdapter", () => {

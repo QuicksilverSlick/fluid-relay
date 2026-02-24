@@ -19,7 +19,7 @@ import {
   respondToRequest,
   sendJsonRpcRequest,
   sendNotification,
-} from "../../test-utils/backend-test-utils.js";
+} from "../../testing/backend-test-utils.js";
 import type { SpawnFn } from "../acp/acp-adapter.js";
 import { GeminiAdapter } from "./gemini-adapter.js";
 
