@@ -568,7 +568,11 @@ export class SessionRuntime {
     }
 
     if (backendSession) {
-      backendSession.send(unified);
+      executeEffects(
+        [{ type: "SEND_TO_BACKEND", message: unified }],
+        this.session,
+        this.effectDeps(),
+      );
     } else {
       this.session = {
         ...this.session,
@@ -606,7 +610,6 @@ export class SessionRuntime {
       behavior,
     });
 
-    if (!this.session.backendSession) return;
     const unified = tracedNormalizeInbound(
       this.deps.tracer,
       {
@@ -622,7 +625,11 @@ export class SessionRuntime {
       this.session.id,
     );
     if (unified) {
-      this.session.backendSession.send(unified);
+      executeEffects(
+        [{ type: "SEND_TO_BACKEND", message: unified }],
+        this.session,
+        this.effectDeps(),
+      );
     }
   }
 
@@ -688,10 +695,13 @@ export class SessionRuntime {
   }
 
   private sendControlRequest(msg: InboundCommand): void {
-    if (!this.session.backendSession) return;
     const unified = tracedNormalizeInbound(this.deps.tracer, msg, this.session.id);
     if (unified) {
-      this.session.backendSession.send(unified);
+      executeEffects(
+        [{ type: "SEND_TO_BACKEND", message: unified }],
+        this.session,
+        this.effectDeps(),
+      );
     }
   }
 

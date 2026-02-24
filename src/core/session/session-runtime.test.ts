@@ -84,11 +84,10 @@ describe("SessionRuntime", () => {
   });
 
   it("handles user_message with optimistic running state", () => {
-    const send = vi.fn();
     const session = createMockSession({
       id: "s1",
       data: { lastStatus: null },
-      backendSession: { send } as any,
+      backendSession: { send: vi.fn() } as any,
     });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
@@ -108,7 +107,7 @@ describe("SessionRuntime", () => {
       expect.objectContaining({ id: "s1" }),
       expect.objectContaining({ type: "user_message", content: "hello" }),
     );
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledTimes(1);
     expect(runtime.getLifecycleState()).toBe("active");
     expect(deps.store.persist).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }));
   });
@@ -398,7 +397,6 @@ describe("SessionRuntime", () => {
   });
 
   it("sends deny permission response to backend when pending request exists", () => {
-    const send = vi.fn();
     const perm: any = {
       request_id: "perm-1",
       options: [],
@@ -410,7 +408,6 @@ describe("SessionRuntime", () => {
     const session = createMockSession({
       id: "s1",
       data: { pendingPermissions: new Map([["perm-1", perm]]) },
-      backendSession: { send } as any,
     });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
@@ -422,7 +419,8 @@ describe("SessionRuntime", () => {
       requestId: "perm-1",
       behavior: "deny",
     });
-    expect(send).toHaveBeenCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "permission_response",
         metadata: expect.objectContaining({ request_id: "perm-1", behavior: "deny" }),
@@ -606,7 +604,6 @@ describe("SessionRuntime", () => {
   });
 
   it("includes updated_permissions in permission response metadata", () => {
-    const send = vi.fn();
     const perm: any = {
       request_id: "perm-2",
       options: [],
@@ -618,7 +615,6 @@ describe("SessionRuntime", () => {
     const session = createMockSession({
       id: "s1",
       data: { pendingPermissions: new Map([["perm-2", perm]]) },
-      backendSession: { send } as any,
     });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
@@ -627,7 +623,8 @@ describe("SessionRuntime", () => {
       updatedPermissions: [{ type: "setMode", mode: "plan", destination: "session" }],
     });
 
-    expect(send).toHaveBeenCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "permission_response",
         metadata: expect.objectContaining({
@@ -638,8 +635,7 @@ describe("SessionRuntime", () => {
   });
 
   it("normalizes and sends control requests for interrupt/model/mode", () => {
-    const send = vi.fn();
-    const session = createMockSession({ id: "s1", backendSession: { send } as any });
+    const session = createMockSession({ id: "s1", backendSession: { send: vi.fn() } as any });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
@@ -647,21 +643,24 @@ describe("SessionRuntime", () => {
     runtime.sendSetModel("claude-opus");
     runtime.sendSetPermissionMode("plan");
 
-    expect(send).toHaveBeenNthCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenNthCalledWith(
       1,
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "interrupt",
       }),
     );
-    expect(send).toHaveBeenNthCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenNthCalledWith(
       2,
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "configuration_change",
         metadata: expect.objectContaining({ subtype: "set_model", model: "claude-opus" }),
       }),
     );
-    expect(send).toHaveBeenNthCalledWith(
+    expect(deps.backendConnector.sendToBackend).toHaveBeenNthCalledWith(
       3,
+      expect.objectContaining({ id: "s1" }),
       expect.objectContaining({
         type: "configuration_change",
         metadata: expect.objectContaining({ subtype: "set_permission_mode", mode: "plan" }),
