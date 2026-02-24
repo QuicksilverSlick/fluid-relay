@@ -1283,7 +1283,7 @@ describe("SessionRuntime", () => {
     });
 
     expect(gitResolver.resolve).toHaveBeenCalledWith("/project");
-    expect(runtime.getState().branch).toBe("main");
+    expect(runtime.getState().git_branch).toBe("main");
   });
 
   it("registers slash_commands and skills from session_init state into registry", () => {

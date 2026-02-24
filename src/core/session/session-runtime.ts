@@ -35,7 +35,7 @@ import { diffTeamState } from "../team/team-event-differ.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { executeEffects } from "./effect-executor.js";
-import type { GitInfoTracker } from "./git-info-tracker.js";
+import { applyGitInfo, type GitInfoTracker } from "./git-info-tracker.js";
 import type { MessageQueueHandler } from "./message-queue-handler.js";
 import type { SessionEvent, SystemSignal } from "./session-event.js";
 import type { LifecycleState } from "./session-lifecycle.js";
@@ -743,10 +743,7 @@ export class SessionRuntime {
       if (gitInfo) {
         this.session = {
           ...this.session,
-          data: {
-            ...this.session.data,
-            state: { ...this.session.data.state, ...gitInfo },
-          },
+          data: { ...this.session.data, state: applyGitInfo(this.session.data.state, gitInfo) },
         };
       }
     }
