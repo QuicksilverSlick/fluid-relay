@@ -9,6 +9,7 @@
 
 import type { SessionState } from "../../types/session-state.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import type { UnifiedMessage } from "../types/unified-message.js";
 import type { Effect } from "./effect-types.js";
 import type { Session } from "./session-repository.js";
 
@@ -16,6 +17,9 @@ export interface EffectExecutorDeps {
   broadcaster: Pick<ConsumerBroadcaster, "broadcast" | "broadcastToParticipants">;
   emitEvent: (type: string, payload: unknown) => void;
   queueHandler: { autoSendQueuedMessage: (session: Session) => void };
+  /** Inline structural type — avoids coupling SessionControl to BackendPlane. */
+  backendConnector: { sendToBackend: (session: Session, message: UnifiedMessage) => void };
+  store: { persist: (session: Session) => void };
 }
 
 /**
@@ -56,6 +60,14 @@ export function executeEffects(
 
       case "AUTO_SEND_QUEUED":
         deps.queueHandler.autoSendQueuedMessage(session);
+        break;
+
+      case "SEND_TO_BACKEND":
+        deps.backendConnector.sendToBackend(session, effect.message);
+        break;
+
+      case "PERSIST_NOW":
+        deps.store.persist(session);
         break;
     }
   }

@@ -638,6 +638,16 @@ export class SessionRuntime {
     this.sendControlRequest({ type: "set_permission_mode", mode });
   }
 
+  private effectDeps() {
+    return {
+      broadcaster: this.deps.broadcaster,
+      emitEvent: this.deps.emitEvent,
+      queueHandler: this.deps.queueHandler,
+      backendConnector: this.deps.backendConnector,
+      store: this.deps.store,
+    };
+  }
+
   private handleSystemSignal(signal: SystemSignal): void {
     const prevData = this.session.data;
     const [nextData, effects] = sessionReducer(
@@ -649,11 +659,7 @@ export class SessionRuntime {
       this.session = { ...this.session, data: nextData };
       this.markDirty();
     }
-    executeEffects(effects, this.session, {
-      broadcaster: this.deps.broadcaster,
-      emitEvent: this.deps.emitEvent,
-      queueHandler: this.deps.queueHandler,
-    });
+    executeEffects(effects, this.session, this.effectDeps());
   }
 
   async executeSlashCommand(
@@ -690,11 +696,7 @@ export class SessionRuntime {
     }
 
     // Execute reducer effects (T4 broadcasts + event emissions + queue flush)
-    executeEffects(effects, this.session, {
-      broadcaster: this.deps.broadcaster,
-      emitEvent: this.deps.emitEvent,
-      queueHandler: this.deps.queueHandler,
-    });
+    executeEffects(effects, this.session, this.effectDeps());
 
     // High-level orchestration for complex side effects
     if (msg.type === "session_init") {
