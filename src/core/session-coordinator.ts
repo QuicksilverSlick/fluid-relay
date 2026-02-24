@@ -79,7 +79,6 @@ import {
 import { SlashCommandExecutor } from "./slash/slash-command-executor.js";
 import { SlashCommandRegistry } from "./slash/slash-command-registry.js";
 import { SlashCommandService } from "./slash/slash-command-service.js";
-import { TeamToolCorrelationBuffer } from "./team/team-tool-correlation.js";
 import type { UnifiedMessage } from "./types/unified-message.js";
 
 /**
@@ -199,7 +198,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
 
     // ── Session store ────────────────────────────────────────────────────────
     this.store = new SessionRepository(options.storage ?? null, {
-      createCorrelationBuffer: () => new TeamToolCorrelationBuffer(),
       createRegistry: () => new SlashCommandRegistry(),
     });
 

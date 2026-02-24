@@ -39,7 +39,7 @@ describe("state-reducer property tests", () => {
           role: "system",
           metadata: { model: "test-model", cwd: "/tmp" },
         });
-        expect(() => reduce(frozen, msg)).not.toThrow();
+        expect(() => reduce(frozen as any, msg)).not.toThrow();
       }),
     );
   });
@@ -51,7 +51,7 @@ describe("state-reducer property tests", () => {
           type: "stream_event",
           role: "assistant",
         });
-        const result = reduce(state, msg);
+        const [result] = reduce(state, msg);
         expect(result).toBe(state);
       }),
     );
@@ -65,7 +65,7 @@ describe("state-reducer property tests", () => {
           role: "system",
           metadata: { model },
         });
-        const result = reduce(state, msg);
+        const [result] = reduce(state, msg);
         expect(result.model).toBe(model);
         expect(result.cwd).toBe(state.cwd);
         expect(result.is_compacting).toBe(state.is_compacting);
@@ -89,7 +89,7 @@ describe("state-reducer property tests", () => {
               bogus_field: "should-be-ignored",
             },
           });
-          const result = reduce(state, msg);
+          const [result] = reduce(state, msg);
           expect(result.total_cost_usd).toBe(cost);
           expect(result.num_turns).toBe(turns);
           expect(result.model).toBe(state.model);
@@ -106,7 +106,8 @@ describe("state-reducer property tests", () => {
           role: "system",
           metadata: { status: "compacting" },
         });
-        expect(reduce(state, msg).is_compacting).toBe(true);
+        const [result] = reduce(state, msg);
+        expect(result.is_compacting).toBe(true);
       }),
     );
   });
@@ -122,7 +123,8 @@ describe("state-reducer property tests", () => {
             role: "system",
             metadata: { status },
           });
-          expect(reduce(state, msg).is_compacting).toBe(false);
+          const [result] = reduce(state, msg);
+          expect(result.is_compacting).toBe(false);
         },
       ),
     );

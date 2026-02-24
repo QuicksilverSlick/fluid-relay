@@ -20,7 +20,7 @@ import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
 import type { AdapterSlashExecutor, BackendSession } from "../interfaces/backend-adapter.js";
 import type { SlashCommandRegistry } from "../slash/slash-command-registry.js";
-import type { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
+import type { PendingToolUse } from "../team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import type { LifecycleState } from "./session-lifecycle.js";
 import type { QueuedMessage } from "./session-repository.js";
@@ -40,8 +40,6 @@ export interface SessionHandles {
     requestId: string;
     timer: ReturnType<typeof setTimeout>;
   } | null;
-  /** Per-session correlation buffer for team tool_use↔tool_result pairing. */
-  teamCorrelationBuffer: TeamToolCorrelationBuffer;
   /** Per-session slash command registry. */
   registry: SlashCommandRegistry;
   /** FIFO queue of passthrough slash commands awaiting CLI responses. */
@@ -75,4 +73,6 @@ export interface SessionData {
   readonly lastStatus: "compacting" | "idle" | "running" | null;
   readonly adapterName?: string;
   readonly adapterSupportsSlashPassthrough: boolean;
+  /** Immutable map for team tool_use↔tool_result pairing. Owned by reducer. */
+  readonly teamCorrelation: ReadonlyMap<string, PendingToolUse>;
 }

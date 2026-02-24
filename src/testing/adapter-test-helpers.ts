@@ -55,7 +55,6 @@ import {
 import { SlashCommandExecutor } from "../core/slash/slash-command-executor.js";
 import { SlashCommandRegistry } from "../core/slash/slash-command-registry.js";
 import { SlashCommandService } from "../core/slash/slash-command-service.js";
-import { TeamToolCorrelationBuffer } from "../core/team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../core/types/unified-message.js";
 import { createUnifiedMessage } from "../core/types/unified-message.js";
 import type { AuthContext, Authenticator } from "../interfaces/auth.js";
@@ -243,7 +242,6 @@ export function createBridgeWithAdapter(options?: {
   const gitResolver = options?.gitResolver ?? null;
 
   const store = new SessionRepository(storage, {
-    createCorrelationBuffer: () => new TeamToolCorrelationBuffer(),
     createRegistry: () => new SlashCommandRegistry(),
   });
 

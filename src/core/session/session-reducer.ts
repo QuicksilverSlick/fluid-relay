@@ -34,7 +34,6 @@ import {
   mapToolProgress,
   mapToolUseSummary,
 } from "../messaging/consumer-message-mapper.js";
-import type { TeamToolCorrelationBuffer } from "../team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { mapInboundCommandEffects } from "./effect-mapper.js";
 import type { Effect } from "./effect-types.js";
@@ -57,20 +56,17 @@ export interface ReducerConfig {
  * Top-level session reducer.
  *
  * Pure function — no I/O, no closures over external state.
- * The `correlationBuffer` is a per-session mutable buffer passed in by the
- * runtime; it is the only "impure" parameter and is logged as a known
- * exception in the architecture doc (team tool correlation is inherently
- * stateful).
+ * teamCorrelation is now carried inside SessionData (data.teamCorrelation),
+ * making the reducer fully pure with no external mutable state.
  */
 export function sessionReducer(
   data: SessionData,
   event: SessionEvent,
-  correlationBuffer: TeamToolCorrelationBuffer,
   config: ReducerConfig = { maxMessageHistoryLength: Number.POSITIVE_INFINITY },
 ): [SessionData, Effect[]] {
   switch (event.type) {
     case "BACKEND_MESSAGE":
-      return reduceBackendMessage(data, event.message, correlationBuffer, config);
+      return reduceBackendMessage(data, event.message, config);
 
     case "SYSTEM_SIGNAL":
       return reduceSystemSignal(data, event.signal);
@@ -154,17 +150,13 @@ function reduceInboundCommand(data: SessionData, commandType: string): [SessionD
  * Outer reducer — operates on full SessionData.
  * Returns `[nextData, effects]` where effects describe all side effects to
  * be executed by the caller (broadcasts, event emissions, etc.).
- *
- * @param correlationBuffer — per-session buffer from session.teamCorrelationBuffer.
- *   Callers (SessionRuntime) must provide this; the reducer itself stays pure.
  */
 function reduceBackendMessage(
   data: SessionData,
   message: UnifiedMessage,
-  correlationBuffer: TeamToolCorrelationBuffer,
   config: ReducerConfig,
 ): [SessionData, Effect[]] {
-  const nextState = reduce(data.state, message, correlationBuffer);
+  const [nextState, nextCorrelation] = reduce(data.state, message, data.teamCorrelation);
   const nextLastStatus = reduceLastStatus(data.lastStatus, message);
   const nextLifecycle = reduceLifecycle(data.lifecycle, message);
   const nextMessageHistory = trimHistory(
@@ -176,6 +168,7 @@ function reduceBackendMessage(
 
   const changed =
     nextState !== data.state ||
+    nextCorrelation !== data.teamCorrelation ||
     nextLastStatus !== data.lastStatus ||
     nextLifecycle !== data.lifecycle ||
     nextMessageHistory !== data.messageHistory ||
@@ -186,6 +179,7 @@ function reduceBackendMessage(
     ? {
         ...data,
         state: nextState,
+        teamCorrelation: nextCorrelation,
         lastStatus: nextLastStatus,
         lifecycle: nextLifecycle,
         messageHistory: nextMessageHistory,

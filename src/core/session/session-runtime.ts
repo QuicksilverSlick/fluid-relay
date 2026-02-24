@@ -643,7 +643,6 @@ export class SessionRuntime {
     const [nextData, effects] = sessionReducer(
       this.session.data,
       { type: "SYSTEM_SIGNAL", signal },
-      this.session.teamCorrelationBuffer,
       this.deps.config,
     );
     if (nextData !== prevData) {
@@ -682,7 +681,6 @@ export class SessionRuntime {
     const [nextData, effects] = sessionReducer(
       this.session.data,
       { type: "BACKEND_MESSAGE", message: msg },
-      this.session.teamCorrelationBuffer,
       this.deps.config,
     );
 

@@ -90,3 +90,39 @@ export class TeamToolCorrelationBuffer {
     return this.pending.size;
   }
 }
+
+// ── Pure functional API ──────────────────────────────────────────────────────
+
+export function pureAddToolUse(
+  map: ReadonlyMap<string, PendingToolUse>,
+  recognized: RecognizedTeamToolUse,
+): ReadonlyMap<string, PendingToolUse> {
+  const next = new Map(map);
+  next.set(recognized.toolUseId, { recognized, receivedAt: Date.now() });
+  return next;
+}
+
+export function pureConsumeToolResult(
+  map: ReadonlyMap<string, PendingToolUse>,
+  result: ToolResultContent,
+): [ReadonlyMap<string, PendingToolUse>, CorrelatedToolUse | undefined] {
+  const entry = map.get(result.tool_use_id);
+  if (!entry) return [map, undefined];
+  const next = new Map(map);
+  next.delete(result.tool_use_id);
+  return [next, { recognized: entry.recognized, result }];
+}
+
+export function pureFlushStale(
+  map: ReadonlyMap<string, PendingToolUse>,
+  maxAgeMs: number,
+): ReadonlyMap<string, PendingToolUse> {
+  const now = Date.now();
+  const staleKeys = [...map.entries()]
+    .filter(([, v]) => now - v.receivedAt > maxAgeMs)
+    .map(([k]) => k);
+  if (staleKeys.length === 0) return map;
+  const next = new Map(map);
+  for (const k of staleKeys) next.delete(k);
+  return next;
+}
