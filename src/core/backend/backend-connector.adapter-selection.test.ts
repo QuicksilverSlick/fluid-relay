@@ -104,6 +104,7 @@ describe("BackendConnector per-session adapter", () => {
       metrics: null,
       broadcaster: { broadcast: vi.fn(), sendTo: vi.fn() } as any,
       routeUnifiedMessage: vi.fn(),
+      routeSystemSignal: vi.fn(),
       emitEvent: vi.fn(),
       getRuntime: (session: any) => {
         if (!runtimeCache.has(session)) {
@@ -311,6 +312,7 @@ describe("BackendConnector per-session adapter", () => {
       metrics: null,
       broadcaster: { broadcast: vi.fn(), sendTo: vi.fn() } as any,
       routeUnifiedMessage: vi.fn(),
+      routeSystemSignal: vi.fn(),
       emitEvent: vi.fn(),
       getRuntime: () => mockRuntime as any,
     });

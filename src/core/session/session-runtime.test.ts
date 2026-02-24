@@ -123,7 +123,8 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, deps);
     const ws = createTestSocket();
 
-    expect(runtime.transitionLifecycle("closed", "test:force-close")).toBe(true);
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSING" } });
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSED" } });
 
     runtime.process({
       type: "INBOUND_COMMAND",
@@ -731,22 +732,18 @@ describe("SessionRuntime", () => {
     expect(deps.slashService.executeProgrammatic).toHaveBeenCalledWith(session, "/status");
   });
 
-  it("reports invalid lifecycle transitions via callback", () => {
+  it("rejects invalid lifecycle transitions (closed → active)", () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    expect(runtime.transitionLifecycle("closed", "force-close")).toBe(true);
-    expect(runtime.transitionLifecycle("active", "invalid-reopen")).toBe(false);
+    // Transition to closed via SYSTEM_SIGNAL
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSING" } });
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSED" } });
+    expect(runtime.getLifecycleState()).toBe("closed");
 
-    expect(deps.logger.warn).toHaveBeenCalledWith(
-      "Session lifecycle invalid transition",
-      expect.objectContaining({
-        sessionId: "s1",
-        current: "closed",
-        next: "active",
-      }),
-    );
+    // Attempt to reopen — should stay closed (reducer rejects invalid transitions)
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "BACKEND_CONNECTED" } });
     expect(runtime.getLifecycleState()).toBe("closed");
   });
 

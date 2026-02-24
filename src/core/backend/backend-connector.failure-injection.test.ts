@@ -76,6 +76,7 @@ function buildConnectorDeps(
   emitEvent = vi.fn(),
   broadcaster = { broadcast: vi.fn(), broadcastToParticipants: vi.fn(), sendTo: vi.fn() } as any,
 ) {
+  const routeSystemSignal = vi.fn();
   const manager = new BackendConnector({
     adapter,
     adapterResolver: null,
@@ -83,10 +84,11 @@ function buildConnectorDeps(
     metrics: null,
     broadcaster,
     routeUnifiedMessage: vi.fn(),
+    routeSystemSignal,
     emitEvent,
     getRuntime: () => createMockRuntime(session),
   });
-  return { manager, emitEvent, broadcaster };
+  return { manager, emitEvent, broadcaster, routeSystemSignal };
 }
 
 async function waitForAssertion(assertFn: () => void, timeoutMs = 500): Promise<void> {
@@ -113,17 +115,22 @@ describe("BackendConnector failure injection", () => {
     } as any;
 
     const session = createSession("sess-fi");
-    const { manager } = buildConnectorDeps(adapter, session, emitEvent, broadcaster);
+    const { manager, routeSystemSignal } = buildConnectorDeps(
+      adapter,
+      session,
+      emitEvent,
+      broadcaster,
+    );
 
     await manager.connectBackend(session);
 
     adapter.failStream("sess-fi", new Error("Injected stream failure"));
 
     await waitForAssertion(() => {
-      expect(emitEvent).toHaveBeenCalledWith(
-        "backend:disconnected",
-        expect.objectContaining({ sessionId: "sess-fi" }),
-      );
+      expect(routeSystemSignal).toHaveBeenCalledWith(session, {
+        kind: "BACKEND_DISCONNECTED",
+        reason: "stream ended",
+      });
     });
 
     expect(emitEvent).toHaveBeenCalledWith(
@@ -133,7 +140,6 @@ describe("BackendConnector failure injection", () => {
         sessionId: "sess-fi",
       }),
     );
-    expect(broadcaster.broadcast).toHaveBeenCalledWith(session, { type: "cli_disconnected" });
   });
 
   it("drains pending passthroughs with slash_command_error when stream fails (lines 594-605)", async () => {
@@ -145,7 +151,12 @@ describe("BackendConnector failure injection", () => {
       sendTo: vi.fn(),
     } as any;
     const session = createSession("sess-drain-fail");
-    const { manager } = buildConnectorDeps(adapter, session, emitEvent, broadcaster);
+    const { manager, routeSystemSignal } = buildConnectorDeps(
+      adapter,
+      session,
+      emitEvent,
+      broadcaster,
+    );
 
     // Pre-populate pending passthrough entries
     session.pendingPassthroughs.push(makePassthrough("/compact", "req-compact"));
@@ -154,16 +165,15 @@ describe("BackendConnector failure injection", () => {
     adapter.failStream("sess-drain-fail", new Error("Backend crashed"));
 
     await waitForAssertion(() => {
-      expect(broadcaster.broadcast).toHaveBeenCalledWith(
+      expect(routeSystemSignal).toHaveBeenCalledWith(
         session,
-        expect.objectContaining({ type: "slash_command_error", command: "/compact" }),
+        expect.objectContaining({
+          kind: "SLASH_PASSTHROUGH_ERROR",
+          command: "/compact",
+          error: "Backend crashed",
+        }),
       );
     });
-
-    expect(emitEvent).toHaveBeenCalledWith(
-      "slash_command:failed",
-      expect.objectContaining({ command: "/compact", error: "Backend crashed" }),
-    );
   });
 
   it("drains pending passthroughs with slash_command_error when stream ends unexpectedly (lines 619-630)", async () => {
@@ -175,7 +185,12 @@ describe("BackendConnector failure injection", () => {
       sendTo: vi.fn(),
     } as any;
     const session = createSession("sess-drain-end");
-    const { manager } = buildConnectorDeps(adapter, session, emitEvent, broadcaster);
+    const { manager, routeSystemSignal } = buildConnectorDeps(
+      adapter,
+      session,
+      emitEvent,
+      broadcaster,
+    );
 
     session.pendingPassthroughs.push(makePassthrough("/status", "req-status"));
 
@@ -183,19 +198,14 @@ describe("BackendConnector failure injection", () => {
     adapter.endStream("sess-drain-end");
 
     await waitForAssertion(() => {
-      expect(broadcaster.broadcast).toHaveBeenCalledWith(
+      expect(routeSystemSignal).toHaveBeenCalledWith(
         session,
         expect.objectContaining({
-          type: "slash_command_error",
+          kind: "SLASH_PASSTHROUGH_ERROR",
           command: "/status",
           error: "Backend stream ended unexpectedly",
         }),
       );
     });
-
-    expect(emitEvent).toHaveBeenCalledWith(
-      "slash_command:failed",
-      expect.objectContaining({ command: "/status", error: "Backend stream ended unexpectedly" }),
-    );
   });
 });

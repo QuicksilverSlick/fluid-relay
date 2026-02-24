@@ -41,6 +41,10 @@ export type SystemSignal =
   | { kind: "RECONNECT_TIMEOUT" }
   /** Capabilities did not arrive within the timeout window. */
   | { kind: "CAPABILITIES_TIMEOUT" }
+  /** Backend needs to be relaunched (e.g. consumer connected but CLI is dead). */
+  | { kind: "BACKEND_RELAUNCH_NEEDED" }
+  /** Session is closing — initiated by coordinator before teardown. */
+  | { kind: "SESSION_CLOSING" }
   /** Explicit session close initiated by coordinator. */
   | { kind: "SESSION_CLOSED" }
   /** Merge a partial SessionState patch into data.state (no lifecycle change). */
@@ -50,7 +54,17 @@ export type SystemSignal =
   /** Set queuedMessage (managed by MessageQueueHandler). */
   | { kind: "QUEUED_MESSAGE_UPDATED"; message: QueuedMessage | null }
   /** Optimistic model update with session_update broadcast (used by sendSetModel). */
-  | { kind: "MODEL_UPDATED"; model: string };
+  | { kind: "MODEL_UPDATED"; model: string }
+  /** Slash passthrough command completed successfully. */
+  | {
+      kind: "SLASH_PASSTHROUGH_RESULT";
+      command: string;
+      requestId?: string;
+      content: string;
+      source: "cli" | "emulated";
+    }
+  /** Slash passthrough command failed. */
+  | { kind: "SLASH_PASSTHROUGH_ERROR"; command: string; requestId?: string; error: string };
 
 /**
  * Discriminated union of all events that SessionRuntime.process() accepts.

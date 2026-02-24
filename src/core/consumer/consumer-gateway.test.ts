@@ -28,6 +28,7 @@ function createMockRuntime(session: any) {
     getPendingPermissions: vi.fn(() => Array.from(session.data.pendingPermissions.values())),
     getQueuedMessage: vi.fn(() => session.data.queuedMessage),
     isBackendConnected: vi.fn(() => false),
+    process: vi.fn(),
   } as any;
 }
 
@@ -187,7 +188,10 @@ describe("ConsumerGateway", () => {
       }),
     );
     expect(sent.some((m) => m.type === "cli_disconnected")).toBe(true);
-    expect(emitted.some((e) => e.event === "backend:relaunch_needed")).toBe(true);
+    expect(vi.mocked(mockRuntime.process)).toHaveBeenCalledWith({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "BACKEND_RELAUNCH_NEEDED" },
+    });
   });
 
   it("sends message history, capabilities, pending permissions, and queued message on open", () => {
@@ -250,7 +254,7 @@ describe("ConsumerGateway", () => {
   });
 
   it("sends cli_connected when backend is already connected", () => {
-    const { gateway, ws, sentToWs, emitted } = createHarness({
+    const { gateway, ws, sentToWs, mockRuntime } = createHarness({
       backendConnected: true,
       history: [],
       pendingPermissions: [],
@@ -259,7 +263,11 @@ describe("ConsumerGateway", () => {
 
     gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);
     expect(sentToWs().some((m) => m.type === "cli_connected")).toBe(true);
-    expect(emitted.some((e) => e.event === "backend:relaunch_needed")).toBe(false);
+    expect(vi.mocked(mockRuntime.process)).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        signal: { kind: "BACKEND_RELAUNCH_NEEDED" },
+      }),
+    );
   });
 
   it("authenticator path accepts asynchronously", async () => {

@@ -21,6 +21,7 @@ import { CLI_ADAPTER_NAMES, type CliAdapterName } from "../interfaces/adapter-na
 import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter, BackendSession } from "../interfaces/backend-adapter.js";
 import { type MessageTracer, noopTracer, type TraceOutcome } from "../messaging/message-tracer.js";
+import type { SystemSignal } from "../session/session-event.js";
 import type { Session } from "../session/session-repository.js";
 import type { SessionRuntime } from "../session/session-runtime.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
@@ -39,6 +40,7 @@ export interface BackendConnectorDeps {
   metrics: MetricsCollector | null;
   broadcaster: ConsumerBroadcaster;
   routeUnifiedMessage: (session: Session, msg: UnifiedMessage) => void;
+  routeSystemSignal: (session: Session, signal: SystemSignal) => void;
   emitEvent: EmitEvent;
   getRuntime: (session: Session) => SessionRuntime;
   tracer?: MessageTracer;
@@ -53,6 +55,7 @@ export class BackendConnector {
   private metrics: MetricsCollector | null;
   private broadcaster: ConsumerBroadcaster;
   private routeUnifiedMessage: (session: Session, msg: UnifiedMessage) => void;
+  private routeSystemSignal: (session: Session, signal: SystemSignal) => void;
   private emitEvent: EmitEvent;
   private runtime: (session: Session) => SessionRuntime;
   private tracer: MessageTracer;
@@ -65,6 +68,7 @@ export class BackendConnector {
     this.metrics = deps.metrics;
     this.broadcaster = deps.broadcaster;
     this.routeUnifiedMessage = deps.routeUnifiedMessage;
+    this.routeSystemSignal = deps.routeSystemSignal;
     this.emitEvent = deps.emitEvent;
     this.runtime = deps.getRuntime;
     this.tracer = deps.tracer ?? noopTracer;
@@ -286,15 +290,10 @@ export class BackendConnector {
         this.shiftPendingPassthroughEntry(session);
         this.passthroughTextBuffers.delete(session.id);
         const error = `Pending passthrough "${pending.command}" produced empty output`;
-        this.broadcaster.broadcast(session, {
-          type: "slash_command_error",
+        this.routeSystemSignal(session, {
+          kind: "SLASH_PASSTHROUGH_ERROR",
           command: pending.command,
-          request_id: pending.requestId,
-          error,
-        });
-        this.emitEvent("slash_command:failed", {
-          sessionId: session.id,
-          command: pending.command,
+          requestId: pending.requestId,
           error,
         });
         this.tracer.error("bridge", "slash_command_error", error, {
@@ -315,10 +314,10 @@ export class BackendConnector {
 
     this.shiftPendingPassthroughEntry(session);
     this.passthroughTextBuffers.delete(session.id);
-    this.broadcaster.broadcast(session, {
-      type: "slash_command_result",
+    this.routeSystemSignal(session, {
+      kind: "SLASH_PASSTHROUGH_RESULT",
       command: pending.command,
-      request_id: pending.requestId,
+      requestId: pending.requestId,
       content,
       source: "cli",
     });
@@ -335,12 +334,6 @@ export class BackendConnector {
         outcome: "success",
       },
     );
-    this.emitEvent("slash_command:executed", {
-      sessionId: session.id,
-      command: pending.command,
-      source: "cli",
-      durationMs: 0,
-    });
     this.emitSlashSummary(session.id, pending, "success", matchedPath);
   }
 
@@ -409,10 +402,10 @@ export class BackendConnector {
         this.passthroughTextBuffers.delete(session.id);
 
         const content = this.cliUserEchoToText(rawMsg.message.content);
-        this.broadcaster.broadcast(session, {
-          type: "slash_command_result",
+        this.routeSystemSignal(session, {
+          kind: "SLASH_PASSTHROUGH_RESULT",
           command: pending.command,
-          request_id: pending.requestId,
+          requestId: pending.requestId,
           content,
           source: "cli",
         });
@@ -429,12 +422,6 @@ export class BackendConnector {
             outcome: "intercepted_user_echo",
           },
         );
-        this.emitEvent("slash_command:executed", {
-          sessionId: session.id,
-          command: pending.command,
-          source: "cli",
-          durationMs: 0,
-        });
         this.emitSlashSummary(session.id, pending, "intercepted_user_echo", "assistant_text");
         return true;
       });
@@ -454,8 +441,7 @@ export class BackendConnector {
       type: "backend:connected",
       sessionId: session.id,
     });
-    this.broadcaster.broadcast(session, { type: "cli_connected" });
-    this.emitEvent("backend:connected", { sessionId: session.id });
+    this.routeSystemSignal(session, { kind: "BACKEND_CONNECTED" });
 
     // Flush any pending messages
     const pendingMessages = this.drainPendingMessagesQueue(session);
@@ -490,12 +476,7 @@ export class BackendConnector {
       type: "backend:disconnected",
       sessionId: session.id,
     });
-    this.broadcaster.broadcast(session, { type: "cli_disconnected" });
-    this.emitEvent("backend:disconnected", {
-      sessionId: session.id,
-      code: 1000,
-      reason: "normal",
-    });
+    this.routeSystemSignal(session, { kind: "BACKEND_DISCONNECTED", reason: "normal" });
 
     this.cancelPendingPermissions(session);
   }
@@ -560,15 +541,10 @@ export class BackendConnector {
         while (true) {
           const pending = this.shiftPendingPassthroughEntry(session);
           if (!pending) break;
-          this.broadcaster.broadcast(session, {
-            type: "slash_command_error",
+          this.routeSystemSignal(session, {
+            kind: "SLASH_PASSTHROUGH_ERROR",
             command: pending.command,
-            request_id: pending.requestId,
-            error: errorMsg,
-          });
-          this.emitEvent("slash_command:failed", {
-            sessionId,
-            command: pending.command,
+            requestId: pending.requestId,
             error: errorMsg,
           });
           this.emitSlashSummary(sessionId, pending, "backend_error", "none", [errorMsg]);
@@ -585,27 +561,17 @@ export class BackendConnector {
         while (true) {
           const pending = this.shiftPendingPassthroughEntry(session);
           if (!pending) break;
-          this.broadcaster.broadcast(session, {
-            type: "slash_command_error",
+          this.routeSystemSignal(session, {
+            kind: "SLASH_PASSTHROUGH_ERROR",
             command: pending.command,
-            request_id: pending.requestId,
-            error: "Backend stream ended unexpectedly",
-          });
-          this.emitEvent("slash_command:failed", {
-            sessionId,
-            command: pending.command,
+            requestId: pending.requestId,
             error: "Backend stream ended unexpectedly",
           });
           this.emitSlashSummary(sessionId, pending, "backend_error", "none", ["stream ended"]);
         }
         this.applyBackendDisconnectedState(session);
         this.passthroughTextBuffers.delete(session.id);
-        this.broadcaster.broadcast(session, { type: "cli_disconnected" });
-        this.emitEvent("backend:disconnected", {
-          sessionId,
-          code: 1000,
-          reason: "stream ended",
-        });
+        this.routeSystemSignal(session, { kind: "BACKEND_DISCONNECTED", reason: "stream ended" });
         this.cancelPendingPermissions(session);
       }
     })();

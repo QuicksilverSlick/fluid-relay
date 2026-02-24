@@ -39,7 +39,6 @@ import {
 import { GitInfoTracker } from "../core/session/git-info-tracker.js";
 import { MessageQueueHandler } from "../core/session/message-queue-handler.js";
 import type { SessionData } from "../core/session/session-data.js";
-import type { SystemSignal } from "../core/session/session-event.js";
 import { InMemorySessionLeaseCoordinator } from "../core/session/session-lease-coordinator.js";
 import type { Session } from "../core/session/session-repository.js";
 import { SessionRepository } from "../core/session/session-repository.js";
@@ -250,24 +249,20 @@ export function createBridgeWithAdapter(options?: {
   const runtimes = new Map<string, SessionRuntime>();
 
   // emitEvent: forwards to emitter, with lifecycle signal dispatch
+  // Note: backend:connected and backend:disconnected are now routed via routeSystemSignal
+  // in BackendConnector, so only session:closed needs interception here.
   const emitEvent = (type: string, payload: unknown): void => {
     if (
       payload &&
       typeof payload === "object" &&
       "sessionId" in payload &&
-      (type === "backend:connected" || type === "backend:disconnected" || type === "session:closed")
+      type === "session:closed"
     ) {
       const sessionId = (payload as { sessionId?: unknown }).sessionId;
       if (typeof sessionId === "string") {
         const runtime = runtimes.get(sessionId);
         if (runtime) {
-          const signal: SystemSignal =
-            type === "backend:connected"
-              ? { kind: "BACKEND_CONNECTED" }
-              : type === "backend:disconnected"
-                ? { kind: "BACKEND_DISCONNECTED", reason: "bridge-event" }
-                : { kind: "SESSION_CLOSED" };
-          runtime.process({ type: "SYSTEM_SIGNAL", signal });
+          runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSED" } });
         }
       }
     }
@@ -420,6 +415,10 @@ export function createBridgeWithAdapter(options?: {
       withMutableSession(session.id, "handleBackendMessage", (s) =>
         getOrCreateRuntime(s).process({ type: "BACKEND_MESSAGE", message: msg }),
       ),
+    routeSystemSignal: (session, signal) =>
+      withMutableSession(session.id, "routeSystemSignal", (s) =>
+        getOrCreateRuntime(s).process({ type: "SYSTEM_SIGNAL", signal }),
+      ),
     emitEvent: emitEvent as (
       type: keyof BridgeEventMap,
       payload: BridgeEventMap[keyof BridgeEventMap],
@@ -465,7 +464,7 @@ export function createBridgeWithAdapter(options?: {
     const session = store.get(sessionId);
     if (!session) return;
     const runtime = getOrCreateRuntime(session);
-    runtime.transitionLifecycle("closing", "session:close");
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSING" } });
     capabilitiesPolicy.cancelPendingInitialize(session);
     if (runtime.getBackendSession()) {
       await runtime.closeBackendConnection().catch(() => {});

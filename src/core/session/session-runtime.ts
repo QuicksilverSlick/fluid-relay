@@ -411,7 +411,7 @@ export class SessionRuntime {
     return limiter.tryConsume();
   }
 
-  transitionLifecycle(next: LifecycleState, reason: string): boolean {
+  private transitionLifecycle(next: LifecycleState, reason: string): boolean {
     const current = this.session.data.lifecycle;
     if (current === next) return true;
     if (!isLifecycleTransitionAllowed(current, next)) {
