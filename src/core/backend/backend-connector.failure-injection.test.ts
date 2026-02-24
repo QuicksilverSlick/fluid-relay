@@ -3,7 +3,7 @@ import { FailureInjectionBackendAdapter } from "../../testing/failure-injection-
 import { BackendConnector } from "./backend-connector.js";
 
 function createSession(id: string) {
-  return {
+  const s = {
     id,
     adapterName: undefined,
     backendSession: null,
@@ -23,14 +23,56 @@ function createSession(id: string) {
     },
     lastActivity: 0,
   } as any;
+  if (!s.data) s.data = s;
+  return s;
 }
 
 function makePassthrough(command: string, requestId = "req-1") {
   return { command, requestId, slashRequestId: "slash-1", traceId: "trace-1", startedAtMs: 0 };
 }
 
+function createMockRuntime(session: any) {
+  return {
+    attachBackendConnection: (params: any) => {
+      session.backendSession = params.backendSession;
+      session.backendAbort = params.backendAbort;
+      session.data.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
+      session.adapterSlashExecutor = params.slashExecutor;
+    },
+    resetBackendConnectionState: () => {
+      session.backendSession = null;
+      session.backendAbort = null;
+      session.data.backendSessionId = undefined;
+      session.data.adapterSupportsSlashPassthrough = false;
+      session.adapterSlashExecutor = null;
+    },
+    getBackendSession: () => session.backendSession ?? null,
+    getBackendAbort: () => session.backendAbort ?? null,
+    drainPendingMessages: () => {
+      const p = session.data.pendingMessages;
+      session.data.pendingMessages = [];
+      return p;
+    },
+    drainPendingPermissionIds: () => {
+      const ids = Array.from(session.data.pendingPermissions.keys());
+      session.data.pendingPermissions.clear();
+      return ids;
+    },
+    peekPendingPassthrough: () => session.pendingPassthroughs[0],
+    shiftPendingPassthrough: () => session.pendingPassthroughs.shift(),
+    getState: () => session.data.state,
+    setState: (state: any) => {
+      session.data.state = state;
+    },
+    registerSlashCommandNames: (commands: string[]) => {
+      session.registry.registerFromCLI(commands.map((name: string) => ({ name, description: "" })));
+    },
+  } as any;
+}
+
 function buildConnectorDeps(
   adapter: InstanceType<typeof FailureInjectionBackendAdapter>,
+  session: any,
   emitEvent = vi.fn(),
   broadcaster = { broadcast: vi.fn(), broadcastToParticipants: vi.fn(), sendTo: vi.fn() } as any,
 ) {
@@ -42,41 +84,7 @@ function buildConnectorDeps(
     broadcaster,
     routeUnifiedMessage: vi.fn(),
     emitEvent,
-    onBackendConnectedState: (runtimeSession: any, params: any) => {
-      runtimeSession.backendSession = params.backendSession;
-      runtimeSession.backendAbort = params.backendAbort;
-      runtimeSession.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
-      runtimeSession.adapterSlashExecutor = params.slashExecutor;
-    },
-    onBackendDisconnectedState: (runtimeSession: any) => {
-      runtimeSession.backendSession = null;
-      runtimeSession.backendAbort = null;
-      runtimeSession.backendSessionId = undefined;
-      runtimeSession.adapterSupportsSlashPassthrough = false;
-      runtimeSession.adapterSlashExecutor = null;
-    },
-    getBackendSession: (runtimeSession: any) => runtimeSession.backendSession ?? null,
-    getBackendAbort: (runtimeSession: any) => runtimeSession.backendAbort ?? null,
-    drainPendingMessages: (runtimeSession: any) => {
-      const p = runtimeSession.pendingMessages;
-      runtimeSession.pendingMessages = [];
-      return p;
-    },
-    drainPendingPermissionIds: (runtimeSession: any) => {
-      const ids = Array.from(runtimeSession.pendingPermissions.keys());
-      runtimeSession.pendingPermissions.clear();
-      return ids;
-    },
-    peekPendingPassthrough: (runtimeSession: any) => runtimeSession.pendingPassthroughs[0],
-    shiftPendingPassthrough: (runtimeSession: any) => runtimeSession.pendingPassthroughs.shift(),
-    setSlashCommandsState: (runtimeSession: any, commands: string[]) => {
-      runtimeSession.state = { ...runtimeSession.state, slash_commands: commands };
-    },
-    registerCLICommands: (runtimeSession: any, commands: string[]) => {
-      runtimeSession.registry.registerFromCLI(
-        commands.map((name: string) => ({ name, description: "" })),
-      );
-    },
+    getRuntime: () => createMockRuntime(session),
   });
   return { manager, emitEvent, broadcaster };
 }
@@ -104,52 +112,9 @@ describe("BackendConnector failure injection", () => {
       sendTo: vi.fn(),
     } as any;
 
-    const manager = new BackendConnector({
-      adapter,
-      adapterResolver: null,
-      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
-      metrics: null,
-      broadcaster,
-      routeUnifiedMessage: vi.fn(),
-      emitEvent,
-      onBackendConnectedState: (runtimeSession, params) => {
-        runtimeSession.backendSession = params.backendSession;
-        runtimeSession.backendAbort = params.backendAbort;
-        runtimeSession.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
-        runtimeSession.adapterSlashExecutor = params.slashExecutor;
-      },
-      onBackendDisconnectedState: (runtimeSession) => {
-        runtimeSession.backendSession = null;
-        runtimeSession.backendAbort = null;
-        runtimeSession.backendSessionId = undefined;
-        runtimeSession.adapterSupportsSlashPassthrough = false;
-        runtimeSession.adapterSlashExecutor = null;
-      },
-      getBackendSession: (runtimeSession) => runtimeSession.backendSession ?? null,
-      getBackendAbort: (runtimeSession) => runtimeSession.backendAbort ?? null,
-      drainPendingMessages: (runtimeSession) => {
-        const pending = runtimeSession.pendingMessages;
-        runtimeSession.pendingMessages = [];
-        return pending;
-      },
-      drainPendingPermissionIds: (runtimeSession) => {
-        const ids = Array.from(runtimeSession.pendingPermissions.keys());
-        runtimeSession.pendingPermissions.clear();
-        return ids;
-      },
-      peekPendingPassthrough: (runtimeSession) => runtimeSession.pendingPassthroughs[0],
-      shiftPendingPassthrough: (runtimeSession) => runtimeSession.pendingPassthroughs.shift(),
-      setSlashCommandsState: (runtimeSession, commands) => {
-        runtimeSession.state = { ...runtimeSession.state, slash_commands: commands };
-      },
-      registerCLICommands: (runtimeSession, commands) => {
-        runtimeSession.registry.registerFromCLI(
-          commands.map((name) => ({ name, description: "" })),
-        );
-      },
-    });
-
     const session = createSession("sess-fi");
+    const { manager } = buildConnectorDeps(adapter, session, emitEvent, broadcaster);
+
     await manager.connectBackend(session);
 
     adapter.failStream("sess-fi", new Error("Injected stream failure"));
@@ -174,10 +139,14 @@ describe("BackendConnector failure injection", () => {
   it("drains pending passthroughs with slash_command_error when stream fails (lines 594-605)", async () => {
     const adapter = new FailureInjectionBackendAdapter();
     const emitEvent = vi.fn();
-    const broadcaster = { broadcast: vi.fn(), broadcastToParticipants: vi.fn(), sendTo: vi.fn() } as any;
-    const { manager } = buildConnectorDeps(adapter, emitEvent, broadcaster);
-
+    const broadcaster = {
+      broadcast: vi.fn(),
+      broadcastToParticipants: vi.fn(),
+      sendTo: vi.fn(),
+    } as any;
     const session = createSession("sess-drain-fail");
+    const { manager } = buildConnectorDeps(adapter, session, emitEvent, broadcaster);
+
     // Pre-populate pending passthrough entries
     session.pendingPassthroughs.push(makePassthrough("/compact", "req-compact"));
 
@@ -200,10 +169,14 @@ describe("BackendConnector failure injection", () => {
   it("drains pending passthroughs with slash_command_error when stream ends unexpectedly (lines 619-630)", async () => {
     const adapter = new FailureInjectionBackendAdapter();
     const emitEvent = vi.fn();
-    const broadcaster = { broadcast: vi.fn(), broadcastToParticipants: vi.fn(), sendTo: vi.fn() } as any;
-    const { manager } = buildConnectorDeps(adapter, emitEvent, broadcaster);
-
+    const broadcaster = {
+      broadcast: vi.fn(),
+      broadcastToParticipants: vi.fn(),
+      sendTo: vi.fn(),
+    } as any;
     const session = createSession("sess-drain-end");
+    const { manager } = buildConnectorDeps(adapter, session, emitEvent, broadcaster);
+
     session.pendingPassthroughs.push(makePassthrough("/status", "req-status"));
 
     await manager.connectBackend(session);

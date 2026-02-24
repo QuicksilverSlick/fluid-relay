@@ -17,25 +17,24 @@ describe("CapabilitiesPolicy", () => {
       noopLogger,
       broadcaster,
       vi.fn(),
-      vi.fn(),
-      {
-        getState: (session) => session.state,
-        setState: (session, state) => {
-          session.state = state;
+      (session: any) => ({
+        getState: () => session.data.state,
+        setState: (state: any) => {
+          session.data.state = state;
         },
-        getPendingInitialize: (session) => session.pendingInitialize,
-        setPendingInitialize: (session, pendingInitialize) => {
+        getPendingInitialize: () => session.pendingInitialize,
+        setPendingInitialize: (pendingInitialize: any) => {
           session.pendingInitialize = pendingInitialize;
         },
-        trySendRawToBackend: (session, ndjson) => {
+        trySendRawToBackend: (ndjson: string) => {
           if (!session.backendSession) return "no_backend";
           session.backendSession.sendRaw?.(ndjson);
           return "sent";
         },
-        registerCLICommands: (session, commands) => {
+        registerCLICommands: (commands: any[]) => {
           session.registry.registerFromCLI(commands);
         },
-      },
+      }),
     );
 
     const session = createMockSession();

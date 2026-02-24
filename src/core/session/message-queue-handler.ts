@@ -9,7 +9,9 @@
 import type { ConsumerIdentity } from "../../interfaces/auth.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import type { SessionData } from "../session/session-data.js";
 import type { QueuedMessage, Session } from "./session-repository.js";
+import type { SessionRuntime } from "./session-runtime.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,45 +23,35 @@ type SendUserMessage = (
   options?: { images?: ImageAttachment[] },
 ) => void;
 
-type QueueStateAccessors = {
-  getLastStatus: (session: Session) => Session["lastStatus"];
-  setLastStatus: (session: Session, status: Session["lastStatus"]) => void;
-  getQueuedMessage: (session: Session) => QueuedMessage | null;
-  setQueuedMessage: (session: Session, queued: QueuedMessage | null) => void;
-  getConsumerIdentity: (session: Session, ws: WebSocketLike) => ConsumerIdentity | undefined;
-};
-
 // ─── MessageQueueHandler ──────────────────────────────────────────────────────
 
 export class MessageQueueHandler {
-  private readonly queueState: QueueStateAccessors;
-
   constructor(
     private broadcaster: ConsumerBroadcaster,
     private sendUserMessage: SendUserMessage,
-    queueState: QueueStateAccessors,
-  ) {
-    this.queueState = queueState;
+    private getRuntime: (session: Session) => SessionRuntime,
+    private onQueuedMessageSet?: (session: Session) => void,
+  ) {}
+
+  private getLastStatus(session: Session): SessionData["lastStatus"] {
+    return this.getRuntime(session).getLastStatus();
   }
 
-  private getLastStatus(session: Session): Session["lastStatus"] {
-    return this.queueState.getLastStatus(session);
-  }
-
-  private setLastStatus(session: Session, status: Session["lastStatus"]): void {
-    this.queueState.setLastStatus(session, status);
+  private setLastStatus(session: Session, status: SessionData["lastStatus"]): void {
+    this.getRuntime(session).setLastStatus(status);
   }
 
   private getQueuedMessage(session: Session): QueuedMessage | null {
-    return this.queueState.getQueuedMessage(session);
+    return this.getRuntime(session).getQueuedMessage();
   }
 
   private setQueuedMessage(session: Session, queued: QueuedMessage | null): void {
-    this.queueState.setQueuedMessage(session, queued);
+    this.getRuntime(session).setQueuedMessage(queued);
+    this.onQueuedMessageSet?.(session);
   }
 
   private getConsumerIdentity(session: Session, ws: WebSocketLike): ConsumerIdentity | undefined {
-    return this.queueState.getConsumerIdentity(session, ws);
+    return this.getRuntime(session).getConsumerIdentity(ws);
   }
 
   handleQueueMessage(

@@ -2,7 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 import type { BackendConnectorDeps } from "./backend-connector.js";
 import { BackendConnector } from "./backend-connector.js";
 
+function createMockRuntime() {
+  return {
+    attachBackendConnection: vi.fn(),
+    resetBackendConnectionState: vi.fn(),
+    getBackendSession: vi.fn(() => null),
+    getBackendAbort: vi.fn(() => null),
+    drainPendingMessages: vi.fn(() => []),
+    drainPendingPermissionIds: vi.fn(() => []),
+    peekPendingPassthrough: vi.fn(() => undefined),
+    shiftPendingPassthrough: vi.fn(() => undefined),
+    getState: vi.fn(() => ({ slash_commands: [] })),
+    setState: vi.fn(),
+    registerSlashCommandNames: vi.fn(),
+  };
+}
+
 function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnectorDeps {
+  const mockRuntime = createMockRuntime();
   return {
     adapter: {
       name: "test",
@@ -31,16 +48,7 @@ function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnector
     } as any,
     routeUnifiedMessage: vi.fn(),
     emitEvent: vi.fn(),
-    onBackendConnectedState: vi.fn(),
-    onBackendDisconnectedState: vi.fn(),
-    getBackendSession: vi.fn(() => null),
-    getBackendAbort: vi.fn(() => null),
-    drainPendingMessages: vi.fn(() => []),
-    drainPendingPermissionIds: vi.fn(() => []),
-    peekPendingPassthrough: vi.fn(() => undefined),
-    shiftPendingPassthrough: vi.fn(() => undefined),
-    setSlashCommandsState: vi.fn(),
-    registerCLICommands: vi.fn(),
+    getRuntime: () => mockRuntime as any,
     ...overrides,
   };
 }
@@ -49,7 +57,8 @@ describe("BackendConnector", () => {
   it("delegates lifecycle operations to underlying manager", async () => {
     const deps = createDeps();
     const connector = new BackendConnector(deps);
-    const session = { id: "s1", adapterName: undefined } as any;
+    const session = { id: "s1", data: { adapterName: undefined } } as any;
+    session.data = session;
 
     expect(connector.hasAdapter).toBe(true);
     await connector.connectBackend(session, { resume: true });
@@ -75,33 +84,50 @@ describe("BackendConnector", () => {
 
     // Line 173: content_block_delta with non-object delta
     expect(
-      chunk({ type: "stream_event", metadata: { event: { type: "content_block_delta", delta: null } } }),
+      chunk({
+        type: "stream_event",
+        metadata: { event: { type: "content_block_delta", delta: null } },
+      }),
     ).toBe("");
 
     // Line 176: content_block_delta delta exists but has no text field
     expect(
-      chunk({ type: "stream_event", metadata: { event: { type: "content_block_delta", delta: { type: "input_json_delta" } } } }),
+      chunk({
+        type: "stream_event",
+        metadata: { event: { type: "content_block_delta", delta: { type: "input_json_delta" } } },
+      }),
     ).toBe("");
 
     // Line 181: content_block_start with null block
     expect(
-      chunk({ type: "stream_event", metadata: { event: { type: "content_block_start", content_block: null } } }),
+      chunk({
+        type: "stream_event",
+        metadata: { event: { type: "content_block_start", content_block: null } },
+      }),
     ).toBe("");
 
     // Line 184: content_block_start with non-text block type
     expect(
-      chunk({ type: "stream_event", metadata: { event: { type: "content_block_start", content_block: { type: "tool_use" } } } }),
+      chunk({
+        type: "stream_event",
+        metadata: { event: { type: "content_block_start", content_block: { type: "tool_use" } } },
+      }),
     ).toBe("");
 
     // Line 184: content_block_start with text type but text is not a string
     expect(
-      chunk({ type: "stream_event", metadata: { event: { type: "content_block_start", content_block: { type: "text", text: 42 } } } }),
+      chunk({
+        type: "stream_event",
+        metadata: {
+          event: { type: "content_block_start", content_block: { type: "text", text: 42 } },
+        },
+      }),
     ).toBe("");
 
     // Line 187: unknown event type
-    expect(
-      chunk({ type: "stream_event", metadata: { event: { type: "message_start" } } }),
-    ).toBe("");
+    expect(chunk({ type: "stream_event", metadata: { event: { type: "message_start" } } })).toBe(
+      "",
+    );
   });
 
   // ── connectBackend re-connect: existing session close() error (line 413) ───
@@ -110,12 +136,16 @@ describe("BackendConnector", () => {
     const failingClose = vi.fn().mockRejectedValue(new Error("close failed"));
     const existingSession = { close: failingClose } as any;
 
+    const mockRuntime = createMockRuntime();
+    mockRuntime.getBackendSession.mockReturnValue(existingSession);
+    mockRuntime.getBackendAbort.mockReturnValue({ abort: vi.fn() } as any);
+
     const deps = createDeps({
-      getBackendSession: vi.fn(() => existingSession),
-      getBackendAbort: vi.fn(() => ({ abort: vi.fn() } as any)),
+      getRuntime: () => mockRuntime as any,
     });
     const connector = new BackendConnector(deps);
-    const session = { id: "s-reconnect", adapterName: undefined } as any;
+    const session = { id: "s-reconnect", data: { adapterName: undefined } } as any;
+    session.data = session;
 
     // Should not throw — the close error is caught and logged (line 413)
     await expect(connector.connectBackend(session)).resolves.not.toThrow();
@@ -131,12 +161,17 @@ describe("BackendConnector", () => {
     const failingClose = vi.fn().mockRejectedValue(new Error("disconnect close failed"));
     const backendSession = { close: failingClose } as any;
 
+    const mockRuntime = createMockRuntime();
+    mockRuntime.getBackendSession.mockReturnValue(backendSession);
+    mockRuntime.getBackendAbort.mockReturnValue({ abort: vi.fn() } as any);
+    mockRuntime.drainPendingPermissionIds.mockReturnValue([]);
+
     const deps = createDeps({
-      getBackendSession: vi.fn(() => backendSession),
-      getBackendAbort: vi.fn(() => ({ abort: vi.fn() } as any)),
+      getRuntime: () => mockRuntime as any,
     });
     const connector = new BackendConnector(deps);
-    const session = { id: "s-disco", adapterName: undefined } as any;
+    const session = { id: "s-disco", data: { adapterName: undefined } } as any;
+    session.data = session;
 
     // Should not throw — the close error is caught and logged (line 513)
     await expect(connector.disconnectBackend(session)).resolves.not.toThrow();

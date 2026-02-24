@@ -64,7 +64,6 @@ export {
 } from "./core/session/session-lifecycle.js";
 export { SessionRuntime } from "./core/session/session-runtime.js";
 export { SimpleSessionRegistry } from "./core/session/simple-session-registry.js";
-export { SessionBridge } from "./core/session-bridge.js";
 export type { SessionCoordinatorOptions } from "./core/session-coordinator.js";
 export { SessionCoordinator } from "./core/session-coordinator.js";
 export type { SlashCommandResult } from "./core/slash/slash-command-executor.js";

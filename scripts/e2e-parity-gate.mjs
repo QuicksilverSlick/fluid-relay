@@ -17,7 +17,7 @@ const REQUIRED_TEST_FILES = [
   "src/core/coordinator/session-lifecycle.integration.test.ts",
   "src/core/coordinator/session-status.integration.test.ts",
   "src/core/coordinator/streaming-conversation.integration.test.ts",
-  "src/core/bridge/permission-flow.integration.test.ts",
+  "src/core/coordinator/permission-flow.integration.test.ts",
   "src/core/consumer/presence-rbac.integration.test.ts",
   "src/core/session/message-queue.integration.test.ts",
   "src/server/ws-server-flow.integration.test.ts",

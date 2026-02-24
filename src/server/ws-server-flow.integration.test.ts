@@ -9,9 +9,12 @@ import type {
   BackendSession,
   ConnectOptions,
 } from "../core/interfaces/backend-adapter.js";
-import { SessionBridge } from "../core/session-bridge.js";
 import type { UnifiedMessage } from "../core/types/unified-message.js";
-import { createMessageChannel } from "../testing/adapter-test-helpers.js";
+import {
+  type BridgeTestWrapper,
+  createBridgeWithAdapter,
+  createMessageChannel,
+} from "../testing/adapter-test-helpers.js";
 import type { CLIMessage } from "../types/cli-messages.js";
 import { parseNDJSON } from "../utils/ndjson.js";
 import { OriginValidator } from "./origin-validator.js";
@@ -189,13 +192,13 @@ function waitForMessage(
  * needs to be sure the adapter path is wired before sending consumer messages.
  */
 async function startWiredServer(options?: { originValidator?: OriginValidator }): Promise<{
-  bridge: SessionBridge;
+  bridge: BridgeTestWrapper;
   adapter: E2EBackendAdapter;
   port: number;
   waitForBackend: (sessionId: string) => Promise<void>;
 }> {
   const adapter = new E2EBackendAdapter();
-  const bridge = new SessionBridge({ config: { port: 3456 }, adapter });
+  const { bridge } = createBridgeWithAdapter({ adapter });
 
   // Track pending connectBackend promises so tests can await them
   const pendingConnects = new Map<string, Promise<void>>();

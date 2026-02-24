@@ -5,8 +5,9 @@ vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
 import type { Authenticator, ConsumerIdentity } from "../interfaces/auth.js";
 import type { WebSocketLike } from "../interfaces/transport.js";
 import {
+  type BridgeTestWrapper,
   createBridgeWithAdapter,
-  MockBackendAdapter,
+  type MockBackendAdapter,
   type MockBackendSession,
   makeAssistantUnifiedMsg,
   makePermissionRequestUnifiedMsg,
@@ -20,12 +21,11 @@ import {
   createTestSocket as createMockSocket,
 } from "../testing/cli-message-factories.js";
 import type { ConsumerMessage } from "../types/consumer-messages.js";
-import { SessionBridge } from "./session-bridge.js";
 
 // ─── Programmatic API ───────────────────────────────────────────────────────
 
-describe("SessionBridge — Programmatic API", () => {
-  let bridge: SessionBridge;
+describe("Session Core — Programmatic API", () => {
+  let bridge: BridgeTestWrapper;
   let backendSession: MockBackendSession;
 
   beforeEach(async () => {
@@ -100,10 +100,7 @@ describe("SessionBridge — Programmatic API", () => {
         behind: 0,
       }),
     };
-    const seededBridge = new SessionBridge({
-      gitResolver: mockGitResolver,
-      config: { port: 3456 },
-    });
+    const { bridge: seededBridge } = createBridgeWithAdapter({ gitResolver: mockGitResolver });
 
     seededBridge.seedSessionState("seed-1", { cwd: "/project", model: "opus" });
 
@@ -129,10 +126,7 @@ describe("SessionBridge — Programmatic API", () => {
       setArchived: vi.fn(() => false),
       flush: vi.fn().mockResolvedValue(undefined),
     };
-    const flushBridge = new SessionBridge({
-      storage: storage as any,
-      config: { port: 3456 },
-    });
+    const { bridge: flushBridge } = createBridgeWithAdapter({ storage: storage as any });
 
     await flushBridge.close();
 
@@ -146,19 +140,16 @@ function createAuthBridge(options?: {
   authenticator?: Authenticator;
   config?: { port: number; authTimeoutMs?: number };
 }) {
-  const adapter = new MockBackendAdapter();
-  const bridge = new SessionBridge({
+  const { bridge, adapter } = createBridgeWithAdapter({
     authenticator: options?.authenticator,
-    config: options?.config ?? { port: 3456 },
-    logger: noopLogger,
-    adapter,
+    config: options?.config,
   });
   return { bridge, adapter };
 }
 
 const flushAuth = () => new Promise((r) => setTimeout(r, 0));
 
-describe("SessionBridge — auth integration", () => {
+describe("Session Core — auth integration", () => {
   it("synchronous authenticator throw is caught and auth fails", () => {
     const authenticator: Authenticator = {
       authenticate: () => {
@@ -380,7 +371,7 @@ function createCharacterizationSocket(): WebSocketLike & {
 }
 
 async function setupCharacterizationSession(
-  bridge: SessionBridge,
+  bridge: BridgeTestWrapper,
   adapter: MockBackendAdapter,
   sessionId = "char-session",
 ) {
@@ -398,8 +389,8 @@ function allCharacterizationMessages(socket: { sentMessages: string[] }): Consum
   return socket.sentMessages.map((s) => JSON.parse(s));
 }
 
-describe("SessionBridge Characterization", () => {
-  let bridge: SessionBridge;
+describe("Session Core Characterization", () => {
+  let bridge: BridgeTestWrapper;
   let adapter: MockBackendAdapter;
 
   beforeEach(() => {
@@ -584,8 +575,8 @@ describe("SessionBridge Characterization", () => {
 
 // ─── Event Emission ──────────────────────────────────────────────────────────
 
-describe("SessionBridge — Event emission", () => {
-  let bridge: SessionBridge;
+describe("Session Core — Event emission", () => {
+  let bridge: BridgeTestWrapper;
   let adapter: MockBackendAdapter;
 
   beforeEach(() => {
@@ -654,8 +645,8 @@ describe("SessionBridge — Event emission", () => {
 
 // ─── Behavior lock: connectBackend event ordering ───────────────────────────
 
-describe("SessionBridge — connectBackend event ordering (behavior lock)", () => {
-  let bridge: SessionBridge;
+describe("Session Core — connectBackend event ordering (behavior lock)", () => {
+  let bridge: BridgeTestWrapper;
   let adapter: MockBackendAdapter;
 
   beforeEach(() => {

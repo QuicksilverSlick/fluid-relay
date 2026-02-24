@@ -10,20 +10,63 @@
  * - Layer 2 (scenario): setupInitializedSession, translateAndPush
  */
 
+import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { translate } from "../adapters/claude/message-translator.js";
 import { MemoryStorage } from "../adapters/memory-storage.js";
+import { BackendConnector } from "../core/backend/backend-connector.js";
+import { CapabilitiesPolicy } from "../core/capabilities/capabilities-policy.js";
+import {
+  ConsumerBroadcaster,
+  MAX_CONSUMER_MESSAGE_SIZE,
+} from "../core/consumer/consumer-broadcaster.js";
 import type { RateLimiterFactory } from "../core/consumer/consumer-gatekeeper.js";
+import { ConsumerGatekeeper } from "../core/consumer/consumer-gatekeeper.js";
+import { ConsumerGateway } from "../core/consumer/consumer-gateway.js";
 import type {
   BackendAdapter,
   BackendCapabilities,
   BackendSession,
   ConnectOptions,
 } from "../core/interfaces/backend-adapter.js";
+import type { InboundCommand } from "../core/interfaces/runtime-commands.js";
 import type { MessageTracer } from "../core/messaging/message-tracer.js";
-import { SessionBridge } from "../core/session-bridge.js";
+import { noopTracer } from "../core/messaging/message-tracer.js";
+import {
+  generateSlashRequestId,
+  generateTraceId,
+} from "../core/messaging/message-tracing-utils.js";
+import { GitInfoTracker } from "../core/session/git-info-tracker.js";
+import { MessageQueueHandler } from "../core/session/message-queue-handler.js";
+import type { SessionData } from "../core/session/session-data.js";
+import type { SystemSignal } from "../core/session/session-event.js";
+import { InMemorySessionLeaseCoordinator } from "../core/session/session-lease-coordinator.js";
+import type { Session } from "../core/session/session-repository.js";
+import { SessionRepository } from "../core/session/session-repository.js";
+import type { SessionRuntime } from "../core/session/session-runtime.js";
+import { SessionRuntime as SessionRuntimeImpl } from "../core/session/session-runtime.js";
+import {
+  AdapterNativeHandler,
+  LocalHandler,
+  PassthroughHandler,
+  SlashCommandChain,
+  UnsupportedHandler,
+} from "../core/slash/slash-command-chain.js";
+import { SlashCommandExecutor } from "../core/slash/slash-command-executor.js";
+import { SlashCommandRegistry } from "../core/slash/slash-command-registry.js";
+import { SlashCommandService } from "../core/slash/slash-command-service.js";
+import { TeamToolCorrelationBuffer } from "../core/team/team-tool-correlation.js";
 import type { UnifiedMessage } from "../core/types/unified-message.js";
 import { createUnifiedMessage } from "../core/types/unified-message.js";
+import type { AuthContext, Authenticator } from "../interfaces/auth.js";
+import type { GitInfoResolver } from "../interfaces/git-resolver.js";
+import type { Logger } from "../interfaces/logger.js";
+import type { SessionStorage } from "../interfaces/storage.js";
+import type { WebSocketLike } from "../interfaces/transport.js";
 import type { CLIMessage } from "../types/cli-messages.js";
+import { resolveConfig } from "../types/config.js";
+import type { BridgeEventMap } from "../types/events.js";
+import type { SessionSnapshot } from "../types/session-state.js";
 
 // ─── Layer 1: Plumbing ──────────────────────────────────────────────────────
 
@@ -154,27 +197,337 @@ export const noopLogger = {
 };
 
 /**
- * Create a SessionBridge wired with a MockBackendAdapter.
- * Returns the bridge, storage, and adapter for test assertions.
+ * Minimal session-core wrapper returned by createBridgeWithAdapter.
+ * Assembles SessionRepository + SessionRuntime + BackendConnector for integration tests.
+ */
+export type BridgeTestWrapper = {
+  connectBackend(
+    sessionId: string,
+    options?: { resume?: boolean; adapterOptions?: Record<string, unknown> },
+  ): Promise<void>;
+  disconnectBackend(sessionId: string): Promise<void>;
+  sendUserMessage(sessionId: string, content: string, options?: Record<string, unknown>): void;
+  sendToBackend(sessionId: string, message: UnifiedMessage): void;
+  restoreFromStorage(): number;
+  getOrCreateSession(sessionId: string): Session;
+  removeSession(sessionId: string): void;
+  getSession(sessionId: string): SessionSnapshot | undefined;
+  seedSessionState(sessionId: string, params: { cwd?: string; model?: string }): void;
+  handleConsumerOpen(ws: WebSocketLike, context: AuthContext): void;
+  handleConsumerMessage(ws: WebSocketLike, sessionId: string, data: string | Buffer): void;
+  handleConsumerClose(ws: WebSocketLike, sessionId: string): void;
+  close(): Promise<void>;
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  off(event: string, listener: (...args: unknown[]) => void): void;
+};
+
+/**
+ * Create session services wired with a MockBackendAdapter.
+ * Returns a bridge-like wrapper, storage, and adapter for test assertions.
  */
 export function createBridgeWithAdapter(options?: {
-  storage?: MemoryStorage;
+  storage?: SessionStorage;
   adapter?: BackendAdapter;
   config?: Record<string, unknown>;
   rateLimiterFactory?: RateLimiterFactory;
   tracer?: MessageTracer;
+  gitResolver?: GitInfoResolver;
+  authenticator?: Authenticator;
 }) {
   const storage = options?.storage ?? new MemoryStorage();
   const adapter = options?.adapter ?? new MockBackendAdapter();
-  const bridge = new SessionBridge({
-    storage,
-    config: { port: 3456, ...options?.config },
-    logger: noopLogger,
-    adapter,
-    rateLimiterFactory: options?.rateLimiterFactory,
-    tracer: options?.tracer,
+  const emitter = new EventEmitter();
+  const logger = noopLogger as Logger;
+  const config = resolveConfig({ port: 3456, ...options?.config });
+  const tracer = (options?.tracer ?? noopTracer) as MessageTracer;
+  const gitResolver = options?.gitResolver ?? null;
+
+  const store = new SessionRepository(storage, {
+    createCorrelationBuffer: () => new TeamToolCorrelationBuffer(),
+    createRegistry: () => new SlashCommandRegistry(),
   });
-  return { bridge, storage, adapter: adapter as MockBackendAdapter };
+
+  const leaseCoordinator = new InMemorySessionLeaseCoordinator();
+  const leaseOwnerId = `test-${randomUUID()}`;
+  const runtimes = new Map<string, SessionRuntime>();
+
+  // emitEvent: forwards to emitter, with lifecycle signal dispatch
+  const emitEvent = (type: string, payload: unknown): void => {
+    if (
+      payload &&
+      typeof payload === "object" &&
+      "sessionId" in payload &&
+      (type === "backend:connected" || type === "backend:disconnected" || type === "session:closed")
+    ) {
+      const sessionId = (payload as { sessionId?: unknown }).sessionId;
+      if (typeof sessionId === "string") {
+        const runtime = runtimes.get(sessionId);
+        if (runtime) {
+          const signal: SystemSignal =
+            type === "backend:connected"
+              ? { kind: "BACKEND_CONNECTED" }
+              : type === "backend:disconnected"
+                ? { kind: "BACKEND_DISCONNECTED", reason: "bridge-event" }
+                : { kind: "SESSION_CLOSED" };
+          runtime.process({ type: "SYSTEM_SIGNAL", signal });
+        }
+      }
+    }
+    emitter.emit(type, payload);
+  };
+
+  const getOrCreateRuntime = (session: Session): SessionRuntime => {
+    let r = runtimes.get(session.id);
+    if (!r) {
+      r = new SessionRuntimeImpl(session, {
+        config: { maxMessageHistoryLength: config.maxMessageHistoryLength },
+        broadcaster,
+        queueHandler,
+        slashService,
+        backendConnector,
+        tracer,
+        store,
+        logger,
+        emitEvent,
+        gitTracker,
+        gitResolver,
+        capabilitiesPolicy,
+      });
+      runtimes.set(session.id, r);
+    }
+    return r;
+  };
+
+  const withMutableSession = (
+    sessionId: string,
+    op: string,
+    fn: (session: Session) => void,
+  ): void => {
+    if (!leaseCoordinator.ensureLease(sessionId, leaseOwnerId)) {
+      logger.warn(`Session mutation blocked: lease not owned`, { sessionId, operation: op });
+      return;
+    }
+    const session = store.get(sessionId);
+    if (session) fn(session);
+  };
+
+  // Declare service variables before circular construction
+  let broadcaster!: ConsumerBroadcaster;
+  let gitTracker!: GitInfoTracker;
+  let capabilitiesPolicy!: CapabilitiesPolicy;
+  let queueHandler!: MessageQueueHandler;
+  let slashService!: SlashCommandService;
+  let backendConnector!: BackendConnector;
+  let consumerGateway!: ConsumerGateway;
+
+  broadcaster = new ConsumerBroadcaster(
+    logger,
+    (sessionId, msg) => emitEvent("message:outbound", { sessionId, message: msg }),
+    tracer,
+    (session, ws) => getOrCreateRuntime(session).removeConsumer(ws),
+    { getConsumerSockets: (session) => getOrCreateRuntime(session).getConsumerSockets() },
+  );
+
+  const gatekeeper = new ConsumerGatekeeper(
+    options?.authenticator ?? null,
+    config,
+    options?.rateLimiterFactory,
+  );
+
+  gitTracker = new GitInfoTracker(gitResolver, {
+    getState: (session) => getOrCreateRuntime(session).getState(),
+    setState: (session, state: SessionData["state"]) => getOrCreateRuntime(session).setState(state),
+  });
+
+  capabilitiesPolicy = new CapabilitiesPolicy(config, logger, broadcaster, emitEvent, (session) =>
+    getOrCreateRuntime(session),
+  );
+
+  queueHandler = new MessageQueueHandler(
+    broadcaster,
+    (sessionId, content, opts?: { images?: { media_type: string; data: string }[] }) =>
+      withMutableSession(sessionId, "sendUserMessage", (s) =>
+        getOrCreateRuntime(s).sendUserMessage(content, opts),
+      ),
+    (session) => getOrCreateRuntime(session),
+    (session) => store.persistSync(session),
+  );
+
+  const localHandler = new LocalHandler({
+    executor: new SlashCommandExecutor(),
+    broadcaster,
+    emitEvent: emitEvent as (
+      type: keyof BridgeEventMap,
+      payload: BridgeEventMap[keyof BridgeEventMap],
+    ) => void,
+    tracer,
+  });
+  const commandChain = new SlashCommandChain([
+    localHandler,
+    new AdapterNativeHandler({
+      broadcaster,
+      emitEvent: emitEvent as (
+        type: keyof BridgeEventMap,
+        payload: BridgeEventMap[keyof BridgeEventMap],
+      ) => void,
+      tracer,
+    }),
+    new PassthroughHandler({
+      broadcaster,
+      emitEvent: emitEvent as (
+        type: keyof BridgeEventMap,
+        payload: BridgeEventMap[keyof BridgeEventMap],
+      ) => void,
+      registerPendingPassthrough: (session, entry) =>
+        getOrCreateRuntime(session).enqueuePendingPassthrough(entry),
+      sendUserMessage: (sessionId, content, trace) =>
+        withMutableSession(sessionId, "sendUserMessage", (s) =>
+          getOrCreateRuntime(s).sendUserMessage(content, {
+            traceId: trace?.traceId,
+            slashRequestId: trace?.requestId,
+            slashCommand: trace?.command,
+          }),
+        ),
+      tracer,
+    }),
+    new UnsupportedHandler({
+      broadcaster,
+      emitEvent: emitEvent as (
+        type: keyof BridgeEventMap,
+        payload: BridgeEventMap[keyof BridgeEventMap],
+      ) => void,
+      tracer,
+    }),
+  ]);
+  slashService = new SlashCommandService({
+    tracer,
+    now: () => Date.now(),
+    generateTraceId: () => generateTraceId(),
+    generateSlashRequestId: () => generateSlashRequestId(),
+    commandChain,
+    localHandler,
+  });
+
+  backendConnector = new BackendConnector({
+    adapter,
+    adapterResolver: null,
+    logger,
+    metrics: null,
+    broadcaster,
+    routeUnifiedMessage: (session, msg) =>
+      withMutableSession(session.id, "handleBackendMessage", (s) =>
+        getOrCreateRuntime(s).process({ type: "BACKEND_MESSAGE", message: msg }),
+      ),
+    emitEvent: emitEvent as (
+      type: keyof BridgeEventMap,
+      payload: BridgeEventMap[keyof BridgeEventMap],
+    ) => void,
+    getRuntime: (session) => getOrCreateRuntime(session),
+    tracer,
+  });
+
+  consumerGateway = new ConsumerGateway({
+    sessions: { get: (sessionId) => store.get(sessionId) },
+    gatekeeper,
+    broadcaster,
+    gitTracker,
+    logger,
+    metrics: null,
+    emit: emitEvent as ConsumerGateway["deps"]["emit"],
+    getRuntime: (session) => getOrCreateRuntime(session),
+    routeConsumerMessage: (session, msg: InboundCommand, ws) =>
+      withMutableSession(session.id, "handleInboundCommand", (s) =>
+        getOrCreateRuntime(s).process({ type: "INBOUND_COMMAND", command: msg, ws }),
+      ),
+    maxConsumerMessageSize: MAX_CONSUMER_MESSAGE_SIZE,
+    tracer,
+  });
+
+  // ── Lifecycle helpers ────────────────────────────────────────────────────
+  const getOrCreateSession = (sessionId: string): Session => {
+    leaseCoordinator.ensureLease(sessionId, leaseOwnerId);
+    const session = store.getOrCreate(sessionId);
+    getOrCreateRuntime(session);
+    return session;
+  };
+
+  const removeSessionLocal = (sessionId: string): void => {
+    const session = store.get(sessionId);
+    if (session) capabilitiesPolicy.cancelPendingInitialize(session);
+    runtimes.delete(sessionId);
+    store.remove(sessionId);
+    leaseCoordinator.releaseLease(sessionId, leaseOwnerId);
+  };
+
+  const closeSessionLocal = async (sessionId: string): Promise<void> => {
+    const session = store.get(sessionId);
+    if (!session) return;
+    const runtime = getOrCreateRuntime(session);
+    runtime.transitionLifecycle("closing", "session:close");
+    capabilitiesPolicy.cancelPendingInitialize(session);
+    if (runtime.getBackendSession()) {
+      await runtime.closeBackendConnection().catch(() => {});
+    }
+    runtime.closeAllConsumers();
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSED" } });
+    store.remove(sessionId);
+    runtimes.delete(sessionId);
+    leaseCoordinator.releaseLease(sessionId, leaseOwnerId);
+    emitEvent("session:closed", { sessionId });
+  };
+
+  const bridge: BridgeTestWrapper = {
+    connectBackend: async (sessionId, opts) => {
+      const session = getOrCreateSession(sessionId);
+      return backendConnector.connectBackend(session, opts);
+    },
+    disconnectBackend: async (sessionId) => {
+      const session = store.get(sessionId);
+      if (!session) return;
+      capabilitiesPolicy.cancelPendingInitialize(session);
+      return backendConnector.disconnectBackend(session);
+    },
+    sendUserMessage: (sessionId, content, opts) =>
+      withMutableSession(sessionId, "sendUserMessage", (s) =>
+        getOrCreateRuntime(s).sendUserMessage(content, opts as never),
+      ),
+    sendToBackend: (sessionId, message) =>
+      withMutableSession(sessionId, "sendToBackend", (s) =>
+        getOrCreateRuntime(s).sendToBackend(message),
+      ),
+    restoreFromStorage: () => store.restoreAll(),
+    getOrCreateSession,
+    removeSession: removeSessionLocal,
+    getSession: (sessionId) => {
+      const session = store.get(sessionId);
+      if (!session) return undefined;
+      return getOrCreateRuntime(session).getSessionSnapshot();
+    },
+    seedSessionState: (sessionId, params) => {
+      const session = getOrCreateSession(sessionId);
+      getOrCreateRuntime(session).seedSessionState(params);
+    },
+    handleConsumerOpen: (ws, context) => consumerGateway.handleConsumerOpen(ws, context),
+    handleConsumerMessage: (ws, sessionId, data) =>
+      consumerGateway.handleConsumerMessage(ws, sessionId, data),
+    handleConsumerClose: (ws, sessionId) => consumerGateway.handleConsumerClose(ws, sessionId),
+    close: async () => {
+      for (const sessionId of [...runtimes.keys()]) {
+        await closeSessionLocal(sessionId);
+      }
+      runtimes.clear();
+      const stor = store.getStorage();
+      if (stor?.flush) {
+        try {
+          await stor.flush();
+        } catch (_) {}
+      }
+      tracer.destroy();
+    },
+    on: (event, listener) => emitter.on(event, listener),
+    off: (event, listener) => emitter.off(event, listener),
+  };
+  return { bridge, storage: storage as MemoryStorage, adapter: adapter as MockBackendAdapter };
 }
 
 /**
@@ -182,7 +535,7 @@ export function createBridgeWithAdapter(options?: {
  * Returns the backend session ready for pushing more messages.
  */
 export async function setupInitializedSession(
-  bridge: SessionBridge,
+  bridge: BridgeTestWrapper,
   adapter: MockBackendAdapter,
   sessionId = "sess-1",
 ): Promise<MockBackendSession> {

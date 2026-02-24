@@ -1,5 +1,5 @@
-import { noopLogger } from "../utils/noop-logger.js";
 import type { Logger } from "../interfaces/logger.js";
+import { noopLogger } from "../utils/noop-logger.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 

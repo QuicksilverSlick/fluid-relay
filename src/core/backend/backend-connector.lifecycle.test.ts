@@ -140,7 +140,7 @@ class TestAdapter implements BackendAdapter {
 }
 
 function createSession(overrides?: Partial<Session>): Session {
-  return {
+  const s = {
     id: "sess-1",
     name: "test",
     state: "idle",
@@ -152,14 +152,81 @@ function createSession(overrides?: Partial<Session>): Session {
     consumers: new Set(),
     lastActivity: Date.now(),
     ...overrides,
-  } as Session;
+  } as any;
+  if (!s.data) s.data = s;
+  return s as Session;
 }
 
 function tick(ms = 10): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Creates a mock runtime that operates on the session object directly,
+ * mimicking what the real SessionRuntime does via its state-mutating methods.
+ */
+function createSessionAwareRuntime(session: any) {
+  return {
+    attachBackendConnection: vi.fn((params: any) => {
+      session.backendSession = params.backendSession;
+      session.backendAbort = params.backendAbort;
+      if (!session.data) session.data = session;
+      session.data.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
+      session.adapterSlashExecutor = params.slashExecutor;
+    }),
+    resetBackendConnectionState: vi.fn(() => {
+      session.backendSession = null;
+      session.backendAbort = null;
+      if (!session.data) session.data = session;
+      session.data.backendSessionId = undefined;
+      session.data.adapterSupportsSlashPassthrough = false;
+      session.adapterSlashExecutor = null;
+    }),
+    getBackendSession: vi.fn(() => session.backendSession ?? null),
+    getBackendAbort: vi.fn(() => session.backendAbort ?? null),
+    drainPendingMessages: vi.fn(() => {
+      const pending = ((session as any).pendingMessages ?? []) as UnifiedMessage[];
+      (session as any).pendingMessages = [];
+      if (session.data) session.data.pendingMessages = [];
+      return pending;
+    }),
+    drainPendingPermissionIds: vi.fn(() => {
+      const pendingPermissions =
+        ((session as any).pendingPermissions as Map<string, unknown> | undefined) ?? new Map();
+      const ids = Array.from(pendingPermissions.keys());
+      pendingPermissions.clear();
+      (session as any).pendingPermissions = pendingPermissions;
+      if (session.data) session.data.pendingPermissions = pendingPermissions;
+      return ids;
+    }),
+    peekPendingPassthrough: vi.fn(() => (session as any).pendingPassthroughs?.[0]),
+    shiftPendingPassthrough: vi.fn(() => (session as any).pendingPassthroughs?.shift()),
+    getState: vi.fn(() => {
+      const current = (session as any).state;
+      if (current && typeof current === "object") return current;
+      return { slash_commands: [] };
+    }),
+    setState: vi.fn((state: any) => {
+      const current = (session as any).state;
+      if (current && typeof current === "object") {
+        (session as any).state = state;
+        if (session.data && typeof session.data.state === "object") {
+          session.data.state = state;
+        }
+      }
+    }),
+    registerSlashCommandNames: vi.fn((commands: string[]) => {
+      const registry = (session as any).registry;
+      if (!registry || typeof registry.registerFromCLI !== "function") return;
+      registry.registerFromCLI(commands.map((name: string) => ({ name, description: "" })));
+    }),
+  };
+}
+
 function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnectorDeps {
+  // We use a proxy-based getRuntime so each session gets its own runtime instance
+  // that mutates the session's own fields (mirroring the real SessionRuntime behavior).
+  const runtimeCache = new WeakMap<object, ReturnType<typeof createSessionAwareRuntime>>();
   return {
     adapter: new TestAdapter(),
     adapterResolver: null,
@@ -171,46 +238,11 @@ function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnector
     } as any,
     routeUnifiedMessage: vi.fn(),
     emitEvent: vi.fn(),
-    onBackendConnectedState: (session, params) => {
-      (session as any).backendSession = params.backendSession;
-      (session as any).backendAbort = params.backendAbort;
-      (session as any).adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
-      (session as any).adapterSlashExecutor = params.slashExecutor;
-    },
-    onBackendDisconnectedState: (session) => {
-      (session as any).backendSession = null;
-      (session as any).backendAbort = null;
-      (session as any).backendSessionId = undefined;
-      (session as any).adapterSupportsSlashPassthrough = false;
-      (session as any).adapterSlashExecutor = null;
-    },
-    getBackendSession: (session) => (session as any).backendSession ?? null,
-    getBackendAbort: (session) => (session as any).backendAbort ?? null,
-    drainPendingMessages: (session) => {
-      const pending = ((session as any).pendingMessages ?? []) as UnifiedMessage[];
-      (session as any).pendingMessages = [];
-      return pending;
-    },
-    drainPendingPermissionIds: (session) => {
-      const pendingPermissions =
-        ((session as any).pendingPermissions as Map<string, unknown> | undefined) ?? new Map();
-      const ids = Array.from(pendingPermissions.keys());
-      pendingPermissions.clear();
-      (session as any).pendingPermissions = pendingPermissions;
-      return ids;
-    },
-    peekPendingPassthrough: (session) => (session as any).pendingPassthroughs?.[0],
-    shiftPendingPassthrough: (session) => (session as any).pendingPassthroughs?.shift(),
-    setSlashCommandsState: (session, commands) => {
-      const current = (session as any).state;
-      if (current && typeof current === "object") {
-        (session as any).state = { ...current, slash_commands: commands };
+    getRuntime: (session) => {
+      if (!runtimeCache.has(session)) {
+        runtimeCache.set(session, createSessionAwareRuntime(session));
       }
-    },
-    registerCLICommands: (session, commands) => {
-      const registry = (session as any).registry;
-      if (!registry || typeof registry.registerFromCLI !== "function") return;
-      registry.registerFromCLI(commands.map((name: string) => ({ name, description: "" })));
+      return runtimeCache.get(session) as any;
     },
     ...overrides,
   };
@@ -297,7 +329,7 @@ describe("BackendConnector", () => {
       await mgr.connectBackend(session);
 
       expect(testSession.sentMessages).toEqual([msg1, msg2]);
-      expect(session.pendingMessages).toEqual([]);
+      expect(session.data.pendingMessages).toEqual([]);
     });
 
     it("sets up passthrough handler when session supports it", async () => {
@@ -384,7 +416,7 @@ describe("BackendConnector", () => {
       const manager = new BackendConnector(deps);
       const session = createSession();
       await manager.connectBackend(session);
-      expect(session.adapterSupportsSlashPassthrough).toBe(true);
+      expect(session.data.adapterSupportsSlashPassthrough).toBe(true);
     });
 
     it("sets adapterSupportsSlashPassthrough false when adapter capabilities.slashCommands is false", async () => {
@@ -392,7 +424,7 @@ describe("BackendConnector", () => {
       const manager = new BackendConnector(deps);
       const session = createSession();
       await manager.connectBackend(session);
-      expect(session.adapterSupportsSlashPassthrough).toBe(false);
+      expect(session.data.adapterSupportsSlashPassthrough).toBe(false);
     });
   });
 
@@ -446,7 +478,7 @@ describe("BackendConnector", () => {
       expect(testSession.closed).toBe(true);
       expect(session.backendSession).toBeNull();
       expect(session.backendAbort).toBeNull();
-      expect(session.pendingPermissions.size).toBe(0);
+      expect(session.data.pendingPermissions.size).toBe(0);
       expect(deps.broadcaster.broadcastToParticipants).toHaveBeenCalledWith(
         session,
         expect.objectContaining({ type: "permission_cancelled" }),
@@ -489,9 +521,9 @@ describe("BackendConnector", () => {
       const manager = new BackendConnector(deps);
       const session = createSession();
       await manager.connectBackend(session);
-      expect(session.adapterSupportsSlashPassthrough).toBe(true);
+      expect(session.data.adapterSupportsSlashPassthrough).toBe(true);
       await manager.disconnectBackend(session);
-      expect(session.adapterSupportsSlashPassthrough).toBe(false);
+      expect(session.data.adapterSupportsSlashPassthrough).toBe(false);
     });
 
     it("clears backendSessionId on disconnect to avoid stale resume ids", async () => {
@@ -504,7 +536,7 @@ describe("BackendConnector", () => {
       });
 
       await manager.disconnectBackend(session);
-      expect(session.backendSessionId).toBeUndefined();
+      expect(session.data.backendSessionId).toBeUndefined();
     });
   });
 
@@ -793,7 +825,7 @@ describe("BackendConnector", () => {
       testSession.endStream();
       await tick(50);
 
-      expect(session.backendSessionId).toBeUndefined();
+      expect(session.data.backendSessionId).toBeUndefined();
     });
 
     it("emits backendConsumption error when backend stream iterator throws", async () => {

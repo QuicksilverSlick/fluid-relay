@@ -14,7 +14,7 @@ import type { WebSocketLike } from "../../interfaces/transport.js";
 import { CONSUMER_PROTOCOL_VERSION } from "../../types/consumer-messages.js";
 import { inboundMessageSchema } from "../../types/inbound-message-schema.js";
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
-import type { ConsumerTransportCoordinatorDeps } from "../interfaces/session-bridge-coordination.js";
+import type { ConsumerTransportCoordinatorDeps } from "../interfaces/session-coordination.js";
 import type { Session } from "../session/session-repository.js";
 
 export type ConsumerGatewayDeps = ConsumerTransportCoordinatorDeps;
@@ -54,8 +54,9 @@ export class ConsumerGateway {
         this.rejectMissingSession(ws, context.sessionId);
         return;
       }
+      const rt = this.deps.getRuntime(session);
       const identity = this.deps.gatekeeper.createAnonymousIdentity(
-        this.deps.allocateAnonymousIdentityIndex(session),
+        rt.allocateAnonymousIdentityIndex(),
       );
       this.acceptConsumer(ws, session, identity);
     }
@@ -95,7 +96,8 @@ export class ConsumerGateway {
     }
     const msg: InboundCommand = result.data;
 
-    const identity = this.deps.getConsumerIdentity(session, ws);
+    const rt = this.deps.getRuntime(session);
+    const identity = rt.getConsumerIdentity(ws);
     if (!identity) return;
 
     if (!this.deps.gatekeeper.authorize(identity, msg.type)) {
@@ -106,7 +108,7 @@ export class ConsumerGateway {
       return;
     }
 
-    if (!this.deps.checkRateLimit(session, ws)) {
+    if (!rt.checkRateLimit(ws, () => this.deps.gatekeeper.createRateLimiter())) {
       this.deps.logger.warn(`Rate limit exceeded for consumer in session ${sessionId}`);
       this.deps.metrics?.recordEvent({
         timestamp: Date.now(),
@@ -142,9 +144,10 @@ export class ConsumerGateway {
     const session = this.deps.sessions.get(sessionId);
     if (!session) return;
 
-    const identity = this.deps.unregisterConsumer(session, ws);
+    const rt = this.deps.getRuntime(session);
+    const identity = rt.removeConsumer(ws);
     this.deps.logger.info(
-      `Consumer disconnected for session ${sessionId} (${this.deps.getConsumerCount(session)} consumers)`,
+      `Consumer disconnected for session ${sessionId} (${rt.getConsumerCount()} consumers)`,
     );
     if (identity) {
       this.deps.metrics?.recordEvent({
@@ -156,7 +159,7 @@ export class ConsumerGateway {
     }
     this.deps.emit("consumer:disconnected", {
       sessionId,
-      consumerCount: this.deps.getConsumerCount(session),
+      consumerCount: rt.getConsumerCount(),
       identity,
     });
     this.deps.broadcaster.broadcastPresence(session);
@@ -180,9 +183,10 @@ export class ConsumerGateway {
 
   private acceptConsumer(ws: WebSocketLike, session: Session, identity: ConsumerIdentity): void {
     const sessionId = session.id;
-    this.deps.registerConsumer(session, ws, identity);
+    const rt = this.deps.getRuntime(session);
+    rt.addConsumer(ws, identity);
     this.deps.logger.info(
-      `Consumer connected for session ${sessionId} (${this.deps.getConsumerCount(session)} consumers)`,
+      `Consumer connected for session ${sessionId} (${rt.getConsumerCount()} consumers)`,
     );
     this.deps.metrics?.recordEvent({
       timestamp: Date.now(),
@@ -200,13 +204,14 @@ export class ConsumerGateway {
 
     this.deps.gitTracker.resolveGitInfo(session);
 
+    const state = rt.getState();
     this.deps.broadcaster.sendTo(ws, {
       type: "session_init",
-      session: this.deps.getState(session),
+      session: state,
       protocol_version: CONSUMER_PROTOCOL_VERSION,
     });
 
-    const messageHistory = this.deps.getMessageHistory(session);
+    const messageHistory = rt.getMessageHistory();
     if (messageHistory.length > 0) {
       this.deps.broadcaster.sendTo(ws, {
         type: "message_history",
@@ -214,7 +219,6 @@ export class ConsumerGateway {
       });
     }
 
-    const state = this.deps.getState(session);
     if (state.capabilities) {
       this.deps.broadcaster.sendTo(ws, {
         type: "capabilities_ready",
@@ -226,12 +230,12 @@ export class ConsumerGateway {
     }
 
     if (identity.role === "participant") {
-      for (const perm of this.deps.getPendingPermissions(session)) {
+      for (const perm of rt.getPendingPermissions()) {
         this.deps.broadcaster.sendTo(ws, { type: "permission_request", request: perm });
       }
     }
 
-    const queuedMessage = this.deps.getQueuedMessage(session);
+    const queuedMessage = rt.getQueuedMessage();
     if (queuedMessage) {
       this.deps.broadcaster.sendTo(ws, {
         type: "message_queued",
@@ -253,11 +257,11 @@ export class ConsumerGateway {
     });
     this.deps.emit("consumer:connected", {
       sessionId,
-      consumerCount: this.deps.getConsumerCount(session),
+      consumerCount: rt.getConsumerCount(),
       identity,
     });
 
-    if (this.deps.isBackendConnected(session)) {
+    if (rt.isBackendConnected()) {
       this.deps.broadcaster.sendTo(ws, { type: "cli_connected" });
     } else {
       this.deps.broadcaster.sendTo(ws, { type: "cli_disconnected" });

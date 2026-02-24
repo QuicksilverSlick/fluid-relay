@@ -22,6 +22,7 @@ import type { AdapterResolver } from "../interfaces/adapter-resolver.js";
 import type { BackendAdapter, BackendSession } from "../interfaces/backend-adapter.js";
 import { type MessageTracer, noopTracer, type TraceOutcome } from "../messaging/message-tracer.js";
 import type { Session } from "../session/session-repository.js";
+import type { SessionRuntime } from "../session/session-runtime.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 
 // -- Dependency contracts ----------------------------------------------------
@@ -39,24 +40,7 @@ export interface BackendConnectorDeps {
   broadcaster: ConsumerBroadcaster;
   routeUnifiedMessage: (session: Session, msg: UnifiedMessage) => void;
   emitEvent: EmitEvent;
-  onBackendConnectedState: (
-    session: Session,
-    params: {
-      backendSession: BackendSession;
-      backendAbort: AbortController;
-      supportsSlashPassthrough: boolean;
-      slashExecutor: Session["adapterSlashExecutor"] | null;
-    },
-  ) => void;
-  onBackendDisconnectedState: (session: Session) => void;
-  getBackendSession: (session: Session) => BackendSession | null;
-  getBackendAbort: (session: Session) => AbortController | null;
-  drainPendingMessages: (session: Session) => UnifiedMessage[];
-  drainPendingPermissionIds: (session: Session) => string[];
-  peekPendingPassthrough: (session: Session) => Session["pendingPassthroughs"][number] | undefined;
-  shiftPendingPassthrough: (session: Session) => Session["pendingPassthroughs"][number] | undefined;
-  setSlashCommandsState: (session: Session, commands: string[]) => void;
-  registerCLICommands: (session: Session, commands: string[]) => void;
+  getRuntime: (session: Session) => SessionRuntime;
   tracer?: MessageTracer;
 }
 
@@ -70,16 +54,7 @@ export class BackendConnector {
   private broadcaster: ConsumerBroadcaster;
   private routeUnifiedMessage: (session: Session, msg: UnifiedMessage) => void;
   private emitEvent: EmitEvent;
-  private onBackendConnectedState: BackendConnectorDeps["onBackendConnectedState"];
-  private onBackendDisconnectedState: BackendConnectorDeps["onBackendDisconnectedState"];
-  private getBackendSession: BackendConnectorDeps["getBackendSession"];
-  private getBackendAbort: BackendConnectorDeps["getBackendAbort"];
-  private drainPendingMessages: BackendConnectorDeps["drainPendingMessages"];
-  private drainPendingPermissionIds: BackendConnectorDeps["drainPendingPermissionIds"];
-  private peekPendingPassthrough: BackendConnectorDeps["peekPendingPassthrough"];
-  private shiftPendingPassthrough: BackendConnectorDeps["shiftPendingPassthrough"];
-  private setSlashCommandsState: BackendConnectorDeps["setSlashCommandsState"];
-  private registerCLICommands: BackendConnectorDeps["registerCLICommands"];
+  private runtime: (session: Session) => SessionRuntime;
   private tracer: MessageTracer;
   private passthroughTextBuffers = new Map<string, string>();
 
@@ -91,16 +66,7 @@ export class BackendConnector {
     this.broadcaster = deps.broadcaster;
     this.routeUnifiedMessage = deps.routeUnifiedMessage;
     this.emitEvent = deps.emitEvent;
-    this.onBackendConnectedState = deps.onBackendConnectedState;
-    this.onBackendDisconnectedState = deps.onBackendDisconnectedState;
-    this.getBackendSession = deps.getBackendSession;
-    this.getBackendAbort = deps.getBackendAbort;
-    this.drainPendingMessages = deps.drainPendingMessages;
-    this.drainPendingPermissionIds = deps.drainPendingPermissionIds;
-    this.peekPendingPassthrough = deps.peekPendingPassthrough;
-    this.shiftPendingPassthrough = deps.shiftPendingPassthrough;
-    this.setSlashCommandsState = deps.setSlashCommandsState;
-    this.registerCLICommands = deps.registerCLICommands;
+    this.runtime = deps.getRuntime;
     this.tracer = deps.tracer ?? noopTracer;
   }
 
@@ -237,47 +203,48 @@ export class BackendConnector {
       slashExecutor: Session["adapterSlashExecutor"] | null;
     },
   ): void {
-    this.onBackendConnectedState(session, params);
+    this.runtime(session).attachBackendConnection(params);
   }
 
   private applyBackendDisconnectedState(session: Session): void {
-    this.onBackendDisconnectedState(session);
+    this.runtime(session).resetBackendConnectionState();
   }
 
   private getBackendSessionRef(session: Session): BackendSession | null {
-    return this.getBackendSession(session);
+    return this.runtime(session).getBackendSession();
   }
 
   private getBackendAbortController(session: Session): AbortController | null {
-    return this.getBackendAbort(session);
+    return this.runtime(session).getBackendAbort();
   }
 
   private applySlashCommandsState(session: Session, commands: string[]): void {
-    this.setSlashCommandsState(session, commands);
+    const rt = this.runtime(session);
+    rt.setState({ ...rt.getState(), slash_commands: commands });
   }
 
   private applySlashRegistryCommands(session: Session, commands: string[]): void {
-    this.registerCLICommands(session, commands);
+    this.runtime(session).registerSlashCommandNames(commands);
   }
 
   private drainPendingMessagesQueue(session: Session): UnifiedMessage[] {
-    return this.drainPendingMessages(session);
+    return this.runtime(session).drainPendingMessages();
   }
 
   private drainPendingPermissionRequestIds(session: Session): string[] {
-    return this.drainPendingPermissionIds(session);
+    return this.runtime(session).drainPendingPermissionIds();
   }
 
   private peekPendingPassthroughEntry(
     session: Session,
   ): Session["pendingPassthroughs"][number] | undefined {
-    return this.peekPendingPassthrough(session);
+    return this.runtime(session).peekPendingPassthrough();
   }
 
   private shiftPendingPassthroughEntry(
     session: Session,
   ): Session["pendingPassthroughs"][number] | undefined {
-    return this.shiftPendingPassthrough(session);
+    return this.runtime(session).shiftPendingPassthrough();
   }
 
   private maybeEmitPendingPassthroughFromUnified(session: Session, msg: UnifiedMessage): void {
@@ -382,15 +349,15 @@ export class BackendConnector {
 
   /** Resolve the adapter for a session, falling back to the global adapter. */
   private resolveAdapter(session: Session): BackendAdapter | null {
-    if (session.adapterName && this.adapterResolver) {
+    if (session.data.adapterName && this.adapterResolver) {
       // Validate adapter name before resolving (defends against corrupted persisted data)
-      if (!CLI_ADAPTER_NAMES.includes(session.adapterName as CliAdapterName)) {
+      if (!CLI_ADAPTER_NAMES.includes(session.data.adapterName as CliAdapterName)) {
         this.logger.warn(
-          `Invalid adapter name "${session.adapterName}" on session ${session.id}, falling back to global`,
+          `Invalid adapter name "${session.data.adapterName}" on session ${session.id}, falling back to global`,
         );
         return this.adapter;
       }
-      return this.adapterResolver.resolve(session.adapterName as CliAdapterName);
+      return this.adapterResolver.resolve(session.data.adapterName as CliAdapterName);
     }
     return this.adapter;
   }

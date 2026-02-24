@@ -1,5 +1,5 @@
-import { noopLogger } from "../utils/noop-logger.js";
 import type { Logger } from "../interfaces/logger.js";
+import { noopLogger } from "../utils/noop-logger.js";
 import { updateHeartbeat } from "./state-file.js";
 
 const DEFAULT_INTERVAL_MS = 60_000;

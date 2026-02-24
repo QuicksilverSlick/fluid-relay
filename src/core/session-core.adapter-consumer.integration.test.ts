@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { TokenBucketLimiter } from "../adapters/token-bucket-limiter.js";
 import type { WebSocketLike } from "../interfaces/transport.js";
 import {
+  type BridgeTestWrapper,
   createBridgeWithAdapter,
   type MockBackendAdapter,
   makeAssistantUnifiedMsg,
   makeResultUnifiedMsg,
   tick,
 } from "../testing/adapter-test-helpers.js";
-import type { SessionBridge } from "./session-bridge.js";
 import { createUnifiedMessage } from "./types/unified-message.js";
 
 // ── Mock WebSocket ───────────────────────────────────────────────────────────
@@ -44,8 +44,8 @@ function sentOfType(socket: MockSocket, type: string): unknown[] {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("Adapter → SessionBridge → Consumer Integration", () => {
-  let bridge: SessionBridge;
+describe("Adapter → Session Core → Consumer Integration", () => {
+  let bridge: BridgeTestWrapper;
   let adapter: MockBackendAdapter;
   const sessionId = "integration-session-1";
 
@@ -68,7 +68,7 @@ describe("Adapter → SessionBridge → Consumer Integration", () => {
 
   // ── 1. Basic flow ────────────────────────────────────────────────────────
 
-  describe("basic flow through SessionBridge", () => {
+  describe("basic flow through Session Core", () => {
     it("connects a consumer and delivers identity + session_init", () => {
       const socket = createMockSocket();
 
@@ -381,8 +381,8 @@ describe("Adapter → SessionBridge → Consumer Integration", () => {
 
       expect(s1.id).toBe(sessionId);
       expect(s2.id).toBe(sessionId2);
-      expect(s1.state.session_id).toBe(sessionId);
-      expect(s2.state.session_id).toBe(sessionId2);
+      expect((s1.data?.state || s1.state).session_id).toBe(sessionId);
+      expect((s2.data?.state || s2.state).session_id).toBe(sessionId2);
     });
 
     it("consumer counts are independent per session", () => {

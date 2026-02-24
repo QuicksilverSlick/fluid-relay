@@ -137,7 +137,8 @@ describe("SimpleSessionRegistry", () => {
       reg.markConnected("s1");
 
       expect(storage.saveLauncherState).toHaveBeenCalledOnce();
-      const saved = (storage.saveLauncherState as ReturnType<typeof vi.fn>).mock.calls[0][0] as SessionInfo[];
+      const saved = (storage.saveLauncherState as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as SessionInfo[];
       expect(saved.find((s) => s.sessionId === "s1")?.state).toBe("connected");
     });
   });
@@ -247,7 +248,8 @@ describe("SimpleSessionRegistry", () => {
       reg.removeSession("s1");
 
       expect(storage.saveLauncherState).toHaveBeenCalledOnce();
-      const saved = (storage.saveLauncherState as ReturnType<typeof vi.fn>).mock.calls[0][0] as SessionInfo[];
+      const saved = (storage.saveLauncherState as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as SessionInfo[];
       expect(saved).toHaveLength(0);
     });
   });
@@ -345,7 +347,8 @@ describe("SimpleSessionRegistry", () => {
       expect(storage.saveLauncherState).toHaveBeenCalledTimes(4);
 
       // Final state: only s1 remains
-      const lastSave = (storage.saveLauncherState as ReturnType<typeof vi.fn>).mock.calls[3][0] as SessionInfo[];
+      const lastSave = (storage.saveLauncherState as ReturnType<typeof vi.fn>).mock
+        .calls[3][0] as SessionInfo[];
       expect(lastSave).toHaveLength(1);
       expect(lastSave[0].sessionId).toBe("s1");
     });

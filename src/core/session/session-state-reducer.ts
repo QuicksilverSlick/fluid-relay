@@ -1,13 +1,15 @@
 /**
  * Session State Reducer
  *
- * Pure function that applies a UnifiedMessage to SessionState, returning a new
- * state object. Operates only on core types — no adapter dependencies.
+ * Pure function that applies a UnifiedMessage to SessionData, returning a
+ * `[SessionData, Effect[]]` tuple. No adapter dependencies, no side effects.
+ *
+ * - State transitions live in `reduce()` / field-specific sub-reducers.
+ * - Effects capture everything the caller should do: broadcasts, event
+ *   emissions, queued-message flushes, etc.
  *
  * Team tool_use blocks are buffered on arrival; tool_result blocks
  * are correlated with buffered tool_uses to drive team state transitions.
- *
- * No side effects — does not emit events, persist, or broadcast.
  */
 
 import type { SessionState } from "../../types/session-state.js";
@@ -19,8 +21,12 @@ import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { isToolResultContent } from "../types/unified-message.js";
 
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
 /**
- * Apply a UnifiedMessage to session state, returning a new state.
+ * Apply a UnifiedMessage to SessionState, returning a new state.
  * Returns the original state reference if no fields changed.
  *
  * @param correlationBuffer — required; callers must provide a per-session buffer
@@ -51,7 +57,7 @@ export function reduce(
 }
 
 // ---------------------------------------------------------------------------
-// Individual reducers
+// State sub-reducers
 // ---------------------------------------------------------------------------
 
 function reduceSessionInit(state: SessionState, msg: UnifiedMessage): SessionState {
@@ -66,22 +72,34 @@ function reduceSessionInit(state: SessionState, msg: UnifiedMessage): SessionSta
     mcp_servers: asMcpServers(m.mcp_servers, state.mcp_servers),
     slash_commands: asStringArray(m.slash_commands, state.slash_commands),
     skills: asStringArray(m.skills, state.skills),
+    authMethods: Array.isArray(m.authMethods)
+      ? (m.authMethods as { id: string; name: string; description?: string | null }[])
+      : state.authMethods,
   };
 }
 
 function reduceStatusChange(state: SessionState, msg: UnifiedMessage): SessionState {
   const m = msg.metadata;
   const status = m.status as string | null | undefined;
-  const newState = {
-    ...state,
-    is_compacting: status === "compacting",
-  };
 
-  if (m.permissionMode !== undefined && m.permissionMode !== null) {
-    newState.permissionMode = m.permissionMode as string;
+  let changed = false;
+  const newState = { ...state };
+
+  if (newState.is_compacting !== (status === "compacting")) {
+    newState.is_compacting = status === "compacting";
+    changed = true;
   }
 
-  return newState;
+  if (
+    m.permissionMode !== undefined &&
+    m.permissionMode !== null &&
+    newState.permissionMode !== m.permissionMode
+  ) {
+    newState.permissionMode = m.permissionMode as string;
+    changed = true;
+  }
+
+  return changed ? newState : state;
 }
 
 function reduceResult(state: SessionState, msg: UnifiedMessage): SessionState {

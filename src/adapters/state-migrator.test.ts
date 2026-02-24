@@ -67,9 +67,9 @@ describe("state-migrator", () => {
       messageHistory: [],
       pendingPermissions: [],
       pendingMessages: [
-        "raw ndjson string",  // string → dropped
-        objectMsg,            // plain object → kept
-        ["array", "item"],    // array → dropped
+        "raw ndjson string", // string → dropped
+        objectMsg, // plain object → kept
+        ["array", "item"], // array → dropped
       ],
       schemaVersion: 1,
     };

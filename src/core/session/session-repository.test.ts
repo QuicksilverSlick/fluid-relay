@@ -105,10 +105,10 @@ describe("SessionRepository", () => {
       const session = store.getOrCreate("s1");
       expect(session.id).toBe("s1");
       expect(session.backendSession).toBeNull();
-      expect(session.state.session_id).toBe("s1");
+      expect(session.data.state.session_id).toBe("s1");
       expect(session.consumerSockets.size).toBe(0);
-      expect(session.messageHistory).toEqual([]);
-      expect(session.pendingMessages).toEqual([]);
+      expect(session.data.messageHistory).toEqual([]);
+      expect(session.data.pendingMessages).toEqual([]);
     });
 
     it("returns same session on repeated calls (reference equality)", () => {
@@ -196,8 +196,10 @@ describe("SessionRepository", () => {
 
   describe("getSnapshot", () => {
     it("returns correct shape", () => {
-      const session = store.getOrCreate("s1");
-      session.messageHistory.push({ type: "status_change", status: "idle" });
+      const session = store.createSession("s1", makeDefaultState("s1"), {
+        messageHistory: [{ type: "status_change", status: "idle" } as any],
+      });
+      store["sessions"].set("s1", session);
       const snap = store.getSnapshot("s1");
       expect(snap).toMatchObject({
         id: "s1",
@@ -220,13 +222,16 @@ describe("SessionRepository", () => {
 
   describe("persist", () => {
     it("calls storage.save() with serialized pendingPermissions Map", () => {
-      const session = store.getOrCreate("s1");
-      session.pendingPermissions.set("p1", {
+      const perm: any = {
         subtype: "can_use_tool",
         tool_name: "Bash",
         input: { command: "ls" },
         tool_use_id: "tu-1",
-      } as any);
+      };
+      const session = store.createSession("s1", makeDefaultState("s1"), {
+        pendingPermissions: new Map([["p1", perm]]),
+      });
+      store["sessions"].set("s1", session);
       store.persist(session);
       expect(storage.save).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -244,13 +249,16 @@ describe("SessionRepository", () => {
     });
 
     it("includes queuedMessage when serializing session state", () => {
-      const session = store.getOrCreate("s1");
-      session.queuedMessage = {
+      const queued = {
         consumerId: "u1",
         displayName: "User One",
         content: "queued text",
         queuedAt: 123,
       };
+      const session = store.createSession("s1", makeDefaultState("s1"), {
+        queuedMessage: queued,
+      });
+      store["sessions"].set("s1", session);
 
       store.persist(session);
 
@@ -268,13 +276,16 @@ describe("SessionRepository", () => {
 
   describe("persistSync", () => {
     it("calls storage.saveSync() with queuedMessage included", () => {
-      const session = store.getOrCreate("s1");
-      session.queuedMessage = {
+      const queued = {
         consumerId: "u1",
         displayName: "User One",
         content: "queued sync",
         queuedAt: 456,
       };
+      const session = store.createSession("s1", makeDefaultState("s1"), {
+        queuedMessage: queued,
+      });
+      store["sessions"].set("s1", session);
 
       store.persistSync(session);
 
@@ -325,20 +336,19 @@ describe("SessionRepository", () => {
       expect(count).toBe(1);
       expect(store.has("restored-1")).toBe(true);
       const session = store.get("restored-1")!;
-      expect(session.messageHistory).toHaveLength(1);
-      expect(session.pendingMessages).toEqual(["queued"]);
-      expect(session.pendingPermissions.get("p1")).toBeDefined();
-      expect(session.queuedMessage).toEqual(
+      expect(session.data.messageHistory).toHaveLength(1);
+      expect(session.data.pendingMessages).toEqual(["queued"]);
+      expect(session.data.pendingPermissions.get("p1")).toBeDefined();
+      expect(session.data.queuedMessage).toEqual(
         expect.objectContaining({ content: "restored queued", consumerId: "u1" }),
       );
     });
 
     it("skips sessions that already exist (no overwrite)", () => {
-      const existing = store.getOrCreate("s1");
-      existing.messageHistory.push({
-        type: "status_change",
-        status: "running",
+      const existing = store.createSession("s1", makeDefaultState("s1"), {
+        messageHistory: [{ type: "status_change", status: "running" } as any],
       });
+      store["sessions"].set("s1", existing);
 
       const persisted: PersistedSession = {
         id: "s1",
@@ -350,7 +360,7 @@ describe("SessionRepository", () => {
       (storage.loadAll as ReturnType<typeof vi.fn>).mockReturnValue([persisted]);
       store.restoreAll();
       // Existing session should not be overwritten
-      expect(store.get("s1")!.messageHistory).toHaveLength(1);
+      expect(store.get("s1")!.data.messageHistory).toHaveLength(1);
     });
 
     it("retains persisted slash command state for runtime hydration", () => {
@@ -367,7 +377,7 @@ describe("SessionRepository", () => {
       (storage.loadAll as ReturnType<typeof vi.fn>).mockReturnValue([persisted]);
       store.restoreAll();
       const session = store.get("s2")!;
-      expect(session.state.slash_commands).toEqual(["/help", "/clear"]);
+      expect(session.data.state.slash_commands).toEqual(["/help", "/clear"]);
     });
 
     it("retains persisted skill state for runtime hydration", () => {
@@ -384,7 +394,7 @@ describe("SessionRepository", () => {
       (storage.loadAll as ReturnType<typeof vi.fn>).mockReturnValue([persisted]);
       store.restoreAll();
       const session = store.get("s3")!;
-      expect(session.state.skills).toEqual(["tdd-guide", "code-review"]);
+      expect(session.data.state.skills).toEqual(["tdd-guide", "code-review"]);
     });
 
     it("falls back to empty Map when pendingPermissions is missing", () => {
@@ -397,7 +407,7 @@ describe("SessionRepository", () => {
       } as any;
       (storage.loadAll as ReturnType<typeof vi.fn>).mockReturnValue([persisted]);
       store.restoreAll();
-      expect(store.get("s4")!.pendingPermissions.size).toBe(0);
+      expect(store.get("s4")!.data.pendingPermissions.size).toBe(0);
     });
   });
 });

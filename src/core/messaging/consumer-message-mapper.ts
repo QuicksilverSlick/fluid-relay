@@ -5,7 +5,7 @@
  * consumer-facing ConsumerMessage wire format. These functions are **pure** —
  * no side effects (no broadcasting, persisting, or emitting events).
  *
- * Called by UnifiedMessageRouter as part of the T4 translation boundary.
+ * Called by effect executor / reducer as part of the T4 translation boundary.
  *
  * @module MessagePlane
  */

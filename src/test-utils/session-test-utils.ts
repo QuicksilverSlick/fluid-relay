@@ -123,11 +123,11 @@ export interface TestSession {
 /** Launch a new session within a test coordinator and return its ID + port. */
 export function createTestSession(testCoordinator: TestSessionCoordinator): TestSession {
   const launched = testCoordinator.coordinator.launcher.launch({ cwd: process.cwd() });
-  testCoordinator.coordinator.bridge.seedSessionState(launched.sessionId, {
+  testCoordinator.coordinator.seedSessionState(launched.sessionId, {
     cwd: launched.cwd,
     model: launched.model,
   });
-  testCoordinator.coordinator.bridge.setAdapterName(launched.sessionId, "claude");
+  testCoordinator.coordinator.setAdapterName(launched.sessionId, "claude");
   const port = testCoordinator.server.port ?? 0;
   return { sessionId: launched.sessionId, port };
 }
