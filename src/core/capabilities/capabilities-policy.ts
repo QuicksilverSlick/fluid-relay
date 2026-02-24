@@ -44,10 +44,6 @@ export class CapabilitiesPolicy {
     return this.getRuntime(session).getState();
   }
 
-  private setState(session: Session, state: SessionData["state"]): void {
-    this.getRuntime(session).setState(state);
-  }
-
   private getPendingInitialize(session: Session): Session["pendingInitialize"] {
     return this.getRuntime(session).getPendingInitialize();
   }
@@ -153,10 +149,12 @@ export class CapabilitiesPolicy {
     models: InitializeModel[],
     account: InitializeAccount | null,
   ): void {
-    const state = this.getState(session);
-    this.setState(session, {
-      ...state,
-      capabilities: { commands, models, account, receivedAt: Date.now() },
+    this.getRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "STATE_PATCHED",
+        patch: { capabilities: { commands, models, account, receivedAt: Date.now() } },
+      },
     });
     this.logger.info(
       `Capabilities received for session ${session.id}: ${commands.length} commands, ${models.length} models`,

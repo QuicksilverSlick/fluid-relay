@@ -769,6 +769,62 @@ describe("SessionRuntime", () => {
     expect(runtime.getLifecycleState()).toBe("closing");
   });
 
+  describe("SYSTEM_SIGNAL state-patch kinds", () => {
+    it("STATE_PATCHED merges patch into data.state", () => {
+      const session = createMockSession({ id: "s1" });
+      const runtime = new SessionRuntime(session, makeDeps());
+
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "STATE_PATCHED", patch: { model: "claude-opus-4" } },
+      });
+
+      expect(runtime.getState().model).toBe("claude-opus-4");
+    });
+
+    it("LAST_STATUS_UPDATED sets lastStatus", () => {
+      const session = createMockSession({ id: "s1" });
+      const runtime = new SessionRuntime(session, makeDeps());
+
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "LAST_STATUS_UPDATED", status: "running" },
+      });
+
+      expect(runtime.getLastStatus()).toBe("running");
+    });
+
+    it("QUEUED_MESSAGE_UPDATED sets queuedMessage", () => {
+      const session = createMockSession({ id: "s1" });
+      const runtime = new SessionRuntime(session, makeDeps());
+      const queued = { consumerId: "u1", displayName: "User", content: "hi", queuedAt: 1 };
+
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "QUEUED_MESSAGE_UPDATED", message: queued },
+      });
+
+      expect(runtime.getQueuedMessage()).toEqual(queued);
+    });
+
+    it("MODEL_UPDATED patches state.model and broadcasts session_update", () => {
+      const session = createMockSession({ id: "s1" });
+      const deps = makeDeps();
+      const runtime = new SessionRuntime(session, deps);
+
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "MODEL_UPDATED", model: "claude-haiku-4" },
+      });
+
+      expect(runtime.getState().model).toBe("claude-haiku-4");
+      expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "s1" }),
+        expect.objectContaining({ type: "session_update", session: { model: "claude-haiku-4" } }),
+      );
+    });
+  });
+
   it("sets adapter name and persists session", () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
@@ -861,14 +917,22 @@ describe("SessionRuntime", () => {
       content: "queued",
       queuedAt: 1,
     };
-    const nextState = { ...session.data.state, model: "claude-sonnet-4-5" };
     const history = [{ type: "user_message", content: "hello", timestamp: 1 }] as any;
 
-    runtime.setState(nextState);
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "STATE_PATCHED", patch: { model: "claude-sonnet-4-5" } },
+    });
     runtime.setBackendSessionId("backend-123");
-    runtime.setLastStatus("running");
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "LAST_STATUS_UPDATED", status: "running" },
+    });
     runtime.setMessageHistory(history);
-    runtime.setQueuedMessage(queued as any);
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_UPDATED", message: queued as any },
+    });
 
     expect(runtime.getState().model).toBe("claude-sonnet-4-5");
     expect(runtime.getState().model).toBe("claude-sonnet-4-5");
@@ -1285,9 +1349,12 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    // Simulate handleControlResponse calling runtime.setState internally
+    // Simulate handleControlResponse patching state via process()
     (deps.capabilitiesPolicy.handleControlResponse as any).mockImplementationOnce(() => {
-      runtime.setState({ ...session.data.state, model: "injected-model" });
+      runtime.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "STATE_PATCHED", patch: { model: "injected-model" } },
+      });
     });
 
     runtime.process({

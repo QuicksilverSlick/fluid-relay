@@ -47,8 +47,8 @@ const defaultGitInfo: GitInfo = {
 
 const directStateAccessors = {
   getState: (session: Session) => session.state,
-  setState: (session: Session, state: SessionState) => {
-    session.state = state;
+  patchState: (session: Session, patch: Partial<SessionState>) => {
+    session.state = { ...session.state, ...patch };
   },
 };
 
@@ -196,8 +196,8 @@ describe("GitInfoTracker", () => {
       let state = { ...session.state, cwd: "/repo" };
       const callbackTracker = new GitInfoTracker(resolver, {
         getState: () => state,
-        setState: (_session, next) => {
-          state = next;
+        patchState: (_session, patch) => {
+          state = { ...state, ...patch };
         },
       });
 

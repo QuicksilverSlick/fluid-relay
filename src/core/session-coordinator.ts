@@ -223,8 +223,11 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
 
     this.gitTracker = new GitInfoTracker(this.gitResolver, {
       getState: (session: Session) => this.getOrCreateRuntime(session).getState(),
-      setState: (session: Session, state: SessionData["state"]) =>
-        this.getOrCreateRuntime(session).setState(state),
+      patchState: (session: Session, patch: Partial<SessionData["state"]>) =>
+        this.getOrCreateRuntime(session).process({
+          type: "SYSTEM_SIGNAL",
+          signal: { kind: "STATE_PATCHED", patch },
+        }),
     });
 
     // ── Message plane ────────────────────────────────────────────────────────

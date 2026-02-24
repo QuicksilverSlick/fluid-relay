@@ -79,9 +79,12 @@ function createSessionAwareRuntime(session: any) {
       const state = session.data?.state ?? session.state ?? {};
       return state;
     }),
-    setState: vi.fn((state: any) => {
-      if (session.data) session.data.state = state;
-      else session.state = state;
+    process: vi.fn((event: any) => {
+      if (event.type === "SYSTEM_SIGNAL" && event.signal.kind === "STATE_PATCHED") {
+        const patch = event.signal.patch;
+        if (session.data) session.data.state = { ...session.data.state, ...patch };
+        else session.state = { ...session.state, ...patch };
+      }
     }),
     registerSlashCommandNames: vi.fn((commands: string[]) => {
       session.registry?.registerFromCLI?.(
@@ -297,9 +300,9 @@ describe("BackendConnector per-session adapter", () => {
     } as any;
     session.data = session;
 
-    // Create a runtime that tracks setState calls
+    // Create a runtime that tracks process calls
     const mockRuntime = createSessionAwareRuntime(session);
-    const setStateSpy = mockRuntime.setState;
+    const processSpy = mockRuntime.process;
 
     const blm = new BackendConnector({
       adapter,
@@ -314,10 +317,11 @@ describe("BackendConnector per-session adapter", () => {
 
     await blm.connectBackend(session);
 
-    // setState should have been called with updated slash_commands
-    expect(setStateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ slash_commands: ["/compact", "/status"] }),
-    );
+    // process should have been called with STATE_PATCHED containing updated slash_commands
+    expect(processSpy).toHaveBeenCalledWith({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "STATE_PATCHED", patch: { slash_commands: ["/compact", "/status"] } },
+    });
     // registerSlashCommandNames should have triggered registerFromCLI
     expect(session.registry.registerFromCLI).toHaveBeenCalledWith([
       { name: "/compact", description: "" },

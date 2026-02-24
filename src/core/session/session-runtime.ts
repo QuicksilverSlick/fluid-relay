@@ -203,14 +203,6 @@ export class SessionRuntime {
     return this.session.data.state;
   }
 
-  setLastStatus(status: SessionData["lastStatus"]): void {
-    this.session = { ...this.session, data: { ...this.session.data, lastStatus: status } };
-  }
-
-  setState(state: SessionData["state"]): void {
-    this.session = { ...this.session, data: { ...this.session.data, state } };
-  }
-
   setBackendSessionId(sessionId: string | undefined): void {
     this.session = { ...this.session, data: { ...this.session.data, backendSessionId: sessionId } };
   }
@@ -225,10 +217,6 @@ export class SessionRuntime {
 
   getQueuedMessage(): SessionData["queuedMessage"] {
     return this.session.data.queuedMessage;
-  }
-
-  setQueuedMessage(queued: SessionData["queuedMessage"]): void {
-    this.session = { ...this.session, data: { ...this.session.data, queuedMessage: queued } };
   }
 
   getPendingPermissions(): PermissionRequest[] {

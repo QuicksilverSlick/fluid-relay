@@ -334,7 +334,11 @@ export function createBridgeWithAdapter(options?: {
 
   gitTracker = new GitInfoTracker(gitResolver, {
     getState: (session) => getOrCreateRuntime(session).getState(),
-    setState: (session, state: SessionData["state"]) => getOrCreateRuntime(session).setState(state),
+    patchState: (session, patch: Partial<SessionData["state"]>) =>
+      getOrCreateRuntime(session).process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "STATE_PATCHED", patch },
+      }),
   });
 
   capabilitiesPolicy = new CapabilitiesPolicy(config, logger, broadcaster, emitEvent, (session) =>

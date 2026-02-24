@@ -84,12 +84,36 @@ export function sessionReducer(
 // ---------------------------------------------------------------------------
 
 /**
- * Apply a SystemSignal to SessionData — only lifecycle transitions.
+ * Apply a SystemSignal to SessionData.
+ *
+ * Data-patch signals (STATE_PATCHED, LAST_STATUS_UPDATED, QUEUED_MESSAGE_UPDATED,
+ * MODEL_UPDATED) are handled first. All other signals are lifecycle-only transitions.
  *
  * Returns the same data reference if nothing changed (cheap equality check
  * for the caller's markDirty() guard).
  */
 function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionData, Effect[]] {
+  // Data-patch signals — no lifecycle transition
+  switch (signal.kind) {
+    case "STATE_PATCHED":
+      return [{ ...data, state: { ...data.state, ...signal.patch } }, []];
+    case "LAST_STATUS_UPDATED":
+      return [{ ...data, lastStatus: signal.status }, []];
+    case "QUEUED_MESSAGE_UPDATED":
+      return [{ ...data, queuedMessage: signal.message }, []];
+    case "MODEL_UPDATED": {
+      const newState = { ...data.state, model: signal.model };
+      const effects: Effect[] = [
+        {
+          type: "BROADCAST_SESSION_UPDATE",
+          patch: { model: signal.model },
+        },
+      ];
+      return [{ ...data, state: newState }, effects];
+    }
+  }
+
+  // Lifecycle-only signals
   const next = lifecycleForSignal(data.lifecycle, signal);
   if (!next || !isLifecycleTransitionAllowed(data.lifecycle, next)) {
     return [data, []];
@@ -116,6 +140,12 @@ function lifecycleForSignal(current: LifecycleState, signal: SystemSignal): Life
     case "GIT_INFO_RESOLVED":
     case "CAPABILITIES_READY":
       // No pure data change for these — handled by runtime orchestration.
+      return null;
+    // Data-patch signals handled above — not lifecycle transitions
+    case "STATE_PATCHED":
+    case "LAST_STATUS_UPDATED":
+    case "QUEUED_MESSAGE_UPDATED":
+    case "MODEL_UPDATED":
       return null;
   }
 }
