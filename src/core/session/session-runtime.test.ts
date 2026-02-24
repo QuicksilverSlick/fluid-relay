@@ -146,15 +146,8 @@ describe("SessionRuntime", () => {
       type: "error",
       message: "Session is closing or closed and cannot accept new messages.",
     });
-    expect(deps.logger.warn).toHaveBeenCalledWith(
-      "Session lifecycle invalid transition",
-      expect.objectContaining({
-        sessionId: "s1",
-        current: "closed",
-        next: "active",
-        reason: "inbound:user_message",
-      }),
-    );
+    // The reducer now short-circuits for closed/closing lifecycle before attempting
+    // a transitionLifecycle call, so no logger.warn is emitted.
   });
 
   it("trims message history using runtime-owned max length", () => {

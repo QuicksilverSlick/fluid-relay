@@ -20,7 +20,7 @@ import type {
   InitializeModel,
   PermissionRequest,
 } from "../../types/cli-messages.js";
-import type { ConsumerMessage } from "../../types/consumer-messages.js";
+
 import type { BridgeEventMap } from "../../types/events.js";
 import type { SessionSnapshot, SessionState } from "../../types/session-state.js";
 import type { BackendConnector } from "../backend/backend-connector.js";
@@ -442,27 +442,31 @@ export class SessionRuntime {
   private handleInboundCommand(msg: InboundCommand, ws: WebSocketLike): void {
     this.touchActivity();
     switch (msg.type) {
-      case "user_message":
-        // Preserve legacy optimistic running behavior for queue decisions.
-        {
-          const previousStatus = this.session.data.lastStatus;
-          this.session = { ...this.session, data: { ...this.session.data, lastStatus: "running" } };
-          const accepted = this.sendUserMessage(msg.content, {
+      case "user_message": {
+        // Route pure state mutations (lastStatus + messageHistory) through the reducer.
+        const prevData = this.session.data;
+        const [nextData, effects] = sessionReducer(
+          this.session.data,
+          { type: "INBOUND_COMMAND", command: msg, ws },
+          this.deps.config,
+        );
+        if (nextData !== prevData) {
+          // Reducer accepted the message — apply state + effects, then do I/O.
+          this.session = { ...this.session, data: nextData };
+          executeEffects(effects, this.session, this.effectDeps());
+          this.sendUserMessageIO(msg.content, {
             sessionIdOverride: msg.session_id,
             images: msg.images,
           });
-          if (!accepted) {
-            this.session = {
-              ...this.session,
-              data: { ...this.session.data, lastStatus: previousStatus },
-            };
-            this.deps.broadcaster.sendTo(ws, {
-              type: "error",
-              message: "Session is closing or closed and cannot accept new messages.",
-            });
-          }
+        } else {
+          // Lifecycle is closed/closing — send targeted error to the requesting consumer.
+          this.deps.broadcaster.sendTo(ws, {
+            type: "error",
+            message: "Session is closing or closed and cannot accept new messages.",
+          });
         }
         break;
+      }
       case "permission_response":
         this.sendPermissionResponse(msg.request_id, msg.behavior, {
           updatedInput: msg.updated_input,
@@ -504,7 +508,40 @@ export class SessionRuntime {
     }
   }
 
+  /**
+   * Send a user message: applies pure state mutations via the reducer, then
+   * executes I/O (backend send or queue). Returns `false` if the session
+   * lifecycle rejected the message (closed/closing).
+   */
   sendUserMessage(content: string, options?: RuntimeSendUserMessageOptions): boolean {
+    const prevData = this.session.data;
+    const [nextData, effects] = sessionReducer(
+      this.session.data,
+      {
+        type: "INBOUND_COMMAND",
+        command: { type: "user_message", content, session_id: options?.sessionIdOverride ?? "" },
+        ws: null as never, // ws not needed for pure state mutations
+      },
+      this.deps.config,
+    );
+
+    if (nextData === prevData) {
+      // Lifecycle is closed/closing — message rejected.
+      return false;
+    }
+
+    this.session = { ...this.session, data: nextData };
+    executeEffects(effects, this.session, this.effectDeps());
+    return this.sendUserMessageIO(content, options);
+  }
+
+  /**
+   * I/O side of user message handling: normalizes the message, transitions
+   * the lifecycle, sends to backend (or queues it), and persists.
+   * Called after the reducer has already applied the pure state mutations.
+   * Returns `false` if the lifecycle transition was rejected.
+   */
+  private sendUserMessageIO(content: string, options?: RuntimeSendUserMessageOptions): boolean {
     const unified = tracedNormalizeInbound(
       this.deps.tracer,
       {
@@ -530,21 +567,6 @@ export class SessionRuntime {
       return false;
     }
 
-    const userMsg: ConsumerMessage = {
-      type: "user_message",
-      content,
-      timestamp: Date.now(),
-    };
-    this.session = {
-      ...this.session,
-      data: {
-        ...this.session.data,
-        messageHistory: [...this.session.data.messageHistory, userMsg],
-      },
-    };
-    this.trimMessageHistory();
-    this.deps.broadcaster.broadcast(this.session, userMsg);
-
     if (backendSession) {
       backendSession.send(unified);
     } else {
@@ -558,17 +580,6 @@ export class SessionRuntime {
     }
     this.persistNow();
     return true;
-  }
-
-  private trimMessageHistory(): void {
-    const maxLength = this.deps.config.maxMessageHistoryLength;
-    const history = this.session.data.messageHistory;
-    if (history.length > maxLength) {
-      this.session = {
-        ...this.session,
-        data: { ...this.session.data, messageHistory: history.slice(-maxLength) },
-      };
-    }
   }
 
   sendPermissionResponse(
@@ -621,17 +632,21 @@ export class SessionRuntime {
 
   sendSetModel(model: string): void {
     if (!this.session.backendSession) return;
+    // Route pure state mutation (state.model + BROADCAST_SESSION_UPDATE) through reducer.
+    const [nextData, effects] = sessionReducer(
+      this.session.data,
+      {
+        type: "INBOUND_COMMAND",
+        command: { type: "set_model", model },
+        ws: null as never, // ws not needed for pure state mutations
+      },
+      this.deps.config,
+    );
+    if (nextData !== this.session.data) {
+      this.session = { ...this.session, data: nextData };
+      executeEffects(effects, this.session, this.effectDeps());
+    }
     this.sendControlRequest({ type: "set_model", model });
-    // Optimistically update session state — the backend never sends a
-    // configuration_change back, so we must reflect the change ourselves.
-    this.session = {
-      ...this.session,
-      data: { ...this.session.data, state: { ...this.session.data.state, model } },
-    };
-    this.deps.broadcaster.broadcast(this.session, {
-      type: "session_update",
-      session: { model },
-    });
   }
 
   sendSetPermissionMode(mode: string): void {

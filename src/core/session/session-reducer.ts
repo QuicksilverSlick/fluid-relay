@@ -23,6 +23,7 @@ import type { PermissionRequest } from "../../types/cli-messages.js";
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import { CONSUMER_PROTOCOL_VERSION } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
+import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import {
   mapAssistantMessage,
   mapAuthStatus,
@@ -74,7 +75,7 @@ export function sessionReducer(
     case "INBOUND_COMMAND":
       // Pure data side of inbound commands.
       // I/O side (backend sends, slash execution) stays in SessionRuntime.
-      return reduceInboundCommand(data, event.command.type);
+      return reduceInboundCommand(data, event.command, config);
   }
 }
 
@@ -126,21 +127,69 @@ function lifecycleForSignal(current: LifecycleState, signal: SystemSignal): Life
 /**
  * Apply the pure data mutations for an inbound command.
  *
- * This only handles the parts of inbound command processing that are pure:
- *   - Generating error effects for closed/closing sessions
- *   - No state mutations for most commands (the impure I/O side stays in runtime)
+ * Handles the pure-state side of inbound commands:
+ *   - `user_message`: sets lastStatus="running", appends to messageHistory, trims history.
+ *     Returns `[data, []]` unchanged for closed/closing sessions — the runtime detects
+ *     the no-op and sends a targeted `sendTo` error to the requesting WebSocket.
+ *   - `set_model`: updates state.model, returns BROADCAST_SESSION_UPDATE effect.
+ *   - Other commands: delegates to mapInboundCommandEffects for any pure effects
+ *     (e.g., error for set_adapter).
  *
- * Note: Most inbound command handling (sending to backend, slash execution,
- * queue management) requires handles that aren't serializable — those stay in
- * SessionRuntime.handleInboundCommand(). This function produces the Effects
- * that describe the pure output of the command.
+ * I/O side (backend sends, lifecycle transition, slash execution, queue management)
+ * stays in SessionRuntime.handleInboundCommand().
  */
-function reduceInboundCommand(data: SessionData, commandType: string): [SessionData, Effect[]] {
-  const effects = mapInboundCommandEffects(commandType, {
-    sessionId: "", // sessionId not needed for pure effect mapping
-    lifecycle: data.lifecycle,
-  });
-  return [data, effects];
+function reduceInboundCommand(
+  data: SessionData,
+  command: InboundCommand,
+  config: ReducerConfig,
+): [SessionData, Effect[]] {
+  switch (command.type) {
+    case "user_message": {
+      // Closed/closing: no state change — runtime will send targeted error via sendTo(ws).
+      if (data.lifecycle === "closing" || data.lifecycle === "closed") {
+        return [data, []];
+      }
+      const userMsg: ConsumerMessage = {
+        type: "user_message",
+        content: command.content,
+        timestamp: Date.now(),
+      };
+      const nextHistory = trimHistory(
+        [...data.messageHistory, userMsg],
+        config.maxMessageHistoryLength,
+      );
+      const nextData: SessionData = {
+        ...data,
+        lastStatus: "running",
+        messageHistory: nextHistory,
+      };
+      return [nextData, [{ type: "BROADCAST", message: userMsg }]];
+    }
+
+    case "set_model": {
+      const nextData: SessionData = {
+        ...data,
+        state: { ...data.state, model: command.model },
+      };
+      return [
+        nextData,
+        [
+          {
+            type: "BROADCAST_SESSION_UPDATE",
+            patch: { model: command.model } as Partial<SessionState>,
+          },
+        ],
+      ];
+    }
+
+    default: {
+      const effects = mapInboundCommandEffects(command.type, {
+        sessionId: "", // sessionId not needed for pure effect mapping
+        lifecycle: data.lifecycle,
+      });
+      return [data, effects];
+    }
+  }
 }
 
 // Public API

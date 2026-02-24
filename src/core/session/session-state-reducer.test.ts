@@ -661,24 +661,62 @@ describe("sessionReducer BACKEND_MESSAGE — configuration_change with mode fiel
 // ---------------------------------------------------------------------------
 
 describe("sessionReducer INBOUND_COMMAND", () => {
-  it("returns data unchanged and empty effects for user_message on active session", () => {
+  it("sets lastStatus=running and appends to messageHistory for user_message on active session", () => {
     const data = baseData();
     const [next, effects] = sessionReducer(data, {
       type: "INBOUND_COMMAND",
       command: { type: "user_message", content: "hi", session_id: "" },
     });
-    expect(next).toBe(data);
-    expect(effects).toHaveLength(0);
+    expect(next).not.toBe(data);
+    expect(next.lastStatus).toBe("running");
+    expect(next.messageHistory).toHaveLength(1);
+    expect(next.messageHistory[0]).toMatchObject({ type: "user_message", content: "hi" });
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST",
+      message: { type: "user_message", content: "hi" },
+    });
   });
 
-  it("returns BROADCAST error effect for user_message when lifecycle is closing", () => {
+  it("returns data unchanged and empty effects for user_message when lifecycle is closing", () => {
     const data = { ...baseData(), lifecycle: "closing" as const };
     const [next, effects] = sessionReducer(data, {
       type: "INBOUND_COMMAND",
       command: { type: "user_message", content: "hi", session_id: "" },
     });
+    // Closed/closing: no-op — runtime will send targeted sendTo error
     expect(next).toBe(data);
+    expect(effects).toHaveLength(0);
+  });
+
+  it("updates state.model and returns BROADCAST_SESSION_UPDATE for set_model", () => {
+    const data = baseData();
+    const [next, effects] = sessionReducer(data, {
+      type: "INBOUND_COMMAND",
+      command: { type: "set_model", model: "claude-opus-4-6" },
+    });
+    expect(next.state.model).toBe("claude-opus-4-6");
     expect(effects).toHaveLength(1);
-    expect(effects[0]).toMatchObject({ type: "BROADCAST", message: { type: "error" } });
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST_SESSION_UPDATE",
+      patch: { model: "claude-opus-4-6" },
+    });
+  });
+
+  it("trims messageHistory to config.maxMessageHistoryLength for user_message", () => {
+    const data = {
+      ...baseData(),
+      messageHistory: [{ type: "user_message", content: "old", timestamp: 1 }] as any,
+    };
+    const [next] = sessionReducer(
+      data,
+      {
+        type: "INBOUND_COMMAND",
+        command: { type: "user_message", content: "new", session_id: "" },
+      },
+      { maxMessageHistoryLength: 1 },
+    );
+    expect(next.messageHistory).toHaveLength(1);
+    expect(next.messageHistory[0]).toMatchObject({ content: "new" });
   });
 });
