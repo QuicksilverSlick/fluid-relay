@@ -8,9 +8,9 @@
  * new state.
  *
  * Routing:
- *   BACKEND_MESSAGE   → reduceSessionData (session-state-reducer.ts)
- *   SYSTEM_SIGNAL     → reduceLifecycle   (pure lifecycle transitions)
- *   INBOUND_COMMAND   → reduceInbound     (pure data mutations only)
+ *   BACKEND_MESSAGE   → reduceBackendMessage  (session-state-reducer.ts)
+ *   SYSTEM_SIGNAL     → reduceSystemSignal    (data patches, effects, and lifecycle transitions)
+ *   INBOUND_COMMAND   → reduceInboundCommand  (pure data mutations only)
  *
  * All I/O (backend sends, slash commands, git resolution, capabilities
  * handshake) stays in SessionRuntime — these require handles (BackendSession,
@@ -86,156 +86,183 @@ export function sessionReducer(
 /**
  * Apply a SystemSignal to SessionData.
  *
- * Data-patch signals (STATE_PATCHED, LAST_STATUS_UPDATED, QUEUED_MESSAGE_UPDATED,
- * MODEL_UPDATED) are handled first. All other signals are lifecycle-only transitions.
+ * All signal kinds are handled in a single switch:
+ *   - Data-patch signals mutate SessionData fields (no lifecycle change).
+ *   - Effect signals produce side effects (broadcasts, event emissions).
+ *   - Lifecycle signals transition the session lifecycle state.
+ *   - No-op signals return the data unchanged.
  *
  * Returns the same data reference if nothing changed (cheap equality check
  * for the caller's markDirty() guard).
  */
 function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionData, Effect[]] {
-  // Data-patch signals — no lifecycle transition
   switch (signal.kind) {
+    // ── Data-patch signals (no lifecycle transition) ──────────────────────
     case "STATE_PATCHED":
       return [{ ...data, state: { ...data.state, ...signal.patch } }, []];
+
     case "LAST_STATUS_UPDATED":
       return [{ ...data, lastStatus: signal.status }, []];
+
     case "QUEUED_MESSAGE_UPDATED":
       return [{ ...data, queuedMessage: signal.message }, []];
-    case "MODEL_UPDATED": {
-      const newState = { ...data.state, model: signal.model };
-      const effects: Effect[] = [
-        {
-          type: "BROADCAST_SESSION_UPDATE",
-          patch: { model: signal.model },
-        },
+
+    case "MODEL_UPDATED":
+      return [
+        { ...data, state: { ...data.state, model: signal.model } },
+        [{ type: "BROADCAST_SESSION_UPDATE", patch: { model: signal.model } }],
       ];
-      return [{ ...data, state: newState }, effects];
+
+    case "ADAPTER_NAME_SET":
+      return [
+        { ...data, adapterName: signal.name, state: { ...data.state, adapterName: signal.name } },
+        [{ type: "PERSIST_NOW" }],
+      ];
+
+    case "SESSION_SEEDED": {
+      const patch: Partial<SessionData["state"]> = {};
+      if (signal.cwd) patch.cwd = signal.cwd;
+      if (signal.model) patch.model = signal.model;
+      const nextData =
+        Object.keys(patch).length > 0 ? { ...data, state: { ...data.state, ...patch } } : data;
+      return [nextData, [{ type: "RESOLVE_GIT_INFO" }]];
     }
-  }
 
-  // Signals with custom effects but no lifecycle change
-  if (signal.kind === "BACKEND_RELAUNCH_NEEDED") {
-    return [data, [
-      { type: "EMIT_EVENT", eventType: "backend:relaunch_needed", payload: {} },
-      { type: "BROADCAST", message: { type: "cli_disconnected" } }
-    ]];
-  }
-
-  if (signal.kind === "SLASH_PASSTHROUGH_RESULT") {
-    return [
-      data,
-      [
-        {
-          type: "BROADCAST",
-          message: {
-            type: "slash_command_result",
-            command: signal.command,
-            request_id: signal.requestId,
-            content: signal.content,
-            source: signal.source,
-          },
-        },
-        {
-          type: "EMIT_EVENT",
-          eventType: "slash_command:executed",
-          payload: { command: signal.command, source: signal.source, durationMs: 0 },
-        },
-      ],
-    ];
-  }
-
-  if (signal.kind === "SLASH_PASSTHROUGH_ERROR") {
-    return [
-      data,
-      [
-        {
-          type: "BROADCAST",
-          message: {
-            type: "slash_command_error",
-            command: signal.command,
-            request_id: signal.requestId,
-            error: signal.error,
-          },
-        },
-        {
-          type: "EMIT_EVENT",
-          eventType: "slash_command:failed",
-          payload: { command: signal.command, error: signal.error },
-        },
-      ],
-    ];
-  }
-
-  // Signals with custom effects AND lifecycle transitions
-  if (signal.kind === "BACKEND_CONNECTED") {
-    const next: LifecycleState = "active";
-    const effects: Effect[] = [
-      { type: "BROADCAST", message: { type: "cli_connected" } },
-      { type: "EMIT_EVENT", eventType: "backend:connected", payload: {} },
-    ];
-    if (isLifecycleTransitionAllowed(data.lifecycle, next)) {
-      return [{ ...data, lifecycle: next }, effects];
-    }
-    return [data, effects];
-  }
-
-  if (signal.kind === "BACKEND_DISCONNECTED") {
-    const next: LifecycleState | null =
-      data.lifecycle === "active" || data.lifecycle === "idle" ? "degraded" : null;
-    const effects: Effect[] = [
-      { type: "BROADCAST", message: { type: "cli_disconnected" } },
-      {
-        type: "EMIT_EVENT",
-        eventType: "backend:disconnected",
-        payload: { code: 1000, reason: signal.reason },
-      },
-    ];
-    if (next && isLifecycleTransitionAllowed(data.lifecycle, next)) {
-      return [{ ...data, lifecycle: next }, effects];
-    }
-    return [data, effects];
-  }
-
-  // Lifecycle-only signals
-  const next = lifecycleForSignal(data.lifecycle, signal);
-  if (!next || !isLifecycleTransitionAllowed(data.lifecycle, next)) {
-    return [data, []];
-  }
-  return [{ ...data, lifecycle: next }, []];
-}
-
-/** Map a SystemSignal kind to the target lifecycle state, or null if no transition. */
-function lifecycleForSignal(_current: LifecycleState, signal: SystemSignal): LifecycleState | null {
-  switch (signal.kind) {
-    // BACKEND_CONNECTED and BACKEND_DISCONNECTED are handled in reduceSystemSignal() directly
-    case "BACKEND_CONNECTED":
-    case "BACKEND_DISCONNECTED":
-      return null;
-    case "SESSION_CLOSING":
-      return "closing";
-    case "SESSION_CLOSED":
-      return "closed";
-    case "RECONNECT_TIMEOUT":
-      return "degraded";
-    case "IDLE_REAP":
-      return "closing";
+    // ── Effect signals (no lifecycle transition) ─────────────────────────
     case "BACKEND_RELAUNCH_NEEDED":
+      return [
+        data,
+        [
+          { type: "EMIT_EVENT", eventType: "backend:relaunch_needed", payload: {} },
+          { type: "BROADCAST", message: { type: "cli_disconnected" } },
+        ],
+      ];
+
     case "SLASH_PASSTHROUGH_RESULT":
+      return [
+        data,
+        [
+          {
+            type: "BROADCAST",
+            message: {
+              type: "slash_command_result",
+              command: signal.command,
+              request_id: signal.requestId,
+              content: signal.content,
+              source: signal.source,
+            },
+          },
+          {
+            type: "EMIT_EVENT",
+            eventType: "slash_command:executed",
+            payload: { command: signal.command, source: signal.source, durationMs: 0 },
+          },
+        ],
+      ];
+
     case "SLASH_PASSTHROUGH_ERROR":
+      return [
+        data,
+        [
+          {
+            type: "BROADCAST",
+            message: {
+              type: "slash_command_error",
+              command: signal.command,
+              request_id: signal.requestId,
+              error: signal.error,
+            },
+          },
+          {
+            type: "EMIT_EVENT",
+            eventType: "slash_command:failed",
+            payload: { command: signal.command, error: signal.error },
+          },
+        ],
+      ];
+
+    // ── Effect signals with lifecycle transitions ────────────────────────
+    case "BACKEND_CONNECTED": {
+      const drainEffects: Effect[] = data.pendingMessages.map((msg) => ({
+        type: "SEND_TO_BACKEND" as const,
+        message: msg,
+      }));
+      const effects: Effect[] = [
+        { type: "BROADCAST", message: { type: "cli_connected" } },
+        { type: "EMIT_EVENT", eventType: "backend:connected", payload: {} },
+        ...drainEffects,
+      ];
+      const nextData = {
+        ...data,
+        adapterSupportsSlashPassthrough: signal.supportsSlashPassthrough,
+        pendingMessages: [] as typeof data.pendingMessages,
+      };
+      if (isLifecycleTransitionAllowed(data.lifecycle, "active")) {
+        return [{ ...nextData, lifecycle: "active" as const }, effects];
+      }
+      return [nextData, effects];
+    }
+
+    case "BACKEND_DISCONNECTED": {
+      const cancelEffects: Effect[] = [...data.pendingPermissions.keys()].map((reqId) => ({
+        type: "BROADCAST_TO_PARTICIPANTS" as const,
+        message: { type: "permission_cancelled" as const, request_id: reqId },
+      }));
+      const effects: Effect[] = [
+        { type: "BROADCAST", message: { type: "cli_disconnected" } },
+        {
+          type: "EMIT_EVENT",
+          eventType: "backend:disconnected",
+          payload: { code: 1000, reason: signal.reason },
+        },
+        ...cancelEffects,
+      ];
+      const resetData = {
+        ...data,
+        backendSessionId: undefined,
+        adapterSupportsSlashPassthrough: false,
+        pendingPermissions: new Map<string, PermissionRequest>(),
+      };
+      const shouldDegrade = data.lifecycle === "active" || data.lifecycle === "idle";
+      if (shouldDegrade && isLifecycleTransitionAllowed(data.lifecycle, "degraded")) {
+        return [{ ...resetData, lifecycle: "degraded" as const }, effects];
+      }
+      return [resetData, effects];
+    }
+
+    // ── Lifecycle-only signals ───────────────────────────────────────────
+    case "SESSION_CLOSING":
+      return applyLifecycleTransition(data, "closing");
+
+    case "SESSION_CLOSED":
+      return applyLifecycleTransition(data, "closed");
+
+    case "RECONNECT_TIMEOUT":
+      return applyLifecycleTransition(data, "degraded");
+
+    case "IDLE_REAP":
+      return applyLifecycleTransition(data, "closing");
+
+    // ── No-op signals (handled by runtime or no pure data change) ────────
+    case "PASSTHROUGH_ENQUEUED":
     case "CAPABILITIES_TIMEOUT":
     case "CONSUMER_CONNECTED":
     case "CONSUMER_DISCONNECTED":
     case "GIT_INFO_RESOLVED":
     case "CAPABILITIES_READY":
-      // No pure data change for these — handled by runtime orchestration or reduceSystemSignal().
-      return null;
-    // Data-patch signals handled above — not lifecycle transitions
-    case "STATE_PATCHED":
-    case "LAST_STATUS_UPDATED":
-    case "QUEUED_MESSAGE_UPDATED":
-    case "MODEL_UPDATED":
-      return null;
+      return [data, []];
   }
+}
+
+/** Apply a lifecycle transition if allowed, returning unchanged data otherwise. */
+function applyLifecycleTransition(
+  data: SessionData,
+  next: LifecycleState,
+): [SessionData, Effect[]] {
+  if (!isLifecycleTransitionAllowed(data.lifecycle, next)) {
+    return [data, []];
+  }
+  return [{ ...data, lifecycle: next }, []];
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +281,7 @@ function lifecycleForSignal(_current: LifecycleState, signal: SystemSignal): Lif
  *     (e.g., error for set_adapter).
  *
  * I/O side (backend sends, lifecycle transition, slash execution, queue management)
- * stays in SessionRuntime.handleInboundCommand().
+ * stays in SessionRuntime.
  */
 function reduceInboundCommand(
   data: SessionData,
@@ -310,7 +337,8 @@ function reduceInboundCommand(
   }
 }
 
-// Public API
+// ---------------------------------------------------------------------------
+// BACKEND_MESSAGE reducer
 // ---------------------------------------------------------------------------
 
 /**
@@ -428,7 +456,6 @@ function buildEffects(
       if (numTurns === 1 && !isError) {
         const firstUser = prevData.messageHistory.find((e) => e.type === "user_message");
         if (firstUser && firstUser.type === "user_message") {
-          // sessionId will be injected by executeEffects
           effects.push({
             type: "EMIT_EVENT",
             eventType: "session:first_turn_completed",
@@ -460,7 +487,6 @@ function buildEffects(
           type: "BROADCAST_TO_PARTICIPANTS",
           message: { type: "permission_request", request: mapped.consumerPerm },
         });
-        // sessionId will be injected by executeEffects
         effects.push({
           type: "EMIT_EVENT",
           eventType: "permission:requested",
@@ -489,7 +515,6 @@ function buildEffects(
     case "auth_status": {
       effects.push({ type: "BROADCAST", message: mapAuthStatus(message) });
       const m = message.metadata;
-      // sessionId will be injected by executeEffects
       effects.push({
         type: "EMIT_EVENT",
         eventType: "auth_status",
@@ -507,13 +532,11 @@ function buildEffects(
       const m = message.metadata;
       const patch: Partial<SessionState> = {};
       if (typeof m.model === "string") patch.model = m.model;
-      const modeValue =
-        typeof m.mode === "string"
-          ? m.mode
-          : typeof m.permissionMode === "string"
-            ? m.permissionMode
-            : undefined;
-      if (modeValue !== undefined) patch.permissionMode = modeValue;
+      if (typeof m.mode === "string") {
+        patch.permissionMode = m.mode;
+      } else if (typeof m.permissionMode === "string") {
+        patch.permissionMode = m.permissionMode;
+      }
       if (Object.keys(patch).length > 0) {
         effects.push({ type: "BROADCAST_SESSION_UPDATE", patch });
       }

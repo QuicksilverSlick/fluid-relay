@@ -17,6 +17,7 @@ function makeDeps() {
     queueHandler: { autoSendQueuedMessage: vi.fn() },
     backendConnector: { sendToBackend: vi.fn() },
     store: { persist: vi.fn() },
+    gitTracker: { resolveGitInfo: vi.fn() },
   };
 }
 
@@ -126,6 +127,13 @@ describe("executeEffects", () => {
     executeEffects([{ type: "PERSIST_NOW" }], session, deps);
 
     expect(deps.store.persist).toHaveBeenCalledWith(session);
+  });
+
+  it("RESOLVE_GIT_INFO calls gitTracker.resolveGitInfo", () => {
+    const deps = makeDeps();
+    const session = makeSession();
+    executeEffects([{ type: "RESOLVE_GIT_INFO" }], session, deps);
+    expect(deps.gitTracker.resolveGitInfo).toHaveBeenCalledWith(session);
   });
 
   it("executes multiple effects in order", () => {

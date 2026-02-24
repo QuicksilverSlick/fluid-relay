@@ -145,7 +145,8 @@ export class ConsumerGateway {
     if (!session) return;
 
     const rt = this.deps.getRuntime(session);
-    const identity = rt.removeConsumer(ws);
+    const identity = rt.getConsumerIdentity(ws);
+    rt.process({ type: "SYSTEM_SIGNAL", signal: { kind: "CONSUMER_DISCONNECTED", ws } });
     this.deps.logger.info(
       `Consumer disconnected for session ${sessionId} (${rt.getConsumerCount()} consumers)`,
     );
@@ -184,7 +185,7 @@ export class ConsumerGateway {
   private acceptConsumer(ws: WebSocketLike, session: Session, identity: ConsumerIdentity): void {
     const sessionId = session.id;
     const rt = this.deps.getRuntime(session);
-    rt.addConsumer(ws, identity);
+    rt.process({ type: "SYSTEM_SIGNAL", signal: { kind: "CONSUMER_CONNECTED", ws, identity } });
     this.deps.logger.info(
       `Consumer connected for session ${sessionId} (${rt.getConsumerCount()} consumers)`,
     );

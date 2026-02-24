@@ -16,19 +16,21 @@ function createMockRuntime(session: any) {
     allocateAnonymousIdentityIndex: vi.fn(() => 1),
     getConsumerIdentity: vi.fn((ws: any) => session.consumerSockets.get(ws)),
     checkRateLimit: vi.fn(() => true),
-    removeConsumer: vi.fn((ws: any) => {
-      const id = session.consumerSockets.get(ws);
-      session.consumerSockets.delete(ws);
-      return id;
+    process: vi.fn((event: any) => {
+      if (event.type === "SYSTEM_SIGNAL") {
+        if (event.signal.kind === "CONSUMER_CONNECTED") {
+          session.consumerSockets.set(event.signal.ws, event.signal.identity);
+        } else if (event.signal.kind === "CONSUMER_DISCONNECTED") {
+          session.consumerSockets.delete(event.signal.ws);
+        }
+      }
     }),
-    addConsumer: vi.fn((ws: any, identity: any) => session.consumerSockets.set(ws, identity)),
     getConsumerCount: vi.fn(() => session.consumerSockets.size),
     getState: vi.fn(() => session.data.state),
     getMessageHistory: vi.fn(() => session.data.messageHistory),
     getPendingPermissions: vi.fn(() => Array.from(session.data.pendingPermissions.values())),
     getQueuedMessage: vi.fn(() => session.data.queuedMessage),
     isBackendConnected: vi.fn(() => false),
-    process: vi.fn(),
   } as any;
 }
 
@@ -149,7 +151,12 @@ describe("ConsumerGateway", () => {
     gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);
 
     expect(ws.close).toHaveBeenCalledWith(4404, "Session not found");
-    expect(vi.mocked(mockRuntime.addConsumer)).not.toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.process)).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "SYSTEM_SIGNAL",
+        signal: expect.objectContaining({ kind: "CONSUMER_CONNECTED" }),
+      }),
+    );
     expect(emitted.some((e) => e.event === "consumer:auth_failed")).toBe(true);
     expect(metrics.recordEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -170,7 +177,12 @@ describe("ConsumerGateway", () => {
 
     gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);
 
-    expect(vi.mocked(mockRuntime.addConsumer)).toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.process)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "SYSTEM_SIGNAL",
+        signal: expect.objectContaining({ kind: "CONSUMER_CONNECTED" }),
+      }),
+    );
     expect(vi.mocked(deps.gitTracker.resolveGitInfo)).toHaveBeenCalled();
     const sent = sentToWs();
     expect(sent[0]).toEqual(
@@ -277,7 +289,12 @@ describe("ConsumerGateway", () => {
     await flushPromises();
 
     expect(vi.mocked(deps.gatekeeper.authenticateAsync)).toHaveBeenCalled();
-    expect(vi.mocked(mockRuntime.addConsumer)).toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.process)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "SYSTEM_SIGNAL",
+        signal: expect.objectContaining({ kind: "CONSUMER_CONNECTED" }),
+      }),
+    );
   });
 
   it("routes valid consumer messages after auth + rate limit checks", () => {
@@ -383,7 +400,12 @@ describe("ConsumerGateway", () => {
     gateway.handleConsumerClose(ws, "s1");
 
     expect(vi.mocked(deps.gatekeeper.cancelPendingAuth)).toHaveBeenCalledWith(ws);
-    expect(vi.mocked(mockRuntime.removeConsumer)).toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.process)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "SYSTEM_SIGNAL",
+        signal: expect.objectContaining({ kind: "CONSUMER_DISCONNECTED" }),
+      }),
+    );
     expect(vi.mocked(deps.broadcaster.broadcastPresence)).toHaveBeenCalled();
     expect(emitted.some((e) => e.event === "consumer:disconnected")).toBe(true);
   });
@@ -391,7 +413,12 @@ describe("ConsumerGateway", () => {
   it("handleConsumerClose is safe when session is missing", () => {
     const { gateway, deps, ws, mockRuntime } = createHarness({ sessionExists: false });
     gateway.handleConsumerClose(ws, "s1");
-    expect(vi.mocked(mockRuntime.removeConsumer)).not.toHaveBeenCalled();
+    expect(vi.mocked(mockRuntime.process)).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "SYSTEM_SIGNAL",
+        signal: expect.objectContaining({ kind: "CONSUMER_DISCONNECTED" }),
+      }),
+    );
     expect(vi.mocked(deps.gatekeeper.cancelPendingAuth)).toHaveBeenCalledWith(ws);
   });
 });

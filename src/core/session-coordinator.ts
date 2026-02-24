@@ -202,7 +202,10 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         this.emitEvent("message:outbound", { sessionId, message: msg }),
       this.tracer,
       (session: Session, ws: import("../interfaces/transport.js").WebSocketLike) =>
-        this.getOrCreateRuntime(session).removeConsumer(ws),
+        this.getOrCreateRuntime(session).process({
+          type: "SYSTEM_SIGNAL",
+          signal: { kind: "CONSUMER_DISCONNECTED", ws },
+        }),
       {
         getConsumerSockets: (session: Session) =>
           this.getOrCreateRuntime(session).getConsumerSockets(),
@@ -274,7 +277,11 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         registerPendingPassthrough: (
           session: Session,
           entry: Session["pendingPassthroughs"][number],
-        ) => this.getOrCreateRuntime(session).enqueuePendingPassthrough(entry),
+        ) =>
+          this.getOrCreateRuntime(session).process({
+            type: "SYSTEM_SIGNAL",
+            signal: { kind: "PASSTHROUGH_ENQUEUED", entry },
+          }),
         sendUserMessage: (
           sessionId: string,
           content: string,
@@ -312,7 +319,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
       adapterResolver: options.adapterResolver ?? null,
       logger: this.logger,
       metrics: this.metrics,
-      broadcaster: this.broadcaster,
       routeUnifiedMessage: (session: Session, msg: UnifiedMessage) =>
         this.withMutableSession(session.id, "handleBackendMessage", (s) =>
           this.getOrCreateRuntime(s).process({ type: "BACKEND_MESSAGE", message: msg }),
@@ -705,13 +711,19 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
   /** Seed the session's initial state (cwd, model). Public for test utilities. */
   seedSessionState(sessionId: string, params: { cwd?: string; model?: string }): void {
     const session = this.getOrCreateSession(sessionId);
-    this.getOrCreateRuntime(session).seedSessionState(params);
+    this.getOrCreateRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "SESSION_SEEDED", cwd: params.cwd, model: params.model },
+    });
   }
 
   /** Set the adapter name for the session. Public for test utilities. */
   setAdapterName(sessionId: string, name: string): void {
     const session = this.getOrCreateSession(sessionId);
-    this.getOrCreateRuntime(session).setAdapterName(name);
+    this.getOrCreateRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "ADAPTER_NAME_SET", name },
+    });
   }
 
   /** Get a session snapshot. Public for test utilities and e2e helpers. */

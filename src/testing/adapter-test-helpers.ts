@@ -317,7 +317,11 @@ export function createBridgeWithAdapter(options?: {
     logger,
     (sessionId, msg) => emitEvent("message:outbound", { sessionId, message: msg }),
     tracer,
-    (session, ws) => getOrCreateRuntime(session).removeConsumer(ws),
+    (session, ws) =>
+      getOrCreateRuntime(session).process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "CONSUMER_DISCONNECTED", ws },
+      }),
     { getConsumerSockets: (session) => getOrCreateRuntime(session).getConsumerSockets() },
   );
 
@@ -376,7 +380,10 @@ export function createBridgeWithAdapter(options?: {
         payload: BridgeEventMap[keyof BridgeEventMap],
       ) => void,
       registerPendingPassthrough: (session, entry) =>
-        getOrCreateRuntime(session).enqueuePendingPassthrough(entry),
+        getOrCreateRuntime(session).process({
+          type: "SYSTEM_SIGNAL",
+          signal: { kind: "PASSTHROUGH_ENQUEUED", entry },
+        }),
       sendUserMessage: (sessionId, content, trace) =>
         withMutableSession(sessionId, "sendUserMessage", (s) =>
           getOrCreateRuntime(s).sendUserMessage(content, {
@@ -410,7 +417,6 @@ export function createBridgeWithAdapter(options?: {
     adapterResolver: null,
     logger,
     metrics: null,
-    broadcaster,
     routeUnifiedMessage: (session, msg) =>
       withMutableSession(session.id, "handleBackendMessage", (s) =>
         getOrCreateRuntime(s).process({ type: "BACKEND_MESSAGE", message: msg }),
@@ -506,7 +512,10 @@ export function createBridgeWithAdapter(options?: {
     },
     seedSessionState: (sessionId, params) => {
       const session = getOrCreateSession(sessionId);
-      getOrCreateRuntime(session).seedSessionState(params);
+      getOrCreateRuntime(session).process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "SESSION_SEEDED", cwd: params.cwd, model: params.model },
+      });
     },
     handleConsumerOpen: (ws, context) => consumerGateway.handleConsumerOpen(ws, context),
     handleConsumerMessage: (ws, sessionId, data) =>

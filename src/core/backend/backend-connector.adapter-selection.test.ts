@@ -43,36 +43,8 @@ function mockResolver(adapters: Record<string, BackendAdapter>): AdapterResolver
  */
 function createSessionAwareRuntime(session: any) {
   return {
-    attachBackendConnection: vi.fn((params: any) => {
-      session.backendSession = params.backendSession;
-      session.backendAbort = params.backendAbort;
-      if (session.data)
-        session.data.adapterSupportsSlashPassthrough = params.supportsSlashPassthrough;
-      session.adapterSlashExecutor = params.slashExecutor;
-    }),
-    resetBackendConnectionState: vi.fn(() => {
-      session.backendSession = null;
-      session.backendAbort = null;
-      if (session.data) {
-        session.data.backendSessionId = undefined;
-        session.data.adapterSupportsSlashPassthrough = false;
-      }
-      session.adapterSlashExecutor = null;
-    }),
     getBackendSession: vi.fn(() => session.backendSession ?? null),
     getBackendAbort: vi.fn(() => session.backendAbort ?? null),
-    drainPendingMessages: vi.fn(() => {
-      const pending = session.data?.pendingMessages ?? [];
-      if (session.data) session.data.pendingMessages = [];
-      return pending;
-    }),
-    drainPendingPermissionIds: vi.fn(() => {
-      const pendingPermissions = session.data?.pendingPermissions ?? new Map();
-      const ids = Array.from(pendingPermissions.keys());
-      pendingPermissions.clear();
-      if (session.data) session.data.pendingPermissions = pendingPermissions;
-      return ids;
-    }),
     peekPendingPassthrough: vi.fn(() => session.pendingPassthroughs?.[0]),
     shiftPendingPassthrough: vi.fn(() => session.pendingPassthroughs?.shift()),
     getState: vi.fn(() => {
@@ -102,9 +74,24 @@ describe("BackendConnector per-session adapter", () => {
     return {
       logger,
       metrics: null,
-      broadcaster: { broadcast: vi.fn(), sendTo: vi.fn() } as any,
       routeUnifiedMessage: vi.fn(),
-      routeSystemSignal: vi.fn(),
+      routeSystemSignal: vi.fn((session: any, signal: any) => {
+        if (signal.kind === "BACKEND_CONNECTED") {
+          session.backendSession = signal.backendSession;
+          session.backendAbort = signal.backendAbort;
+          if (session.data)
+            session.data.adapterSupportsSlashPassthrough = signal.supportsSlashPassthrough;
+          session.adapterSlashExecutor = signal.slashExecutor;
+        } else if (signal.kind === "BACKEND_DISCONNECTED") {
+          session.backendSession = null;
+          session.backendAbort = null;
+          if (session.data) {
+            session.data.backendSessionId = undefined;
+            session.data.adapterSupportsSlashPassthrough = false;
+          }
+          session.adapterSlashExecutor = null;
+        }
+      }),
       emitEvent: vi.fn(),
       getRuntime: (session: any) => {
         if (!runtimeCache.has(session)) {
@@ -310,7 +297,6 @@ describe("BackendConnector per-session adapter", () => {
       adapterResolver: null,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
       metrics: null,
-      broadcaster: { broadcast: vi.fn(), sendTo: vi.fn() } as any,
       routeUnifiedMessage: vi.fn(),
       routeSystemSignal: vi.fn(),
       emitEvent: vi.fn(),

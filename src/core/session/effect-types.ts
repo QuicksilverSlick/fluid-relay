@@ -28,4 +28,6 @@ export type Effect =
   /** Send a pre-normalized UnifiedMessage to the backend (no-op if no backend session). */
   | { type: "SEND_TO_BACKEND"; message: UnifiedMessage }
   /** Flush state to disk immediately (for critical user-visible writes). */
-  | { type: "PERSIST_NOW" };
+  | { type: "PERSIST_NOW" }
+  /** Resolve git info for the session (after seeding cwd). */
+  | { type: "RESOLVE_GIT_INFO" };

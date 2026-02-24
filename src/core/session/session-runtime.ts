@@ -183,18 +183,6 @@ export class SessionRuntime {
     return this.session.data.state.capabilities?.account ?? null;
   }
 
-  setAdapterName(name: string): void {
-    this.session = {
-      ...this.session,
-      data: {
-        ...this.session.data,
-        adapterName: name,
-        state: { ...this.session.data.state, adapterName: name },
-      },
-    };
-    this.persistNow();
-  }
-
   getLastStatus(): SessionData["lastStatus"] {
     return this.session.data.lastStatus;
   }
@@ -203,16 +191,8 @@ export class SessionRuntime {
     return this.session.data.state;
   }
 
-  setBackendSessionId(sessionId: string | undefined): void {
-    this.session = { ...this.session, data: { ...this.session.data, backendSessionId: sessionId } };
-  }
-
   getMessageHistory(): SessionData["messageHistory"] {
     return this.session.data.messageHistory;
-  }
-
-  setMessageHistory(history: SessionData["messageHistory"]): void {
-    this.session = { ...this.session, data: { ...this.session.data, messageHistory: history } };
   }
 
   getQueuedMessage(): SessionData["queuedMessage"] {
@@ -258,12 +238,14 @@ export class SessionRuntime {
   trySendRawToBackend(ndjson: string): "sent" | "unsupported" | "no_backend" {
     const backendSession = this.session.backendSession;
     if (!backendSession) return "no_backend";
-    try {
-      backendSession.sendRaw(ndjson);
-      return "sent";
-    } catch {
+    if (
+      !("sendRaw" in backendSession) ||
+      typeof (backendSession as unknown as Record<string, unknown>).sendRaw !== "function"
+    ) {
       return "unsupported";
     }
+    (backendSession as unknown as { sendRaw: (s: string) => void }).sendRaw(ndjson);
+    return "sent";
   }
 
   registerCLICommands(commands: InitializeCommand[]): void {
@@ -284,33 +266,9 @@ export class SessionRuntime {
     this.session.registry.clearDynamic?.();
   }
 
-  seedSessionState(params: { cwd?: string; model?: string }): void {
-    const patch: Partial<SessionData["state"]> = {};
-    if (params.cwd) patch.cwd = params.cwd;
-    if (params.model) patch.model = params.model;
-    if (Object.keys(patch).length > 0) {
-      this.session = {
-        ...this.session,
-        data: { ...this.session.data, state: { ...this.session.data.state, ...patch } },
-      };
-    }
-    this.deps.gitTracker.resolveGitInfo(this.session);
-  }
-
   allocateAnonymousIdentityIndex(): number {
     this.session.anonymousCounter += 1;
     return this.session.anonymousCounter;
-  }
-
-  addConsumer(ws: WebSocketLike, identity: ConsumerIdentity): void {
-    this.session.consumerSockets.set(ws, identity);
-  }
-
-  removeConsumer(ws: WebSocketLike): ConsumerIdentity | undefined {
-    const identity = this.session.consumerSockets.get(ws);
-    this.session.consumerSockets.delete(ws);
-    this.session.consumerRateLimiters.delete(ws);
-    return identity;
   }
 
   closeAllConsumers(): void {
@@ -320,8 +278,9 @@ export class SessionRuntime {
       } catch {
         // Ignore close errors for defensive shutdown.
       }
-      this.removeConsumer(ws);
     }
+    this.session.consumerSockets.clear();
+    this.session.consumerRateLimiters.clear();
   }
 
   async closeBackendConnection(): Promise<void> {
@@ -329,68 +288,12 @@ export class SessionRuntime {
     if (!backendSession) return;
     this.session.backendAbort?.abort();
     await backendSession.close();
-    this.clearBackendConnection();
-  }
-
-  clearBackendConnection(): void {
-    this.session.backendSession = null;
-    this.session.backendAbort = null;
-  }
-
-  attachBackendConnection(params: {
-    backendSession: NonNullable<Session["backendSession"]>;
-    backendAbort: AbortController;
-    supportsSlashPassthrough: boolean;
-    slashExecutor: Session["adapterSlashExecutor"] | null;
-  }): void {
-    this.session.backendSession = params.backendSession;
-    this.session.backendAbort = params.backendAbort;
-    this.session.adapterSlashExecutor = params.slashExecutor;
-    this.session = {
-      ...this.session,
-      data: {
-        ...this.session.data,
-        adapterSupportsSlashPassthrough: params.supportsSlashPassthrough,
-      },
-    };
-  }
-
-  resetBackendConnectionState(): void {
-    this.clearBackendConnection();
-    this.session = {
-      ...this.session,
-      data: {
-        ...this.session.data,
-        backendSessionId: undefined,
-        adapterSupportsSlashPassthrough: false,
-      },
-    };
-    this.session.adapterSlashExecutor = null;
-  }
-
-  drainPendingMessages(): UnifiedMessage[] {
-    const pending = Array.from(this.session.data.pendingMessages);
-    this.session = { ...this.session, data: { ...this.session.data, pendingMessages: [] } };
-    return pending;
-  }
-
-  drainPendingPermissionIds(): string[] {
-    const ids = Array.from(this.session.data.pendingPermissions.keys());
-    this.session = {
-      ...this.session,
-      data: { ...this.session.data, pendingPermissions: new Map() },
-    };
-    return ids;
-  }
-
-  storePendingPermission(requestId: string, request: PermissionRequest): void {
-    const updated = new Map(this.session.data.pendingPermissions);
-    updated.set(requestId, request);
-    this.session = { ...this.session, data: { ...this.session.data, pendingPermissions: updated } };
-  }
-
-  enqueuePendingPassthrough(entry: Session["pendingPassthroughs"][number]): void {
-    this.session.pendingPassthroughs.push(entry);
+    // Dispatch BACKEND_DISCONNECTED so the reducer cancels pending permissions
+    // and the post-reducer hook nulls the handles.
+    this.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "BACKEND_DISCONNECTED", reason: "session_closed" },
+    });
   }
 
   peekPendingPassthrough(): Session["pendingPassthroughs"][number] | undefined {
@@ -431,23 +334,11 @@ export class SessionRuntime {
     this.touchActivity();
     switch (msg.type) {
       case "user_message": {
-        // Route pure state mutations (lastStatus + messageHistory) through the reducer.
-        const prevData = this.session.data;
-        const [nextData, effects] = sessionReducer(
-          this.session.data,
-          { type: "INBOUND_COMMAND", command: msg, ws },
-          this.deps.config,
-        );
-        if (nextData !== prevData) {
-          // Reducer accepted the message — apply state + effects, then do I/O.
-          this.session = { ...this.session, data: nextData };
-          executeEffects(effects, this.session, this.effectDeps());
-          this.sendUserMessageIO(msg.content, {
-            sessionIdOverride: msg.session_id,
-            images: msg.images,
-          });
-        } else {
-          // Lifecycle is closed/closing — send targeted error to the requesting consumer.
+        const accepted = this.applyUserMessageReducer(msg.content, {
+          sessionIdOverride: msg.session_id,
+          images: msg.images,
+        });
+        if (!accepted) {
           this.deps.broadcaster.sendTo(ws, {
             type: "error",
             message: "Session is closing or closed and cannot accept new messages.",
@@ -502,6 +393,18 @@ export class SessionRuntime {
    * lifecycle rejected the message (closed/closing).
    */
   sendUserMessage(content: string, options?: RuntimeSendUserMessageOptions): boolean {
+    return this.applyUserMessageReducer(content, options);
+  }
+
+  /**
+   * Shared reducer + I/O path for user messages.
+   * Used by both handleInboundCommand (WebSocket path) and sendUserMessage (programmatic path).
+   * Returns `false` if the session lifecycle rejected the message.
+   */
+  private applyUserMessageReducer(
+    content: string,
+    options?: RuntimeSendUserMessageOptions,
+  ): boolean {
     const prevData = this.session.data;
     const [nextData, effects] = sessionReducer(
       this.session.data,
@@ -514,7 +417,6 @@ export class SessionRuntime {
     );
 
     if (nextData === prevData) {
-      // Lifecycle is closed/closing — message rejected.
       return false;
     }
 
@@ -627,7 +529,6 @@ export class SessionRuntime {
 
   sendSetModel(model: string): void {
     if (!this.session.backendSession) return;
-    // Route pure state mutation (state.model + BROADCAST_SESSION_UPDATE) through reducer.
     const [nextData, effects] = sessionReducer(
       this.session.data,
       {
@@ -655,9 +556,24 @@ export class SessionRuntime {
       queueHandler: this.deps.queueHandler,
       backendConnector: this.deps.backendConnector,
       store: this.deps.store,
+      gitTracker: this.deps.gitTracker,
     };
   }
 
+  /**
+   * Apply a SystemSignal to session state and execute the resulting effects.
+   *
+   * Three-phase execution:
+   *   1. Run sessionReducer — pure data mutations and effect list (no I/O).
+   *   2. Apply BACKEND_CONNECTED handle refs BEFORE effects so that
+   *      SEND_TO_BACKEND effects (drained pending messages) can reach the
+   *      now-live BackendSession.
+   *   3. Execute effects via executeEffects().
+   *   4. Apply remaining handle mutations AFTER effects:
+   *      BACKEND_DISCONNECTED, CONSUMER_CONNECTED/DISCONNECTED, PASSTHROUGH_ENQUEUED.
+   *      These mutate non-serializable handles (outside SessionData) that are
+   *      not needed by the effects they accompany.
+   */
   private handleSystemSignal(signal: SystemSignal): void {
     const prevData = this.session.data;
     const [nextData, effects] = sessionReducer(
@@ -669,7 +585,37 @@ export class SessionRuntime {
       this.session = { ...this.session, data: nextData };
       this.markDirty();
     }
+
+    // Apply BACKEND_CONNECTED handle mutations BEFORE executing effects so that
+    // SEND_TO_BACKEND effects (drained pending messages) can reach the backend session.
+    if (signal.kind === "BACKEND_CONNECTED") {
+      this.session.backendSession = signal.backendSession;
+      this.session.backendAbort = signal.backendAbort;
+      this.session.adapterSlashExecutor = signal.slashExecutor;
+    }
+
     executeEffects(effects, this.session, this.effectDeps());
+
+    // Post-reducer handle mutations — these fields are NOT part of SessionData
+    // and are NOT persisted. Only non-serializable handles (WebSocket, AbortController,
+    // BackendSession) belong here. Serializable state must go through the reducer → markDirty().
+    switch (signal.kind) {
+      case "BACKEND_DISCONNECTED":
+        this.session.backendSession = null;
+        this.session.backendAbort = null;
+        this.session.adapterSlashExecutor = null;
+        break;
+      case "CONSUMER_CONNECTED":
+        this.session.consumerSockets.set(signal.ws, signal.identity);
+        break;
+      case "CONSUMER_DISCONNECTED":
+        this.session.consumerSockets.delete(signal.ws);
+        this.session.consumerRateLimiters.delete(signal.ws);
+        break;
+      case "PASSTHROUGH_ENQUEUED":
+        this.session.pendingPassthroughs.push(signal.entry);
+        break;
+    }
   }
 
   async executeSlashCommand(
