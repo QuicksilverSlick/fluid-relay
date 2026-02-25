@@ -39,6 +39,11 @@ function createMockRuntime(session: any, broadcaster: any, emitEvent: any) {
           models: signal.models,
           account: signal.account,
         });
+        // Mirrors SessionRuntime.handleSystemSignal post-reducer hook for CAPABILITIES_APPLIED:
+        // registerCLICommands is now called here (in the runtime) rather than in CapabilitiesPolicy.
+        if (signal.commands.length > 0) {
+          session.registry.registerFromCLI(signal.commands);
+        }
       } else if (signal.kind === "CAPABILITIES_TIMEOUT") {
         emitEvent("capabilities:timeout", { sessionId: session.id });
       }

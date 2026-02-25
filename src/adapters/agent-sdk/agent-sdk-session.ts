@@ -88,12 +88,6 @@ export class AgentSdkSession implements BackendSession {
     }
   }
 
-  // ── BackendSession.sendRaw ──
-
-  sendRaw(_ndjson: string): void {
-    throw new Error("AgentSdkSession does not support raw NDJSON");
-  }
-
   // ── BackendSession.messages ──
 
   get messages(): AsyncIterable<UnifiedMessage> {

@@ -671,12 +671,15 @@ describe("sessionReducer INBOUND_COMMAND", () => {
     expect(next.lastStatus).toBe("running");
     expect(next.messageHistory).toHaveLength(1);
     expect(next.messageHistory[0]).toMatchObject({ type: "user_message", content: "hi" });
-    expect(effects).toHaveLength(2);
+    // Reducer now produces 3 effects: BROADCAST, PERSIST_NOW, and SEND_TO_BACKEND
+    // (backend connected path — lifecycle is "active")
+    expect(effects).toHaveLength(3);
     expect(effects[0]).toMatchObject({
       type: "BROADCAST",
       message: { type: "user_message", content: "hi" },
     });
     expect(effects[1]).toMatchObject({ type: "PERSIST_NOW" });
+    expect(effects[2]).toMatchObject({ type: "SEND_TO_BACKEND" });
   });
 
   it("returns data unchanged and empty effects for user_message when lifecycle is closing", () => {
@@ -690,6 +693,39 @@ describe("sessionReducer INBOUND_COMMAND", () => {
     expect(effects).toHaveLength(0);
   });
 
+  it("user_message when lifecycle is degraded queues in pendingMessages and transitions to awaiting_backend", () => {
+    const data = { ...baseData(), lifecycle: "degraded" as const };
+    const [next, effects] = sessionReducer(data, {
+      type: "INBOUND_COMMAND",
+      command: { type: "user_message", content: "queued msg", session_id: "" },
+    });
+    // Transitions to awaiting_backend (allowed from degraded)
+    expect(next.lifecycle).toBe("awaiting_backend");
+    // Message is queued for drain on next BACKEND_CONNECTED
+    expect(next.pendingMessages).toHaveLength(1);
+    // No SEND_TO_BACKEND effect — backend is not connected
+    expect(effects).not.toContainEqual(expect.objectContaining({ type: "SEND_TO_BACKEND" }));
+    // BROADCAST (optimistic echo) and PERSIST_NOW are produced
+    expect(effects).toContainEqual(
+      expect.objectContaining({
+        type: "BROADCAST",
+        message: expect.objectContaining({ type: "user_message" }),
+      }),
+    );
+    expect(effects).toContainEqual(expect.objectContaining({ type: "PERSIST_NOW" }));
+  });
+
+  it("permission_response with unknown requestId returns data reference unchanged and empty effects", () => {
+    const data = baseData(); // pendingPermissions is empty
+    const [next, effects] = sessionReducer(data, {
+      type: "INBOUND_COMMAND",
+      command: { type: "permission_response", request_id: "unknown-id", behavior: "deny" },
+    });
+    // Same reference — runtime detects this to log the warning
+    expect(next).toBe(data);
+    expect(effects).toHaveLength(0);
+  });
+
   it("updates state.model and returns BROADCAST_SESSION_UPDATE for set_model", () => {
     const data = baseData();
     const [next, effects] = sessionReducer(data, {
@@ -697,11 +733,14 @@ describe("sessionReducer INBOUND_COMMAND", () => {
       command: { type: "set_model", model: "claude-opus-4-6" },
     });
     expect(next.state.model).toBe("claude-opus-4-6");
-    expect(effects).toHaveLength(1);
+    // Reducer now produces 2 effects: BROADCAST_SESSION_UPDATE and SEND_TO_BACKEND
+    // (backend connected path — lifecycle is "active")
+    expect(effects).toHaveLength(2);
     expect(effects[0]).toMatchObject({
       type: "BROADCAST_SESSION_UPDATE",
       patch: { model: "claude-opus-4-6" },
     });
+    expect(effects[1]).toMatchObject({ type: "SEND_TO_BACKEND" });
   });
 
   it("trims messageHistory to config.maxMessageHistoryLength for user_message", () => {
@@ -819,13 +858,66 @@ describe("systemSignal — Phase 2 broadcast signals", () => {
     expect(effects[0]).toMatchObject({ type: "BROADCAST_SESSION_UPDATE", patch: { watchdog } });
   });
 
-  it("RESUME_FAILED returns BROADCAST with resume_failed message", () => {
+  it("RESUME_FAILED broadcasts resume_failed with sessionId", () => {
     const [, effects] = sessionReducer(baseData(), {
       type: "SYSTEM_SIGNAL",
-      signal: { kind: "RESUME_FAILED" },
+      signal: { kind: "RESUME_FAILED", sessionId: "s1" },
     });
     expect(effects).toHaveLength(1);
-    expect(effects[0]).toMatchObject({ type: "BROADCAST", message: { type: "resume_failed" } });
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST",
+      message: { type: "resume_failed", sessionId: "s1" },
+    });
+  });
+
+  it("CIRCUIT_BREAKER_CHANGED returns BROADCAST_SESSION_UPDATE with circuitBreaker patch", () => {
+    const circuitBreaker = { state: "open" as const, failureCount: 3, nextRetryAt: 9000 };
+    const data = baseData();
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "CIRCUIT_BREAKER_CHANGED", circuitBreaker },
+    });
+    expect(next).toBe(data); // no state mutation — pure broadcast
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST_SESSION_UPDATE",
+      patch: { circuitBreaker },
+    });
+  });
+
+  it("PERMISSION_RESOLVED removes from pendingPermissions and emits permission:resolved event", () => {
+    const perms = new Map([["req-1", { tool_name: "bash", request_id: "req-1" } as any]]);
+    const data = { ...baseData(), pendingPermissions: perms };
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "PERMISSION_RESOLVED", requestId: "req-1", behavior: "allow" },
+    });
+    expect(next.pendingPermissions.has("req-1")).toBe(false);
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({
+      type: "EMIT_EVENT",
+      eventType: "permission:resolved",
+      payload: { requestId: "req-1", behavior: "allow" },
+    });
+  });
+
+  it("MESSAGE_QUEUED sets queuedMessage and returns BROADCAST + PERSIST_NOW", () => {
+    const queued = {
+      consumerId: "u1",
+      displayName: "Alice",
+      content: "queued content",
+      queuedAt: 5000,
+    };
+    const data = { ...baseData(), queuedMessage: null };
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "MESSAGE_QUEUED", queued },
+    });
+    expect(next.queuedMessage).toEqual(queued);
+    expect(
+      effects.some((e) => e.type === "BROADCAST" && (e as any).message.type === "message_queued"),
+    ).toBe(true);
+    expect(effects.some((e) => e.type === "PERSIST_NOW")).toBe(true);
   });
 
   it("SESSION_RENAMED returns BROADCAST with session_name_update message", () => {

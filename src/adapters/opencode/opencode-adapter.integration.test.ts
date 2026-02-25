@@ -988,10 +988,10 @@ describe("E2E: OpencodeAdapter", () => {
     expect(() => session!.send(msg)).toThrow("Unsupported message type for opencode: result");
   });
 
-  it("sendRaw throws (not supported)", () => {
+  it("sendRaw is not defined (not supported)", () => {
     session = createSession();
 
-    expect(() => session!.sendRaw("{}")).toThrow("opencode adapter does not support raw NDJSON");
+    expect(session!.sendRaw).toBeUndefined();
   });
 
   // ---------------------------------------------------------------------------

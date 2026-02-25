@@ -311,7 +311,7 @@ The SessionRuntime is a **per-session actor**. One instance exists per active se
 │  │  handles: SessionHandles   (mutable — runtime references)         │ │
 │  │  ├─ backendSession, backendAbort                                  │ │
 │  │  ├─ consumerSockets, consumerRateLimiters                         │ │
-│  │  ├─ teamCorrelationBuffer, registry, pendingPassthroughs          │ │
+│  │  ├─ teamCorrelation, registry, pendingPassthroughs                │ │
 │  │  └─ adapterSlashExecutor, pendingInitialize                       │ │
 │  │                                                                   │ │
 │  │  ═══════ SessionData is readonly — NO OTHER MODULE CAN WRITE ═══  │ │
@@ -363,24 +363,24 @@ The SessionRuntime is a **per-session actor**. One instance exists per active se
 The SessionReducer is the **single pure function** that contains all state-transition logic. It takes current `SessionData` and a `SessionEvent`, and returns a tuple of `[SessionData, Effect[]]`.
 
 **Responsibilities:**
-- **State reduction for all backend messages:** session_init, status_change, assistant, result, permission_request, tool_use_summary, configuration_change, auth_status, session_lifecycle, stream_event, tool_progress, control_response
+- **State reduction for all backend messages:** session_init, status_change, assistant, result, stream_event, permission_request, control_response, tool_progress, tool_use_summary, auth_status, configuration_change, session_lifecycle
 - **State reduction for inbound commands:** user_message (echo + normalize), permission_response, interrupt, set_model, queue operations
-- **State reduction for system signals:** backend connected/disconnected, consumer connected/disconnected, idle reap, reconnect timeout, capabilities timeout, session closed, git info resolved
+- **State reduction for system signals:** backend connected/disconnected, consumer connected/disconnected, idle reap, reconnect timeout, capabilities timeout, session closed, git info resolved, process output received, team state diffed, etc.
 - **History management:** Append, replace (dedup), trim to max length
 - **Status inference:** result → idle, status_change → update lastStatus
 - **Permission tracking:** Store pending permissions from backend requests
-- **Effect determination:** For each event, compute which side effects need to happen (broadcast, send-to-backend, emit domain event, async workflow trigger)
+- **Effect determination:** For each event, compute which side effects need to happen (broadcast, send-to-backend, emit domain event, auto-send queued, etc.)
 
 **Composed from sub-reducers:**
 
 ```typescript
 function sessionReducer(data: SessionData, event: SessionEvent): [SessionData, Effect[]] {
   switch (event.type) {
-    case 'BACKEND_MESSAGE':
+    case "BACKEND_MESSAGE":
       return reduceBackendMessage(data, event.message);
-    case 'INBOUND_COMMAND':
+    case "INBOUND_COMMAND":
       return reduceInboundCommand(data, event.command);
-    case 'SYSTEM_SIGNAL':
+    case "SYSTEM_SIGNAL":
       return reduceSystemSignal(data, event.signal);
   }
 }
@@ -390,13 +390,13 @@ Each sub-reducer further delegates to focused pure functions:
 
 | Sub-reducer | From file | Responsibility |
 |-------------|-----------|----------------|
-| `reduceSessionState` | `session-state-reducer.ts` | AI context: model, cwd, tools, team state, capabilities, cost |
+| `reduce` | `session-state-reducer.ts` | AI context: model, cwd, tools, team state, capabilities, cost |
 | `reduceHistory` | `history-reducer.ts` | Append, replace, dedup assistant messages, trim to max |
 | `reduceStatus` | inline | `status_change` → update lastStatus; `result` → idle |
 | `reducePermissions` | inline | Store/clear pending permission requests |
 | `reduceLifecycle` | `session-lifecycle.ts` | Enforce lifecycle state machine transitions |
 | `reduceTeamState` | `team/team-state-reducer.ts` | Team member/task state from tool-use messages |
-| `mapToEffects` | `effect-mapper.ts` | Determine side effects for each message type |
+| `mapInboundCommandEffects` | `effect-mapper.ts` | Determine side effects for each command |
 
 **Key property:** Same-reference optimization — returns the original `data` reference if no fields changed. This allows `nextData !== this.data` check in the runtime to skip persistence when nothing changed.
 
@@ -574,13 +574,14 @@ interface SessionData {
   readonly lifecycle: LifecycleState;
   readonly backendSessionId?: string;
   readonly state: SessionState;
-  readonly messageHistory: readonly ConsumerMessage[];
-  readonly lastStatus: "compacting" | "idle" | "running" | null;
   readonly pendingPermissions: ReadonlyMap<string, PermissionRequest>;
+  readonly messageHistory: readonly ConsumerMessage[];
   readonly pendingMessages: readonly UnifiedMessage[];
   readonly queuedMessage: QueuedMessage | null;
+  readonly lastStatus: "compacting" | "idle" | "running" | null;
   readonly adapterName?: string;
   readonly adapterSupportsSlashPassthrough: boolean;
+  readonly teamCorrelation: ReadonlyMap<string, PendingToolUse>;
 }
 ```
 
@@ -601,7 +602,6 @@ interface SessionHandles {
   anonymousCounter: number;
   lastActivity: number;
   pendingInitialize: { requestId: string; timer: ReturnType<typeof setTimeout> } | null;
-  teamCorrelationBuffer: TeamToolCorrelationBuffer;
   registry: SlashCommandRegistry;
   pendingPassthroughs: Array<{...}>;
   adapterSlashExecutor: AdapterSlashExecutor | null;
@@ -619,7 +619,7 @@ type SessionEvent =
   | { type: "SYSTEM_SIGNAL"; signal: SystemSignal };
 
 type SystemSignal =
-  | { kind: "BACKEND_CONNECTED" }
+  | { kind: "BACKEND_CONNECTED"; backendSession: BackendSession; ... }
   | { kind: "BACKEND_DISCONNECTED"; reason: string }
   | { kind: "CONSUMER_CONNECTED"; ws: WebSocketLike; identity: ConsumerIdentity }
   | { kind: "CONSUMER_DISCONNECTED"; ws: WebSocketLike }
@@ -628,7 +628,31 @@ type SystemSignal =
   | { kind: "IDLE_REAP" }
   | { kind: "RECONNECT_TIMEOUT" }
   | { kind: "CAPABILITIES_TIMEOUT" }
-  | { kind: "SESSION_CLOSED" };
+  | { kind: "BACKEND_RELAUNCH_NEEDED" }
+  | { kind: "SESSION_CLOSING" }
+  | { kind: "SESSION_CLOSED" }
+  | { kind: "STATE_PATCHED"; patch: Partial<SessionState>; broadcast?: boolean }
+  | { kind: "LAST_STATUS_UPDATED"; status: string }
+  | { kind: "QUEUED_MESSAGE_UPDATED"; message: QueuedMessage | null }
+  | { kind: "MODEL_UPDATED"; model: string }
+  | { kind: "ADAPTER_NAME_SET"; name: string }
+  | { kind: "SLASH_PASSTHROUGH_RESULT"; ... }
+  | { kind: "SLASH_PASSTHROUGH_ERROR"; ... }
+  | { kind: "PASSTHROUGH_ENQUEUED"; entry: ... }
+  | { kind: "SESSION_SEEDED"; cwd?: string; model?: string }
+  | { kind: "WATCHDOG_STATE_CHANGED"; watchdog: ... }
+  | { kind: "RESUME_FAILED"; sessionId: string }
+  | { kind: "CIRCUIT_BREAKER_CHANGED"; circuitBreaker: ... }
+  | { kind: "SESSION_RENAMED"; name: string }
+  | { kind: "PROCESS_OUTPUT_RECEIVED"; stream: string; data: string }
+  | { kind: "PERMISSION_RESOLVED"; requestId: string; behavior: string }
+  | { kind: "PENDING_MESSAGE_ADDED"; message: UnifiedMessage }
+  | { kind: "TEAM_STATE_DIFFED"; prevTeam: TeamState; currentTeam: TeamState; ... }
+  | { kind: "CAPABILITIES_APPLIED"; commands: ... }
+  | { kind: "MESSAGE_QUEUED"; queued: QueuedMessage }
+  | { kind: "QUEUED_MESSAGE_EDITED"; content: string; ... }
+  | { kind: "QUEUED_MESSAGE_CANCELLED" }
+  | { kind: "QUEUED_MESSAGE_SENT" };
 ```
 
 ### Effect (Output Union)
@@ -1331,7 +1355,7 @@ src/core/
 ├── index.ts                         — barrel exports
 │
 ├── backend/                         — BackendPlane
-│   └── backend-connector.ts         — adapter lifecycle + consumption + passthrough (~611L)
+│   └── backend-connector.ts         — adapter lifecycle + consumption + passthrough (~644L)
 │
 ├── capabilities/                    — Capabilities handshake policy
 │   └── capabilities-policy.ts       — observe + advise (~178L)
@@ -1370,12 +1394,12 @@ src/core/
 │   └── trace-differ.ts              — diff computation for trace inspection (~143L)
 │
 ├── policies/                        — Policy services (observe + advise)
-│   ├── idle-policy.ts               — idle session sweep (~141L)
+│   ├── idle-policy.ts               │ idle session sweep (~141L)
 │   └── reconnect-policy.ts          — awaiting_backend watchdog (~119L)
 │
 ├── session/                         — Per-session state + lifecycle + reducer
 │   ├── session-runtime.ts           — per-session actor: process(event) (~733L)
-│   ├── session-reducer.ts           — top-level pure reducer (~852L)
+│   ├── session-reducer.ts           — top-level pure reducer (~946L)
 │   ├── session-state-reducer.ts     — AI context sub-reducer (~273L)
 │   ├── history-reducer.ts           — message history sub-reducer (~133L)
 │   ├── effect-mapper.ts             — event → Effect[] mapping (~104L)
@@ -1445,4 +1469,47 @@ src/core/
 │  DomainEventBus        → emit(event), on(type, handler): Disposable  │
 │  SessionRepository     → persist(data), remove(id), restoreAll()     │
 └──────────────────────────────────────────────────────────────────────┘
-```
+
+---
+
+## Violations to Core Design Principles
+
+### Tier 1: Worth Fixing (improve testability and traceability)
+
+| # | Principle | Violation | Mitigation |
+|---|-----------|-----------|------------|
+| 1 | P3, P8 — Effects are descriptions; domain events flow from runtime | Slash command handlers (`LocalHandler`, `AdapterNativeHandler`, `UnsupportedHandler` in `slash-command-chain.ts`) call `broadcaster.broadcast()` and `emitEvent()` directly, completely bypassing the reducer and effect executor. | Add `SLASH_LOCAL_RESULT` / `SLASH_LOCAL_ERROR` system signals. The reducer produces `BROADCAST` + `EMIT_EVENT` effects. Unifies all slash result handling (local, native, passthrough). |
+| 2 | P6, P3 — Policies observe and advise; effects are descriptions | `CapabilitiesPolicy.sendInitializeRequest()` sends raw NDJSON to the backend directly via `trySendRawToBackend()`, manages timers, and mutates `pendingInitialize` on session handles. A policy service acting as an actor. | Replace with a `CAPABILITIES_INIT_REQUESTED` system signal. Runtime produces a `SEND_RAW_TO_BACKEND` effect. Timer management moves to a post-reducer hook. |
+| 3 | P3, P8 — Effects are descriptions; domain events flow from runtime | `SessionRuntime.handleSystemSignal()` calls `this.deps.emitEvent()` directly for `consumer:connected`, `consumer:authenticated`, and `consumer:disconnected` events instead of producing `EMIT_EVENT` effects from the reducer. | Reducer should produce `EMIT_EVENT` effects for these signals. Handle-level socket manipulation stays in post-reducer orchestration. |
+| 4 | P3 — Effects are descriptions, not inline I/O | `MessageQueueHandler` uses `broadcaster.sendTo()` directly for error reporting, skipping the `EffectExecutor`. | Wrap queue errors in an effect or route through `process()`. |
+
+### Tier 2: Accepted Pragmatic Choices — Handle Mutations
+
+`SessionHandles` is explicitly designed as mutable runtime state outside the reducer. These are non-serializable references (timers, WebSocket maps, registries, counters) that cannot be expressed as pure `SessionData`. The architecture has a two-tier model:
+
+- **SessionData** (immutable, serializable): All changes through reducer
+- **SessionHandles** (mutable, runtime refs): Managed by runtime in post-reducer orchestration hooks
+
+| # | Principle | Violation | Rationale |
+|---|-----------|-----------|-----------|
+| 5 | P1 — Only `process()` changes state | `touchActivity()` mutates `this.session.lastActivity` directly. | `lastActivity` is a handle field (non-serializable timestamp), not `SessionData`. Adding a signal would add overhead for every message with no testability benefit. |
+| 6 | P1 — Only `process()` changes state | `setPendingInitialize()` mutates `pendingInitialize` handle (timer + requestId). Called by `CapabilitiesPolicy`. | Timer handles are non-serializable. Will be addressed when CapabilitiesPolicy is refactored (Tier 1 #2). |
+| 7 | P1 — Only `process()` changes state | `allocateAnonymousIdentityIndex()` increments `anonymousCounter`. Called by `ConsumerGateway`. | Ephemeral counter — not persisted, not part of business logic. |
+| 8 | P1 — Only `process()` changes state | `closeAllConsumers()` clears `consumerSockets` and `consumerRateLimiters` without individual `CONSUMER_DISCONNECTED` signals. | Teardown path — session is being deleted. Emitting disconnect signals during teardown would cause cascading effects on a dying session. |
+| 9 | P1 — Only `process()` changes state | `registerCLICommands()`, `registerSlashCommandNames()`, `registerSkillCommands()`, `clearDynamicSlashRegistry()` mutate the slash registry handle directly. | Registry is a non-serializable handle. Called from post-reducer orchestration hooks (`orchestrateSessionInit`, `CAPABILITIES_APPLIED`). |
+| 10 | P1 — Only `process()` changes state | `shiftPendingPassthrough()` destructively removes entries from `pendingPassthroughs` array. | Request tracking array — non-serializable, used by `BackendConnector` during passthrough interception. |
+| 11 | P1 — Only `process()` changes state | `checkRateLimit()` lazily creates and inserts rate limiters into `consumerRateLimiters`. | Rate limiter objects are non-serializable. Lazy creation is simpler than pre-allocating in a signal handler. |
+| 12 | P1, P3 — Only `process()` changes state; effects are descriptions | `closeBackendConnection()` aborts `backendAbort`, calls `backendSession.close()`, then dispatches `BACKEND_DISCONNECTED` via `process()`. | Teardown I/O on non-serializable handles. The self-dispatch to `process()` ensures the state transition is properly recorded. |
+| 13 | P1 — Only `process()` changes state | `hydrateSlashRegistryFromState()` hydrates the slash registry during initialization, bypassing the reducer. | Registry is a handle. Called once during session restore. Subsumed by #9. |
+
+### Tier 3: Accepted Pragmatic Choices — Other
+
+| # | Principle | Violation | Rationale |
+|---|-----------|-----------|-----------|
+| 14 | P3 — Effects are descriptions, not inline I/O | `handleInboundCommand()` post-reducer hooks call `broadcaster.sendTo(ws, error)` directly for `user_message` rejection and `set_adapter` rejection. | Targeted error to a specific WebSocket requires the `ws` handle, which the reducer cannot access. Could model as a `SEND_TO_CONSUMER` effect type, but adds a new effect for just 2 call sites. |
+| 15 | P2 — State transitions are pure | `orchestrateSessionInit()` performs inline I/O: `gitResolver.resolve()` (subprocess), registry mutations, `capabilitiesPolicy` send. | Post-reducer orchestration hook. Git resolution, registry hydration, and capabilities are all handle-level operations that cannot be expressed as pure state. |
+| 16 | P3 — Effects are descriptions, not inline I/O | `trySendRawToBackend()` performs direct backend I/O from a public runtime method. | Exists solely for the capabilities handshake — the one place where raw NDJSON is needed before the adapter's `send()` is ready. Will be eliminated when CapabilitiesPolicy is refactored (Tier 1 #2). |
+| 17 | P5 — Transport modules never trigger business side effects | `BackendConnector.annotateSlashTrace()` mutates `UnifiedMessage.metadata` in-place before routing to runtime. | Trace metadata enrichment in the transport layer. The mutation happens before the message enters the reducer, so it doesn't affect state consistency. |
+| 18 | P8 — Session-scoped events flow from runtime | `SessionCoordinator.renameSession()` emits `session:renamed` directly to `_bridgeEmitter`. | Consistent with coordinator emitting other global lifecycle events (`session:created`, `session:closed`). Low impact. |
+| 19 | P4 — Zero manual persistence calls | `ClaudeLauncher.persistState()` manually saves launcher state (PID/session mappings). | Launcher state is global (not session-specific), required for process tracking across restarts. Not part of the session persistence system. |
+| 20 | P2 — State transitions are pure | `Date.now()` calls in the reducer (`session-reducer.ts`) for timestamps on `CAPABILITIES_APPLIED` and `user_message` echo. | Universal pragmatic choice. Injecting a clock adds complexity for zero practical benefit — timestamps don't affect control flow and don't need to be deterministic in tests. |

@@ -1,6 +1,6 @@
 # Unified Message Protocol — Discovery Report & Gap Closure Plan
 
-*Last updated: 2026-02-22*
+*Last updated: 2026-02-24*
 
 ---
 
@@ -26,16 +26,23 @@
                                       │  UnifiedMessage │  ← 19 types, 7 content types
                                       └────────┬────────┘
                                                │
+                                      ┌────────▼────────┐
+                                      │  SessionReducer │  ← pure reducer (session-reducer.ts)
+                                      └────────┬────────┘
+                                               │
                                   ┌────────────┼────────────────┐
                                   ▼                             ▼
                          ┌────────────────┐           ┌──────────────────┐
-                         │  State Reducer │           │  Message Router  │
-                         │ (5 switch cases│           │ (12 switch cases │
-                         │  + team scan)  │           │  + default trace)│
+                         │ SessionState   │           │     Effect[]     │
+                         │ (AI context)   │           │ (Side Effects)   │
                          └────────────────┘           └────────┬─────────┘
                                                                │
                                                       ┌────────▼────────┐
-                                                      │ Consumer Mapper │  ← maps 10 types to consumer
+                                                      │ Effect Executor │  ← executes BROADCAST, etc.
+                                                      └────────┬────────┘
+                                                               │
+                                                      ┌────────▼────────┐
+                                                      │ Consumer Mapper │  ← maps 11 types to consumer
                                                       └────────┬────────┘
                                                                │
                                                       ┌────────▼────────┐
@@ -43,26 +50,30 @@
                                                       └─────────────────┘
 ```
 
-Note: The state reducer runs **before** the router switch on every message. It has explicit switch cases for `session_init`, `status_change`, `result`, `control_response`, and `configuration_change`. All other message types fall through to team tool-use correlation (scanning content blocks for team tool invocations — meaningful only for `assistant` and `tool_use_summary`). Team state changes are broadcast via `emitTeamEvents()` after reduction, not through the router switch.
+Note: All backend messages now flow through `SessionRuntime.handleBackendMessage()`, which calls the pure `sessionReducer()`. The reducer returns a new `SessionData` and a list of `Effect`s. One of these effects is `BROADCAST`, which triggers the translation of a `UnifiedMessage` to a `ConsumerMessage` via `consumer-message-mapper.ts`.
+
+State reduction (SessionState / AI context) is performed by `session-state-reducer.ts` which has explicit switch cases for `session_init`, `status_change`, `result`, `control_response`, and `configuration_change`. All other message types fall through to team tool-use correlation (scanning content blocks for team tool invocations).
+
+Effect building (T4 routing) is performed in `session-reducer.ts` (specifically `buildEffects`), which has explicit switch cases for 11 types. `control_response` is handled directly in the `SessionRuntime` orchestration layer.
 
 ## 2. Current UnifiedMessage Type Coverage
 
-**19 types defined**, **12 have router switch handlers**, **10 have consumer mappers**, and **1 has a default trace handler**:
+**19 types defined**, **12 have inbound routing handlers**, **11 are broadcast to the consumer**, and **1 has a default trace handler**:
 
-| UnifiedMessageType | Router Switch | Consumer Mapper | State Reducer | Broadcast to UI |
+| UnifiedMessageType | Inbound Routing (BuildEffects/Runtime) | Consumer Mapper | State Reducer (AI context) | Broadcast to UI |
 |---|:---:|:---:|:---:|:---:|
-| `session_init` | YES | — (direct) | YES | YES |
-| `status_change` | YES | — (direct) | YES | YES |
-| `assistant` | YES | YES | YES (team scan) | YES |
-| `result` | YES | YES | YES | YES |
-| `stream_event` | YES | YES | — | YES |
-| `permission_request` | YES | YES (filtered) | — | YES |
-| `control_response` | YES (delegates) | — | YES (stub) | NO |
-| `tool_progress` | YES | YES | — | YES |
-| `tool_use_summary` | YES | YES | YES (team scan) | YES |
-| `auth_status` | YES | YES | — | YES |
-| `configuration_change` | YES | YES | YES | YES |
-| `session_lifecycle` | YES | YES | — | YES |
+| `session_init` | YES (BuildEffects) | — (direct) | YES | YES |
+| `status_change` | YES (BuildEffects) | — (direct) | YES | YES |
+| `assistant` | YES (BuildEffects) | YES | YES (team scan) | YES |
+| `result` | YES (BuildEffects) | YES | YES | YES |
+| `stream_event` | YES (BuildEffects) | YES | — | YES |
+| `permission_request` | YES (BuildEffects) | YES (filtered) | — | YES |
+| `control_response` | YES (Runtime) | — | YES (stub) | NO |
+| `tool_progress` | YES (BuildEffects) | YES | — | YES |
+| `tool_use_summary` | YES (BuildEffects) | YES | YES (team scan) | YES |
+| `auth_status` | YES (BuildEffects) | YES | — | YES |
+| `configuration_change` | YES (BuildEffects) | YES | YES | YES |
+| `session_lifecycle` | YES (BuildEffects) | YES | — | YES |
 | `user_message` | NO | NO | — | NO |
 | `permission_response` | NO | NO | — | NO |
 | `interrupt` | NO | NO | — | NO |
@@ -72,11 +83,11 @@ Note: The state reducer runs **before** the router switch on every message. It h
 | `unknown` | default (traced) | NO | — | NO |
 
 **Notes:**
-- `user_message`, `permission_response`, `interrupt` are intentionally consumer→backend only (outbound translation, never routed inbound).
-- `team_*` types are a classification taxonomy used by `team-tool-recognizer.ts` to tag tool_use content blocks. They are **never emitted as standalone routable messages**. Team state is derived by the state reducer scanning `assistant`/`tool_use_summary` messages for team-related tool invocations, then broadcasting diffs as `session_update` events.
+- `user_message`, `permission_response`, `interrupt` are intentionally consumer→backend only (outbound translation, never routed inbound from backend).
+- `team_*` types are a classification taxonomy used by `team-tool-recognizer.ts` to tag tool_use content blocks. They are **never emitted as standalone routable messages**. Team state is derived by the state reducer scanning `assistant`/`tool_use_summary` messages for team-related tool invocations, then broadcasting diffs via `TEAM_STATE_DIFFED` signals.
 - `permission_request` mapper returns `null` for non-`can_use_tool` subtypes — a silent filter point (see Section 5).
 - `unknown` falls through to the router's default case and is traced for diagnosability.
-- State reducer `control_response` case is a stub — capabilities are applied by the router handler, not the reducer.
+- State reducer `control_response` case is a stub — capabilities are applied by the runtime orchestration handler (`orchestrateControlResponse`), not the reducer.
 
 ## 3. UnifiedContent Type Coverage
 

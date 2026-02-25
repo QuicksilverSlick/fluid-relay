@@ -1490,9 +1490,9 @@ describe("E2E: CodexAdapter", () => {
       session = undefined;
     });
 
-    it("sendRaw throws (not supported)", async () => {
+    it("sendRaw is not defined (not supported)", async () => {
       session = createSession();
-      expect(() => session!.sendRaw("raw ndjson data")).toThrow("does not support raw NDJSON");
+      expect(session!.sendRaw).toBeUndefined();
     });
 
     it("notification with no params defaults to empty object", async () => {

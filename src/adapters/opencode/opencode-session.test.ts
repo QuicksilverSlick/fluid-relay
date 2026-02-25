@@ -148,13 +148,11 @@ describe("OpencodeSession", () => {
   });
 
   // -------------------------------------------------------------------------
-  // sendRaw() always throws
+  // sendRaw is not defined (opencode does not support raw NDJSON)
   // -------------------------------------------------------------------------
 
-  it("sendRaw() always throws", () => {
-    expect(() => session.sendRaw("some ndjson")).toThrow(
-      "opencode adapter does not support raw NDJSON",
-    );
+  it("sendRaw is not defined", () => {
+    expect(session.sendRaw).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------

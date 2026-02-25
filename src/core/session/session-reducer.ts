@@ -35,6 +35,7 @@ import {
   mapToolProgress,
   mapToolUseSummary,
 } from "../messaging/consumer-message-mapper.js";
+import { normalizeInbound } from "../messaging/inbound-normalizer.js";
 import { diffTeamState } from "../team/team-event-differ.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { mapInboundCommandEffects } from "./effect-mapper.js";
@@ -314,9 +315,7 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
       const effects: Effect[] = [
         {
           type: "BROADCAST_SESSION_UPDATE",
-          patch: { team: signal.currentTeam ?? null } as Partial<
-            import("../../types/session-state.js").SessionState
-          >,
+          patch: { team: signal.currentTeam ?? null } as Partial<SessionState>,
         },
         ...teamEvents.map(
           (e) =>
@@ -455,22 +454,19 @@ function applyLifecycleTransition(
 }
 
 // ---------------------------------------------------------------------------
-// INBOUND_COMMAND reducer (pure data side only)
+// INBOUND_COMMAND reducer
 // ---------------------------------------------------------------------------
 
 /**
- * Apply the pure data mutations for an inbound command.
+ * Apply state mutations and produce all effects for an inbound command.
  *
- * Handles the pure-state side of inbound commands:
- *   - `user_message`: sets lastStatus="running", appends to messageHistory, trims history.
- *     Returns `[data, []]` unchanged for closed/closing sessions — the runtime detects
- *     the no-op and sends a targeted `sendTo` error to the requesting WebSocket.
- *   - `set_model`: updates state.model, returns BROADCAST_SESSION_UPDATE effect.
- *   - Other commands: delegates to mapInboundCommandEffects for any pure effects
- *     (e.g., error for set_adapter).
+ * All commands follow a pure reducer pattern: state mutations + effect list.
+ * Backend I/O is represented as SEND_TO_BACKEND effects (pure data); the
+ * effect executor dispatches them to the live BackendSession.
  *
- * I/O side (backend sends, lifecycle transition, slash execution, queue management)
- * stays in SessionRuntime.
+ * Commands requiring live handles (slash execution, queue management) produce
+ * no state changes here -- post-reducer orchestration in SessionRuntime
+ * handles them via the default case and mapInboundCommandEffects.
  */
 function reduceInboundCommand(
   data: SessionData,
@@ -483,6 +479,7 @@ function reduceInboundCommand(
       if (data.lifecycle === "closing" || data.lifecycle === "closed") {
         return [data, []];
       }
+
       const userMsg: ConsumerMessage = {
         type: "user_message",
         content: command.content,
@@ -492,33 +489,121 @@ function reduceInboundCommand(
         [...data.messageHistory, userMsg],
         config.maxMessageHistoryLength,
       );
-      // Transition lifecycle to active for backend-connected path (idle/active states).
-      const nextLifecycle: LifecycleState =
-        data.lifecycle === "idle" || data.lifecycle === "active" ? "active" : data.lifecycle;
-      const nextData: SessionData = {
-        ...data,
-        lastStatus: "running",
-        lifecycle: nextLifecycle,
-        messageHistory: nextHistory,
-      };
-      return [nextData, [{ type: "BROADCAST", message: userMsg }, { type: "PERSIST_NOW" }]];
+
+      // Normalize message for backend send (pure — no I/O).
+      const baseUnified = normalizeInbound({
+        type: "user_message",
+        content: command.content,
+        session_id: data.backendSessionId || command.session_id || "",
+        images: command.images,
+      });
+      if (!baseUnified) return [data, []];
+
+      // Apply slash passthrough trace context when present (always a complete group).
+      const { traceContext } = command;
+      const unified = traceContext
+        ? {
+            ...baseUnified,
+            metadata: {
+              ...baseUnified.metadata,
+              trace_id: traceContext.traceId,
+              slash_request_id: traceContext.slashRequestId,
+              slash_command: traceContext.slashCommand,
+            },
+          }
+        : baseUnified;
+
+      const isConnected = data.lifecycle === "active" || data.lifecycle === "idle";
+
+      if (isConnected) {
+        // Backend connected: send immediately, transition lifecycle to active.
+        return [
+          {
+            ...data,
+            lastStatus: "running",
+            lifecycle: "active" as const,
+            messageHistory: nextHistory,
+          },
+          [
+            { type: "BROADCAST", message: userMsg },
+            { type: "PERSIST_NOW" },
+            { type: "SEND_TO_BACKEND", message: unified },
+          ],
+        ];
+      }
+
+      // No backend: queue for drain on next BACKEND_CONNECTED.
+      const nextLifecycle: LifecycleState = isLifecycleTransitionAllowed(
+        data.lifecycle,
+        "awaiting_backend",
+      )
+        ? "awaiting_backend"
+        : data.lifecycle;
+      return [
+        {
+          ...data,
+          lastStatus: "running",
+          lifecycle: nextLifecycle,
+          messageHistory: nextHistory,
+          pendingMessages: [...data.pendingMessages, unified],
+        },
+        [{ type: "BROADCAST", message: userMsg }, { type: "PERSIST_NOW" }],
+      ];
     }
 
     case "set_model": {
+      // Only update state and send to backend when lifecycle is active or idle.
+      // Silently no-ops for disconnected/degraded sessions — consistent with
+      // the guard that previously lived in SessionRuntime.sendSetModel().
+      if (data.lifecycle !== "active" && data.lifecycle !== "idle") {
+        return [data, []];
+      }
       const nextData: SessionData = {
         ...data,
         state: { ...data.state, model: command.model },
       };
-      return [
-        nextData,
-        [
-          {
-            type: "BROADCAST_SESSION_UPDATE",
-            patch: { model: command.model } as Partial<SessionState>,
-          },
-        ],
+      const unified = normalizeInbound(command);
+      const effects: Effect[] = [
+        {
+          type: "BROADCAST_SESSION_UPDATE",
+          patch: { model: command.model } as Partial<SessionState>,
+        },
       ];
+      if (unified) effects.push({ type: "SEND_TO_BACKEND", message: unified });
+      return [nextData, effects];
     }
+
+    case "interrupt":
+    case "set_permission_mode": {
+      const unified = normalizeInbound(command);
+      if (!unified) return [data, []];
+      return [data, [{ type: "SEND_TO_BACKEND", message: unified }]];
+    }
+
+    case "permission_response": {
+      // If the requestId is unknown, return unchanged — runtime will log a warning.
+      if (!data.pendingPermissions.has(command.request_id)) {
+        return [data, []];
+      }
+      const updatedPerms = new Map(data.pendingPermissions);
+      updatedPerms.delete(command.request_id);
+
+      const unified = normalizeInbound(command);
+      const effects: Effect[] = [
+        {
+          type: "EMIT_EVENT",
+          eventType: "permission:resolved",
+          payload: { requestId: command.request_id, behavior: command.behavior },
+        },
+      ];
+      if (unified) effects.push({ type: "SEND_TO_BACKEND", message: unified });
+
+      return [{ ...data, pendingPermissions: updatedPerms }, effects];
+    }
+
+    case "set_adapter":
+      // Rejected for non-starting sessions — runtime sends targeted error via sendTo(ws).
+      return [data, []];
 
     default: {
       const effects = mapInboundCommandEffects(command.type, {
@@ -602,6 +687,14 @@ function buildEffects(
         },
       });
       effects.push({ type: "AUTO_SEND_QUEUED" });
+      // Emit backend:session_id when the backend session ID first appears.
+      if (nextData.backendSessionId && nextData.backendSessionId !== prevData.backendSessionId) {
+        effects.push({
+          type: "EMIT_EVENT",
+          eventType: "backend:session_id",
+          payload: { backendSessionId: nextData.backendSessionId },
+        });
+      }
       break;
     }
 
