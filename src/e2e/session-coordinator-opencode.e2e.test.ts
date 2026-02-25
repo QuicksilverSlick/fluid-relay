@@ -15,6 +15,7 @@ import {
   connectConsumerAndWaitReady,
   deleteTrace,
   dumpTraceOnFailure,
+  getTestRunConditions,
   type TestContextLike,
   waitForBackendConnectedOrExit,
   waitForMessageType,
@@ -23,10 +24,7 @@ import { getOpencodePrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
 import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
-const prereqs = getOpencodePrereqState();
-const canBindLocalhost = canBindLocalhostSync();
-const runSmoke = prereqs.ok && canBindLocalhost;
-const runFull = runSmoke && prereqs.canRunPromptTests;
+const { runSmoke, runFull } = getTestRunConditions(getOpencodePrereqState());
 
 describe("E2E Real Opencode SessionCoordinator", () => {
   const activeCoordinators: SessionCoordinator[] = [];

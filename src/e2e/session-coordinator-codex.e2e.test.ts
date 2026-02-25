@@ -16,6 +16,7 @@ import {
   connectConsumerAndWaitReady,
   deleteTrace,
   dumpTraceOnFailure,
+  getTestRunConditions,
   type TestContextLike,
   waitForBackendConnectedOrExit,
   waitForMessage,
@@ -25,10 +26,7 @@ import { getCodexPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
 import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
-const prereqs = getCodexPrereqState();
-const canBindLocalhost = canBindLocalhostSync();
-const runSmoke = prereqs.ok && canBindLocalhost;
-const runFull = runSmoke && prereqs.canRunPromptTests;
+const { runSmoke, runFull } = getTestRunConditions(getCodexPrereqState());
 
 describe("E2E Real Codex SessionCoordinator", () => {
   const activeCoordinators: SessionCoordinator[] = [];

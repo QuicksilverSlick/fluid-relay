@@ -17,7 +17,7 @@ import {
   getMessageText,
   mockAssistantMessage,
   waitForMessageType,
-} from "../../test-utils/session-test-utils.js";
+} from "../../testing/session-test-utils.js";
 import { SessionCoordinator } from "../session-coordinator.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

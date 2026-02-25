@@ -14,11 +14,26 @@ import {
   attachPrebuffer,
   collectMessages,
   waitForMessageType,
-} from "../test-utils/session-test-utils.js";
+} from "../testing/session-test-utils.js";
+import { getE2EProfile } from "./e2e-profile.js";
+import type { BackendPrereqState } from "./prereqs.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/**
+ * Centrally determines if smoke and/or full prompt-based tests should run.
+ */
+export function getTestRunConditions(prereqs: BackendPrereqState) {
+  const profile = getE2EProfile();
+  const canBindLocalhost = canBindLocalhostSync();
+  const runSmoke = prereqs.ok && canBindLocalhost;
+  // Default to real-full if no profile is specified (profile === undefined)
+  const isFullProfile = profile === "real-full" || profile === undefined;
+  const runFull = runSmoke && prereqs.canRunPromptTests && isFullProfile;
+  return { runSmoke, runFull };
+}
 
 export function isBackendConnected(coordinator: SessionCoordinator, sessionId: string): boolean {
   return coordinator.isBackendConnected(sessionId);
@@ -403,4 +418,4 @@ export {
   closeWebSockets,
   waitForMessage,
   waitForMessageType,
-} from "../test-utils/session-test-utils.js";
+} from "../testing/session-test-utils.js";

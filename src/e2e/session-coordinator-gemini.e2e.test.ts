@@ -15,16 +15,14 @@ import {
   canBindLocalhostSync,
   deleteTrace,
   dumpTraceOnFailure,
+  getTestRunConditions,
   type TestContextLike,
 } from "./helpers.js";
 import { getGeminiPrereqState } from "./prereqs.js";
 import { setupRealSession } from "./session-coordinator-setup.js";
 import { registerSharedFullTests, registerSharedSmokeTests } from "./shared-e2e-tests.js";
 
-const prereqs = getGeminiPrereqState();
-const canBindLocalhost = canBindLocalhostSync();
-const runSmoke = prereqs.ok && canBindLocalhost;
-const runFull = runSmoke && prereqs.canRunPromptTests;
+const { runSmoke, runFull } = getTestRunConditions(getGeminiPrereqState());
 
 describe("E2E Real Gemini SessionCoordinator", () => {
   const activeCoordinators: SessionCoordinator[] = [];

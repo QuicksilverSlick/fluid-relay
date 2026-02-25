@@ -15,7 +15,7 @@ import {
   createPermissionResponse,
   createUserMessage,
   waitForUnifiedMessageType,
-} from "../../test-utils/backend-test-utils.js";
+} from "../../testing/backend-test-utils.js";
 
 // ---------------------------------------------------------------------------
 // Controllable mock query

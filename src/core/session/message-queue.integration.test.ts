@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { TestSessionCoordinator } from "../../test-utils/session-test-utils.js";
+import type { TestSessionCoordinator } from "../../testing/session-test-utils.js";
 import {
   cleanupSessionCoordinator,
   closeWebSockets,
@@ -10,7 +10,7 @@ import {
   setupTestSessionCoordinator,
   waitForMessage,
   waitForMessageType,
-} from "../../test-utils/session-test-utils.js";
+} from "../../testing/session-test-utils.js";
 
 describe("E2E: Message Queue", () => {
   let tm: TestSessionCoordinator | undefined;

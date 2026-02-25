@@ -19,7 +19,7 @@ import {
   sendCodexRequest,
   sendCodexResponse,
   waitForUnifiedMessageType,
-} from "../../test-utils/backend-test-utils.js";
+} from "../../testing/backend-test-utils.js";
 import { CodexLauncher } from "./codex-launcher.js";
 import { CodexSession } from "./codex-session.js";
 import { CodexSlashExecutor } from "./codex-slash-executor.js";

@@ -18,7 +18,7 @@ import {
   respondToRequest,
   sendJsonRpcRequest,
   sendNotification,
-} from "../../test-utils/backend-test-utils.js";
+} from "../../testing/backend-test-utils.js";
 import { AcpAdapter, type SpawnFn } from "./acp-adapter.js";
 
 describe("E2E: AcpAdapter", () => {

@@ -2,7 +2,6 @@ import { WebSocket } from "ws";
 import { ClaudeAdapter } from "../adapters/claude/claude-adapter.js";
 import { ClaudeLauncher } from "../adapters/claude/claude-launcher.js";
 import { MemoryStorage } from "../adapters/memory-storage.js";
-import { MockProcessManager } from "../adapters/mock-process-manager.js";
 import { NodeProcessManager } from "../adapters/node-process-manager.js";
 import { NodeWebSocketServer } from "../adapters/node-ws-server.js";
 import { SessionCoordinator } from "../core/session-coordinator.js";
@@ -10,7 +9,7 @@ import { getE2EProfile, isRealCliProfile } from "../e2e/e2e-profile.js";
 import type { Authenticator } from "../interfaces/auth.js";
 import type { ProcessManager } from "../interfaces/process-manager.js";
 import type { ProviderConfig } from "../types/config.js";
-import { isClaudeAvailable } from "../utils/claude-detection.js";
+import { MockProcessManager } from "./mock-process-manager.js";
 
 // Prebuffer: WebSocket messages arriving before a test starts listening are
 // captured in a per-socket buffer so they're not lost to race conditions.
@@ -50,32 +49,22 @@ function removeFirstRaw(prebuffer: string[], raw: string): void {
  * 1. USE_MOCK_CLI=true -> MockProcessManager
  * 2. USE_REAL_CLI=true -> NodeProcessManager
  * 3. E2E_PROFILE in {real-smoke, real-full} -> NodeProcessManager
- * 4. mock profile -> auto-detect Claude availability
+ * 4. Default -> MockProcessManager (for unit/integration tests)
  */
 export function createProcessManager(): ProcessManager {
   if (process.env.USE_MOCK_CLI === "true") {
-    console.log("[Test] Using MockProcessManager (forced via USE_MOCK_CLI=true)");
     return new MockProcessManager();
   }
 
   if (process.env.USE_REAL_CLI === "true") {
-    console.log("[Test] Using NodeProcessManager (forced via USE_REAL_CLI=true)");
     return new NodeProcessManager();
   }
 
   const profile = getE2EProfile();
   if (isRealCliProfile(profile)) {
-    console.log("[Test] Using NodeProcessManager (E2E_PROFILE=" + profile + ")");
     return new NodeProcessManager();
   }
 
-  const claudeAvailable = isClaudeAvailable();
-  if (claudeAvailable) {
-    console.log("[Test] Using NodeProcessManager (Claude CLI detected)");
-    return new NodeProcessManager();
-  }
-
-  console.log("[Test] Using MockProcessManager (Claude CLI not available)");
   return new MockProcessManager();
 }
 
