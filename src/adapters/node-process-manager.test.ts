@@ -152,10 +152,11 @@ describe("NodeProcessManager", () => {
       handle.kill("SIGTERM");
       await handle.exited;
 
-      // Grandchild must also be dead (killed via process group)
-      await vi.waitFor(() => expect(manager.isAlive(grandchildPid)).toBe(false), {
-        timeout: 2000,
-      });
+      // Grandchild must be dead synchronously after exited resolves — no
+      // extra waiting.  The previous implementation resolved exited as soon
+      // as the Node wrapper exited, leaving the Go-binary-like grandchild
+      // alive for a few more seconds (the orphan bug).
+      expect(manager.isAlive(grandchildPid)).toBe(false);
 
       try {
         unlinkSync(pidFile);
