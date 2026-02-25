@@ -12,6 +12,10 @@ export class NodeProcessManager implements ProcessManager {
       cwd: options.cwd,
       env: options.env as NodeJS.ProcessEnv | undefined,
       stdio: ["ignore", "pipe", "pipe"],
+      // Create a new process group so kill can reach descendant processes.
+      // Without this, wrapper scripts (e.g. opencode's Node shim calling
+      // spawnSync for the real Go binary) leave orphaned grandchildren.
+      detached: true,
     });
 
     // Attach an early error listener immediately after spawn() so ENOENT-style
@@ -52,9 +56,16 @@ export class NodeProcessManager implements ProcessManager {
       exited,
       kill(signal: "SIGTERM" | "SIGKILL" | "SIGINT" = "SIGTERM") {
         try {
-          child.kill(signal);
+          // Kill the entire process group (negative PID) so descendant
+          // processes spawned by wrapper scripts are also terminated.
+          process.kill(-pid, signal);
         } catch {
-          // Process may already be dead
+          // Process group may already be gone; try direct kill as fallback
+          try {
+            child.kill(signal);
+          } catch {
+            // Process is dead
+          }
         }
       },
       stdout,
