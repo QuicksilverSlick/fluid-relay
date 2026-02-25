@@ -48,6 +48,8 @@ export type SystemSignal =
   | { kind: "GIT_INFO_RESOLVED" }
   /** Capabilities handshake completed successfully. */
   | { kind: "CAPABILITIES_READY" }
+  /** Request the runtime to send the initialize handshake to the backend. */
+  | { kind: "CAPABILITIES_INIT_REQUESTED" }
   /** Session is idle with no consumers — eligible for reaping. */
   | { kind: "IDLE_REAP" }
   /** Backend did not connect within the reconnect grace window. */

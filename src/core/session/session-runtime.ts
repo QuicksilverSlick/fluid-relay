@@ -9,6 +9,7 @@
  * lifecycle transitions.
  */
 
+import { randomUUID } from "node:crypto";
 import type { ConsumerIdentity } from "../../interfaces/auth.js";
 import type { GitInfoResolver } from "../../interfaces/git-resolver.js";
 import type { Logger } from "../../interfaces/logger.js";
@@ -498,6 +499,39 @@ export class SessionRuntime {
         // runtime's post-reducer orchestration layer.
         if (signal.commands.length > 0) {
           this.registerCLICommands(signal.commands);
+        }
+        break;
+      case "CAPABILITIES_INIT_REQUESTED": {
+        if (this.session.pendingInitialize) break; // dedup — already pending
+        const requestId = randomUUID();
+        const ndjson = JSON.stringify({
+          type: "control_request",
+          request_id: requestId,
+          request: { subtype: "initialize" },
+        });
+        const result = this.trySendRawToBackend(ndjson);
+        if (result === "unsupported") {
+          this.deps.logger.info(
+            `Skipping NDJSON initialize for session ${this.session.id}: adapter does not support sendRaw`,
+          );
+          break;
+        }
+        const timer = setTimeout(() => {
+          if (this.session.pendingInitialize?.requestId === requestId) {
+            this.session.pendingInitialize = null;
+            this.process({
+              type: "SYSTEM_SIGNAL",
+              signal: { kind: "CAPABILITIES_TIMEOUT" },
+            });
+          }
+        }, this.deps.capabilitiesPolicy.initializeTimeoutMs);
+        this.session.pendingInitialize = { requestId, timer };
+        break;
+      }
+      case "SESSION_CLOSING":
+        if (this.session.pendingInitialize) {
+          clearTimeout(this.session.pendingInitialize.timer);
+          this.session.pendingInitialize = null;
         }
         break;
     }

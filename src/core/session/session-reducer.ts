@@ -478,6 +478,7 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
     case "CONSUMER_DISCONNECTED":
     case "GIT_INFO_RESOLVED":
     case "CAPABILITIES_READY":
+    case "CAPABILITIES_INIT_REQUESTED":
       return [data, []];
   }
 }

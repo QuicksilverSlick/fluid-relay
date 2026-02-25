@@ -4,46 +4,18 @@ import { DEFAULT_CONFIG } from "../../types/config.js";
 import { CapabilitiesPolicy } from "./capabilities-policy.js";
 
 describe("CapabilitiesPolicy", () => {
-  it("sends initialize control_request via backend sendRaw", () => {
-    const policy = new CapabilitiesPolicy(DEFAULT_CONFIG, noopLogger, (session: any) => ({
-      getState: () => session.data.state,
-      setState: (state: any) => {
-        session.data.state = state;
-      },
-      getPendingInitialize: () => session.pendingInitialize,
-      setPendingInitialize: (pendingInitialize: any) => {
-        session.pendingInitialize = pendingInitialize;
-      },
-      trySendRawToBackend: (ndjson: string) => {
-        if (!session.backendSession) return "no_backend";
-        session.backendSession.sendRaw?.(ndjson);
-        return "sent";
-      },
-      registerCLICommands: (commands: any[]) => {
-        session.registry.registerFromCLI(commands);
-      },
+  it("dispatches CAPABILITIES_INIT_REQUESTED signal via runtime process", () => {
+    const process = vi.fn();
+    const policy = new CapabilitiesPolicy(DEFAULT_CONFIG, noopLogger, (_session: any) => ({
+      process,
     }));
 
     const session = createMockSession();
-    const sendRaw = vi.fn();
-    session.backendSession = {
-      sessionId: "backend-1",
-      send: vi.fn(),
-      sendRaw,
-      messages: {
-        [Symbol.asyncIterator]: () => ({
-          next: () => Promise.resolve({ done: true, value: undefined }),
-        }),
-      },
-      close: vi.fn(),
-    } as any;
-
     policy.sendInitializeRequest(session);
 
-    expect(sendRaw).toHaveBeenCalledOnce();
-    const payload = JSON.parse(sendRaw.mock.calls[0][0]);
-    expect(payload.type).toBe("control_request");
-    expect(payload.request.subtype).toBe("initialize");
-    expect(session.pendingInitialize).not.toBeNull();
+    expect(process).toHaveBeenCalledWith({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "CAPABILITIES_INIT_REQUESTED" },
+    });
   });
 });

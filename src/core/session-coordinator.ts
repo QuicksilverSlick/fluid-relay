@@ -781,7 +781,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     if (!session) return;
     const runtime = this.getOrCreateRuntime(session);
     runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSING" } });
-    this.capabilitiesPolicy.cancelPendingInitialize(session);
     if (runtime.getBackendSession()) {
       await runtime.closeBackendConnection().catch((err: unknown) => {
         this.logger.warn("Failed to close backend session", { sessionId, error: err });
