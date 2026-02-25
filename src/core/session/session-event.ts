@@ -41,9 +41,22 @@ export type SystemSignal =
   /** Backend adapter disconnected unexpectedly (stream ended or error). */
   | { kind: "BACKEND_DISCONNECTED"; reason: string }
   /** A consumer WebSocket connected and was authenticated. */
-  | { kind: "CONSUMER_CONNECTED"; ws: WebSocketLike; identity: ConsumerIdentity }
+  | {
+      kind: "CONSUMER_CONNECTED";
+      ws: WebSocketLike;
+      identity: ConsumerIdentity;
+      /** Post-connection consumer count — injected by runtime before reducer call. */
+      consumerCountAfter?: number;
+    }
   /** A consumer WebSocket disconnected. */
-  | { kind: "CONSUMER_DISCONNECTED"; ws: WebSocketLike }
+  | {
+      kind: "CONSUMER_DISCONNECTED";
+      ws: WebSocketLike;
+      /** Post-disconnection consumer count — injected by runtime before reducer call. */
+      consumerCountAfter?: number;
+      /** Identity of the disconnecting consumer — injected by runtime before reducer call. */
+      identity?: ConsumerIdentity;
+    }
   /** Git info was resolved asynchronously. */
   | { kind: "GIT_INFO_RESOLVED" }
   /** Capabilities handshake completed successfully. */

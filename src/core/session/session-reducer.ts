@@ -472,10 +472,47 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
       // coordinator-event-relay depends on this injection to route the event.
       return [data, [{ type: "EMIT_EVENT", eventType: "capabilities:timeout", payload: {} }]];
 
+    case "CONSUMER_CONNECTED":
+      return [
+        data,
+        [
+          {
+            type: "EMIT_EVENT",
+            eventType: "consumer:authenticated",
+            payload: {
+              userId: signal.identity.userId,
+              displayName: signal.identity.displayName,
+              role: signal.identity.role,
+            },
+          },
+          {
+            type: "EMIT_EVENT",
+            eventType: "consumer:connected",
+            payload: {
+              consumerCount: signal.consumerCountAfter ?? 0,
+              identity: signal.identity,
+            },
+          },
+        ],
+      ];
+
+    case "CONSUMER_DISCONNECTED":
+      return [
+        data,
+        [
+          {
+            type: "EMIT_EVENT",
+            eventType: "consumer:disconnected",
+            payload: {
+              consumerCount: signal.consumerCountAfter ?? 0,
+              identity: signal.identity,
+            },
+          },
+        ],
+      ];
+
     // ── No-op signals (handled by runtime or no pure data change) ────────
     case "PASSTHROUGH_ENQUEUED":
-    case "CONSUMER_CONNECTED":
-    case "CONSUMER_DISCONNECTED":
     case "GIT_INFO_RESOLVED":
     case "CAPABILITIES_READY":
     case "CAPABILITIES_INIT_REQUESTED":

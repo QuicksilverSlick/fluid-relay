@@ -435,10 +435,25 @@ export class SessionRuntime {
    *      not needed by the effects they accompany.
    */
   private handleSystemSignal(signal: SystemSignal): void {
+    // Enrich consumer signals with post-mutation counts before reducer runs.
+    let enrichedSignal = signal;
+    if (signal.kind === "CONSUMER_CONNECTED") {
+      enrichedSignal = {
+        ...signal,
+        consumerCountAfter: this.session.consumerSockets.size + 1,
+      };
+    } else if (signal.kind === "CONSUMER_DISCONNECTED") {
+      enrichedSignal = {
+        ...signal,
+        consumerCountAfter: Math.max(0, this.session.consumerSockets.size - 1),
+        identity: this.session.consumerSockets.get(signal.ws),
+      };
+    }
+
     const prevData = this.session.data;
     const [nextData, effects] = sessionReducer(
       this.session.data,
-      { type: "SYSTEM_SIGNAL", signal },
+      { type: "SYSTEM_SIGNAL", signal: enrichedSignal },
       this.deps.config,
     );
     if (nextData !== prevData) {
@@ -448,10 +463,10 @@ export class SessionRuntime {
 
     // Apply BACKEND_CONNECTED handle mutations BEFORE executing effects so that
     // SEND_TO_BACKEND effects (drained pending messages) can reach the backend session.
-    if (signal.kind === "BACKEND_CONNECTED") {
-      this.session.backendSession = signal.backendSession;
-      this.session.backendAbort = signal.backendAbort;
-      this.session.adapterSlashExecutor = signal.slashExecutor;
+    if (enrichedSignal.kind === "BACKEND_CONNECTED") {
+      this.session.backendSession = enrichedSignal.backendSession;
+      this.session.backendAbort = enrichedSignal.backendAbort;
+      this.session.adapterSlashExecutor = enrichedSignal.slashExecutor;
     }
 
     executeEffects(effects, this.session, this.effectDeps());
@@ -459,46 +474,30 @@ export class SessionRuntime {
     // Post-reducer handle mutations — these fields are NOT part of SessionData
     // and are NOT persisted. Only non-serializable handles (WebSocket, AbortController,
     // BackendSession) belong here. Serializable state must go through the reducer → markDirty().
-    switch (signal.kind) {
+    switch (enrichedSignal.kind) {
       case "BACKEND_DISCONNECTED":
         this.session.backendSession = null;
         this.session.backendAbort = null;
         this.session.adapterSlashExecutor = null;
         break;
       case "CONSUMER_CONNECTED":
-        this.session.consumerSockets.set(signal.ws, signal.identity);
-        this.deps.emitEvent("consumer:authenticated", {
-          sessionId: this.session.id,
-          userId: signal.identity.userId,
-          displayName: signal.identity.displayName,
-          role: signal.identity.role,
-        });
-        this.deps.emitEvent("consumer:connected", {
-          sessionId: this.session.id,
-          consumerCount: this.session.consumerSockets.size,
-          identity: signal.identity,
-        });
+        this.session.consumerSockets.set(enrichedSignal.ws, enrichedSignal.identity);
+        // emitEvent calls removed — now produced as EMIT_EVENT effects by reducer
         break;
-      case "CONSUMER_DISCONNECTED": {
-        const disconnectedIdentity = this.session.consumerSockets.get(signal.ws);
-        this.session.consumerSockets.delete(signal.ws);
-        this.session.consumerRateLimiters.delete(signal.ws);
-        this.deps.emitEvent("consumer:disconnected", {
-          sessionId: this.session.id,
-          consumerCount: this.session.consumerSockets.size,
-          identity: disconnectedIdentity,
-        });
+      case "CONSUMER_DISCONNECTED":
+        this.session.consumerSockets.delete(enrichedSignal.ws);
+        this.session.consumerRateLimiters.delete(enrichedSignal.ws);
+        // emitEvent call removed — now produced as EMIT_EVENT effect by reducer
         break;
-      }
       case "PASSTHROUGH_ENQUEUED":
-        this.session.pendingPassthroughs.push(signal.entry);
+        this.session.pendingPassthroughs.push(enrichedSignal.entry);
         break;
       case "CAPABILITIES_APPLIED":
         // Post-effect: hydrate the handle-level slash registry from applied capabilities.
         // Called here (not in CapabilitiesPolicy) to keep registry mutations in the
         // runtime's post-reducer orchestration layer.
-        if (signal.commands.length > 0) {
-          this.registerCLICommands(signal.commands);
+        if (enrichedSignal.commands.length > 0) {
+          this.registerCLICommands(enrichedSignal.commands);
         }
         break;
       case "CAPABILITIES_INIT_REQUESTED": {
