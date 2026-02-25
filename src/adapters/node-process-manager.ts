@@ -60,7 +60,9 @@ export class NodeProcessManager implements ProcessManager {
           // processes spawned by wrapper scripts are also terminated.
           process.kill(-pid, signal);
         } catch {
-          // Process group may already be gone; try direct kill as fallback
+          // ESRCH: process group already gone.
+          // EINVAL: negative PID unsupported on Windows — falls back to direct
+          //   child kill, restoring the original (non-group) behavior on Windows.
           try {
             child.kill(signal);
           } catch {
