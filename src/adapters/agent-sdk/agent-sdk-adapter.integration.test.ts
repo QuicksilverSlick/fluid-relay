@@ -265,7 +265,7 @@ function sdkStreamEvent(text: string): Record<string, unknown> {
   };
 }
 
-function sdkToolProgress(toolName: string): Record<string, unknown> {
+function _sdkToolProgress(toolName: string): Record<string, unknown> {
   return {
     type: "tool_progress",
     tool_name: toolName,

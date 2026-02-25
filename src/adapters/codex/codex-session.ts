@@ -360,7 +360,10 @@ export class CodexSession implements BackendSession {
     this.queuedTurnInputs = [];
     this.currentTrace = undefined;
     await this.ensureThreadInitialized();
-    return this.threadId!;
+    if (!this.threadId) {
+      throw new Error("Failed to reset Codex thread: threadId is null");
+    }
+    return this.threadId;
   }
 
   private flushQueuedTurns(): void {

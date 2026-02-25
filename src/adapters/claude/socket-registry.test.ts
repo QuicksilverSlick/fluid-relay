@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SocketRegistry } from "./socket-registry.js";
 
 // Minimal mock for WebSocket

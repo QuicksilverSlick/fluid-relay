@@ -237,7 +237,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     );
 
     this.queueHandler = new MessageQueueHandler(
-      (ws, message) => this.broadcaster.sendTo(ws, message),
       (
         sessionId: string,
         content: string,
@@ -247,32 +246,19 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     );
 
     // ── Slash service ────────────────────────────────────────────────────────
+    const processSignal = (session: Session, signal: SystemSignal) =>
+      this.getOrCreateRuntime(session).process({ type: "SYSTEM_SIGNAL", signal });
+
     const localHandler = new LocalHandler({
       executor: new SlashCommandExecutor(),
-      broadcaster: this.broadcaster,
-      emitEvent: this.emitEvent as (
-        type: keyof BridgeEventMap,
-        payload: BridgeEventMap[keyof BridgeEventMap],
-      ) => void,
+      processSignal,
       tracer: this.tracer,
     });
 
     const commandChain = new SlashCommandChain([
       localHandler,
-      new AdapterNativeHandler({
-        broadcaster: this.broadcaster,
-        emitEvent: this.emitEvent as (
-          type: keyof BridgeEventMap,
-          payload: BridgeEventMap[keyof BridgeEventMap],
-        ) => void,
-        tracer: this.tracer,
-      }),
+      new AdapterNativeHandler({ processSignal, tracer: this.tracer }),
       new PassthroughHandler({
-        broadcaster: this.broadcaster,
-        emitEvent: this.emitEvent as (
-          type: keyof BridgeEventMap,
-          payload: BridgeEventMap[keyof BridgeEventMap],
-        ) => void,
         registerPendingPassthrough: (
           session: Session,
           entry: Session["pendingPassthroughs"][number],
@@ -297,14 +283,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           }),
         tracer: this.tracer,
       }),
-      new UnsupportedHandler({
-        broadcaster: this.broadcaster,
-        emitEvent: this.emitEvent as (
-          type: keyof BridgeEventMap,
-          payload: BridgeEventMap[keyof BridgeEventMap],
-        ) => void,
-        tracer: this.tracer,
-      }),
+      new UnsupportedHandler({ processSignal, tracer: this.tracer }),
     ]);
 
     this.slashService = new SlashCommandService({
@@ -801,7 +780,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     if (!session) return;
     const runtime = this.getOrCreateRuntime(session);
     runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_CLOSING" } });
-    this.capabilitiesPolicy.cancelPendingInitialize(session);
     if (runtime.getBackendSession()) {
       await runtime.closeBackendConnection().catch((err: unknown) => {
         this.logger.warn("Failed to close backend session", { sessionId, error: err });

@@ -15,7 +15,7 @@ import type { Effect } from "./effect-types.js";
 import type { Session } from "./session-repository.js";
 
 export interface EffectExecutorDeps {
-  broadcaster: Pick<ConsumerBroadcaster, "broadcast" | "broadcastToParticipants">;
+  broadcaster: Pick<ConsumerBroadcaster, "broadcast" | "broadcastToParticipants" | "sendTo">;
   emitEvent: (type: string, payload: unknown) => void;
   queueHandler: { autoSendQueuedMessage: (session: Session) => void };
   /** Inline structural type — avoids coupling SessionControl to BackendPlane. */
@@ -89,6 +89,10 @@ export function executeEffects(
 
         case "RESOLVE_GIT_INFO":
           deps.gitTracker.resolveGitInfo(session);
+          break;
+
+        case "SEND_TO_CONSUMER":
+          deps.broadcaster.sendTo(effect.ws, effect.message);
           break;
       }
     } catch (err) {

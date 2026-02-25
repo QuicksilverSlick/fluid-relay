@@ -12,7 +12,6 @@ import { createProcessManager } from "../testing/session-test-utils.js";
 import {
   assistantTextContains,
   attachTrace,
-  canBindLocalhostSync,
   closeWebSockets,
   connectConsumerAndWaitReady,
   deleteTrace,

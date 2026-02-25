@@ -16,7 +16,7 @@ vi.mock("node:child_process", async (importOriginal) => {
       if (mockSpawn.getMockImplementation()) {
         return mockSpawn(...args);
       }
-      return (original.spawn as Function)(...args);
+      return (original.spawn as (...args: unknown[]) => unknown)(...args);
     },
   };
 });
@@ -117,6 +117,49 @@ describe("NodeProcessManager", () => {
 
       const code = await handle.exited;
       expect(code).toBeNull();
+    });
+
+    it("kill terminates grandchild processes spawned via spawnSync (process group kill)", async () => {
+      // Simulate the opencode Node shim pattern: a Node.js wrapper that uses
+      // spawnSync to run the real binary. The grandchild writes its PID to a
+      // temp file so we can verify it is killed along with the wrapper.
+      const grandchildScript = [
+        "const fs = require('fs');",
+        "fs.writeFileSync('/tmp/gc-' + process.ppid + '.pid', String(process.pid));",
+        "setTimeout(() => {}, 60000);",
+      ].join(" ");
+
+      const wrapperScript = [
+        "const { spawnSync } = require('child_process');",
+        `spawnSync('node', ['-e', ${JSON.stringify(grandchildScript)}]);`,
+      ].join(" ");
+
+      const handle = manager.spawn({
+        command: "node",
+        args: ["-e", wrapperScript],
+        cwd: "/tmp",
+      });
+
+      const pidFile = `/tmp/gc-${handle.pid}.pid`;
+      const { readFileSync, existsSync, unlinkSync } = await import("node:fs");
+
+      // Wait for grandchild to write its PID file
+      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true), { timeout: 5000 });
+
+      const grandchildPid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+      expect(manager.isAlive(grandchildPid)).toBe(true);
+
+      handle.kill("SIGTERM");
+      await handle.exited;
+
+      // Grandchild must also be dead (killed via process group)
+      await vi.waitFor(() => expect(manager.isAlive(grandchildPid)).toBe(false), {
+        timeout: 2000,
+      });
+
+      try {
+        unlinkSync(pidFile);
+      } catch {}
     });
 
     it("kill does not throw when process is already dead", async () => {

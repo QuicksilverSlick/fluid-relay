@@ -103,7 +103,10 @@ export class AcpSession implements BackendSession {
 
     switch (action.type) {
       case "request": {
-        const { id, raw } = this.codec.createRequest(action.method!, action.params);
+        if (!action.method) {
+          throw new Error("Missing method for ACP request");
+        }
+        const { id, raw } = this.codec.createRequest(action.method, action.params);
         rpcMsg = raw;
         this.pendingRequests.set(id, {
           resolve: () => {}, // Handled via routeMessage stream
@@ -112,7 +115,10 @@ export class AcpSession implements BackendSession {
         break;
       }
       case "notification": {
-        rpcMsg = this.codec.createNotification(action.method!, action.params);
+        if (!action.method) {
+          throw new Error("Missing method for ACP notification");
+        }
+        rpcMsg = this.codec.createNotification(action.method, action.params);
         break;
       }
       case "response": {
@@ -133,7 +139,14 @@ export class AcpSession implements BackendSession {
       command: trace.command,
       phase: "t2_send_native",
     });
-    this.child.stdin?.write(this.codec.encode(rpcMsg));
+
+    if (this.child.stdin) {
+      this.child.stdin.write(this.codec.encode(rpcMsg));
+    } else {
+      this.tracer?.error("backend", "native_outbound", "Stdin missing for ACP subprocess", {
+        sessionId: this.sessionId,
+      });
+    }
   }
 
   private cachedMessages: AsyncIterable<UnifiedMessage> | null = null;
@@ -268,8 +281,9 @@ export class AcpSession implements BackendSession {
                 done: true,
               } as IteratorResult<UnifiedMessage>);
             }
-            if (queue.length > 0) {
-              return Promise.resolve({ value: queue.shift()!, done: false });
+            const nextMsg = queue.shift();
+            if (nextMsg !== undefined) {
+              return Promise.resolve({ value: nextMsg, done: false });
             }
             if (done) {
               return Promise.resolve({

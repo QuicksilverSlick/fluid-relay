@@ -637,7 +637,7 @@ describe("ClaudeSession", () => {
     });
 
     const ws = new MockWebSocket();
-    const session = new ClaudeSession({
+    const _session = new ClaudeSession({
       sessionId: "trace-remainder",
       socketPromise: Promise.resolve(ws) as any,
       tracer,

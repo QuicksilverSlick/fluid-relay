@@ -11,7 +11,6 @@
  * @module SessionControl
  */
 
-import { randomUUID } from "node:crypto";
 import type { Logger } from "../../interfaces/logger.js";
 import type {
   InitializeAccount,
@@ -33,6 +32,10 @@ export class CapabilitiesPolicy {
     private getRuntime: (session: Session) => SessionRuntime,
   ) {}
 
+  get initializeTimeoutMs(): number {
+    return this.config.initializeTimeoutMs;
+  }
+
   private getState(session: Session): SessionData["state"] {
     return this.getRuntime(session).getState();
   }
@@ -49,37 +52,10 @@ export class CapabilitiesPolicy {
   }
 
   sendInitializeRequest(session: Session): void {
-    if (this.getPendingInitialize(session)) return; // dedup
-    const requestId = randomUUID();
-    const timer = setTimeout(() => {
-      if (this.getPendingInitialize(session)?.requestId === requestId) {
-        this.setPendingInitialize(session, null);
-        this.getRuntime(session).process({
-          type: "SYSTEM_SIGNAL",
-          signal: { kind: "CAPABILITIES_TIMEOUT" },
-        });
-      }
-    }, this.config.initializeTimeoutMs);
-    this.setPendingInitialize(session, { requestId, timer });
-
-    const result = this.getRuntime(session).tryInitializeBackend(requestId);
-    if (result === "unsupported") {
-      // Adapter doesn't support the initialize handshake (e.g. Codex) —
-      // capabilities arrive via the init response instead.
-      this.logger.info(
-        `Skipping initialize for session ${session.id}: adapter does not support initialize`,
-      );
-      clearTimeout(timer);
-      this.setPendingInitialize(session, null);
-    } else if (result === "no_backend") {
-      // Backend not yet attached — cancel the pending initialize so the timer
-      // doesn't fire a spurious CAPABILITIES_TIMEOUT.
-      this.logger.warn(
-        `sendInitializeRequest called for session ${session.id} before backend connected — cancelling`,
-      );
-      clearTimeout(timer);
-      this.setPendingInitialize(session, null);
-    }
+    this.getRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "CAPABILITIES_INIT_REQUESTED" },
+    });
   }
 
   cancelPendingInitialize(session: Session): void {

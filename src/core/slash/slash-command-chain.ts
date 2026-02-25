@@ -10,9 +10,8 @@
  * @module MessagePlane
  */
 
-import type { BridgeEventMap } from "../../types/events.js";
-import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import { type MessageTracer, noopTracer, type TraceOutcome } from "../messaging/message-tracer.js";
+import type { SystemSignal } from "../session/session-event.js";
 import type { Session } from "../session/session-repository.js";
 import type { SlashCommandExecutor } from "./slash-command-executor.js";
 import { commandName } from "./slash-command-executor.js";
@@ -51,17 +50,13 @@ export class SlashCommandChain {
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
-type EmitEvent = (
-  type: keyof BridgeEventMap,
-  payload: BridgeEventMap[keyof BridgeEventMap],
-) => void;
+type ProcessSignal = (session: Session, signal: SystemSignal) => void;
 
 // ─── LocalHandler ─────────────────────────────────────────────────────────────
 
 export interface LocalHandlerDeps {
   executor: SlashCommandExecutor;
-  broadcaster: ConsumerBroadcaster;
-  emitEvent: EmitEvent;
+  processSignal: ProcessSignal;
   tracer?: MessageTracer;
 }
 
@@ -94,16 +89,11 @@ export class LocalHandler implements CommandHandler {
     this.deps.executor
       .executeLocal(session.data.state, command, session.registry)
       .then((result) => {
-        this.deps.broadcaster.broadcast(session, {
-          type: "slash_command_result",
+        this.deps.processSignal(session, {
+          kind: "SLASH_LOCAL_RESULT",
           command,
-          request_id: requestId,
+          requestId,
           content: result.content,
-          source: result.source,
-        });
-        this.deps.emitEvent("slash_command:executed", {
-          sessionId: session.id,
-          command,
           source: result.source,
           durationMs: result.durationMs,
         });
@@ -120,15 +110,10 @@ export class LocalHandler implements CommandHandler {
       })
       .catch((err: unknown) => {
         const error = err instanceof Error ? err.message : String(err);
-        this.deps.broadcaster.broadcast(session, {
-          type: "slash_command_error",
+        this.deps.processSignal(session, {
+          kind: "SLASH_LOCAL_ERROR",
           command,
-          request_id: requestId,
-          error,
-        });
-        this.deps.emitEvent("slash_command:failed", {
-          sessionId: session.id,
-          command,
+          requestId,
           error,
         });
         emitSlashSummary(this.tracer, {
@@ -158,8 +143,7 @@ export class LocalHandler implements CommandHandler {
 // ─── AdapterNativeHandler ─────────────────────────────────────────────────────
 
 export interface AdapterNativeHandlerDeps {
-  broadcaster: ConsumerBroadcaster;
-  emitEvent: EmitEvent;
+  processSignal: ProcessSignal;
   tracer?: MessageTracer;
 }
 
@@ -194,16 +178,11 @@ export class AdapterNativeHandler implements CommandHandler {
       .execute(command)
       .then((result) => {
         if (!result) return;
-        this.deps.broadcaster.broadcast(session, {
-          type: "slash_command_result",
+        this.deps.processSignal(session, {
+          kind: "SLASH_LOCAL_RESULT",
           command,
-          request_id: requestId,
+          requestId,
           content: result.content,
-          source: result.source,
-        });
-        this.deps.emitEvent("slash_command:executed", {
-          sessionId: session.id,
-          command,
           source: result.source,
           durationMs: result.durationMs,
         });
@@ -220,15 +199,10 @@ export class AdapterNativeHandler implements CommandHandler {
       })
       .catch((err: unknown) => {
         const error = err instanceof Error ? err.message : String(err);
-        this.deps.broadcaster.broadcast(session, {
-          type: "slash_command_error",
+        this.deps.processSignal(session, {
+          kind: "SLASH_LOCAL_ERROR",
           command,
-          request_id: requestId,
-          error,
-        });
-        this.deps.emitEvent("slash_command:failed", {
-          sessionId: session.id,
-          command,
+          requestId,
           error,
         });
         emitSlashSummary(this.tracer, {
@@ -258,8 +232,6 @@ type SendUserMessage = (
 ) => void;
 
 export interface PassthroughHandlerDeps {
-  broadcaster: ConsumerBroadcaster;
-  emitEvent: EmitEvent;
   sendUserMessage: SendUserMessage;
   registerPendingPassthrough: (
     session: Session,
@@ -314,8 +286,7 @@ export class PassthroughHandler implements CommandHandler {
 // ─── UnsupportedHandler ───────────────────────────────────────────────────────
 
 export interface UnsupportedHandlerDeps {
-  broadcaster: ConsumerBroadcaster;
-  emitEvent: EmitEvent;
+  processSignal: ProcessSignal;
   tracer?: MessageTracer;
 }
 
@@ -335,15 +306,10 @@ export class UnsupportedHandler implements CommandHandler {
     const { command, requestId, slashRequestId, traceId, startedAtMs, session } = ctx;
     const name = commandName(command);
     const error = `${name} is not supported by the connected backend`;
-    this.deps.broadcaster.broadcast(session, {
-      type: "slash_command_error",
+    this.deps.processSignal(session, {
+      kind: "SLASH_LOCAL_ERROR",
       command,
-      request_id: requestId,
-      error,
-    });
-    this.deps.emitEvent("slash_command:failed", {
-      sessionId: session.id,
-      command,
+      requestId,
       error,
     });
     emitSlashSummary(this.tracer, {

@@ -8,8 +8,10 @@ import { CapabilitiesPolicy } from "./capabilities-policy.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function createMockRuntime(session: any, broadcaster: any, emitEvent: any) {
-  return {
+let _reqCounter = 0;
+
+function createMockRuntime(session: any, broadcaster: any, emitEvent: any, config: ResolvedConfig) {
+  const runtime: any = {
     getState: () => session.data.state,
     process: (event: any) => {
       if (event.type !== "SYSTEM_SIGNAL") return;
@@ -46,6 +48,18 @@ function createMockRuntime(session: any, broadcaster: any, emitEvent: any) {
         }
       } else if (signal.kind === "CAPABILITIES_TIMEOUT") {
         emitEvent("capabilities:timeout", { sessionId: session.id });
+      } else if (signal.kind === "CAPABILITIES_INIT_REQUESTED") {
+        if (session.pendingInitialize) return; // dedup
+        const requestId = `init-req-${++_reqCounter}`;
+        const result = runtime.tryInitializeBackend(requestId);
+        if (result === "unsupported" || result === "no_backend") return;
+        const timer = setTimeout(() => {
+          if (session.pendingInitialize?.requestId === requestId) {
+            session.pendingInitialize = null;
+            runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "CAPABILITIES_TIMEOUT" } });
+          }
+        }, config.initializeTimeoutMs);
+        session.pendingInitialize = { requestId, timer };
       }
     },
     getPendingInitialize: () => session.pendingInitialize,
@@ -62,6 +76,7 @@ function createMockRuntime(session: any, broadcaster: any, emitEvent: any) {
       session.registry.registerFromCLI(commands);
     },
   } as any;
+  return runtime;
 }
 
 function createDeps(
@@ -80,7 +95,7 @@ function createDeps(
   const emitEvent = vi.fn();
 
   const protocol = new CapabilitiesPolicy(config, noopLogger, (session: any) => ({
-    ...createMockRuntime(session, broadcaster, emitEvent),
+    ...createMockRuntime(session, broadcaster, emitEvent, config),
     ...(runtimeOverrides ?? {}),
   }));
 

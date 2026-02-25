@@ -24,7 +24,7 @@ function mockAdapter(name: string): BackendAdapter {
 }
 
 function mockResolver(adapters: Record<string, BackendAdapter>): AdapterResolver {
-  const claude = adapters.claude ?? mockAdapter("claude");
+  const _claude = adapters.claude ?? mockAdapter("claude");
   return {
     resolve: vi.fn((name) => {
       const resolved = name ?? "claude";
@@ -69,7 +69,7 @@ function createSessionAwareRuntime(session: any) {
 describe("BackendConnector per-session adapter", () => {
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any;
 
-  function makeBaseDeps(sessionRef: { current: any }) {
+  function makeBaseDeps(_sessionRef: { current: any }) {
     const runtimeCache = new WeakMap<object, ReturnType<typeof createSessionAwareRuntime>>();
     return {
       logger,

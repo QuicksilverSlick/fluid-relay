@@ -345,7 +345,6 @@ export function createBridgeWithAdapter(options?: {
   );
 
   queueHandler = new MessageQueueHandler(
-    (ws, message) => broadcaster.sendTo(ws, message as any),
     (sessionId, content, opts?: { images?: { media_type: string; data: string }[] }) =>
       withMutableSession(sessionId, "sendUserMessage", (s) =>
         getOrCreateRuntime(s).sendUserMessage(content, opts),
@@ -353,31 +352,20 @@ export function createBridgeWithAdapter(options?: {
     (session) => getOrCreateRuntime(session),
   );
 
+  const processSignal = (
+    session: Session,
+    signal: import("../core/session/session-event.js").SystemSignal,
+  ) => getOrCreateRuntime(session).process({ type: "SYSTEM_SIGNAL", signal });
+
   const localHandler = new LocalHandler({
     executor: new SlashCommandExecutor(),
-    broadcaster,
-    emitEvent: emitEvent as (
-      type: keyof BridgeEventMap,
-      payload: BridgeEventMap[keyof BridgeEventMap],
-    ) => void,
+    processSignal,
     tracer,
   });
   const commandChain = new SlashCommandChain([
     localHandler,
-    new AdapterNativeHandler({
-      broadcaster,
-      emitEvent: emitEvent as (
-        type: keyof BridgeEventMap,
-        payload: BridgeEventMap[keyof BridgeEventMap],
-      ) => void,
-      tracer,
-    }),
+    new AdapterNativeHandler({ processSignal, tracer }),
     new PassthroughHandler({
-      broadcaster,
-      emitEvent: emitEvent as (
-        type: keyof BridgeEventMap,
-        payload: BridgeEventMap[keyof BridgeEventMap],
-      ) => void,
       registerPendingPassthrough: (session, entry) =>
         getOrCreateRuntime(session).process({
           type: "SYSTEM_SIGNAL",
@@ -397,14 +385,7 @@ export function createBridgeWithAdapter(options?: {
         ),
       tracer,
     }),
-    new UnsupportedHandler({
-      broadcaster,
-      emitEvent: emitEvent as (
-        type: keyof BridgeEventMap,
-        payload: BridgeEventMap[keyof BridgeEventMap],
-      ) => void,
-      tracer,
-    }),
+    new UnsupportedHandler({ processSignal, tracer }),
   ]);
   slashService = new SlashCommandService({
     now: () => Date.now(),

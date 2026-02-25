@@ -1,10 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  type MessageTracer,
-  MessageTracerImpl,
-  noopTracer,
-  type TraceEvent,
-} from "./message-tracer.js";
+import { describe, expect, it } from "vitest";
+import { MessageTracerImpl, noopTracer, type TraceEvent } from "./message-tracer.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -118,7 +118,11 @@ export class OpencodeAdapter implements BackendAdapter {
     await this.launchPromise;
 
     // 2. Create a session via the HTTP client
-    const { id: opcSessionId } = await this.httpClient!.createSession({
+    if (!this.httpClient) {
+      throw new Error("Opencode adapter not initialized: httpClient missing");
+    }
+
+    const { id: opcSessionId } = await this.httpClient.createSession({
       title: options.sessionId,
     });
     const tracer = options.adapterOptions?.tracer as MessageTracer | undefined;
@@ -127,7 +131,7 @@ export class OpencodeAdapter implements BackendAdapter {
     return new OpencodeSession({
       sessionId: options.sessionId,
       opcSessionId,
-      httpClient: this.httpClient!,
+      httpClient: this.httpClient,
       subscribe: (handler) => this.addSubscriber(opcSessionId, handler),
       tracer,
     });
@@ -247,7 +251,10 @@ export class OpencodeAdapter implements BackendAdapter {
   }
 
   private async runSseLoop(signal: AbortSignal): Promise<void> {
-    const stream = await this.httpClient!.connectSse(signal);
+    if (!this.httpClient) {
+      throw new Error("Opencode adapter not initialized: httpClient missing");
+    }
+    const stream = await this.httpClient.connectSse(signal);
 
     for await (const sseEvent of parseSseStream(stream)) {
       if (signal.aborted) break;

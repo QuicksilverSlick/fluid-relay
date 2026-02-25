@@ -12,7 +12,6 @@ import {
   makeAssistantUnifiedMsg,
   makePermissionRequestUnifiedMsg,
   makeSessionInitMsg,
-  noopLogger,
   tick,
   translateAndPush,
 } from "../testing/adapter-test-helpers.js";
