@@ -317,8 +317,10 @@ export class SessionRuntime {
 
     // Augment reducer effects with SEND_TO_CONSUMER effects for rejection cases.
     // These require the live ws handle, which the pure reducer cannot access.
+    // ws is null as never for programmatic sendUserMessage() / sendPermissionResponse() calls —
+    // skip the targeted error in those cases (the caller checks the boolean return value instead).
     const extraEffects: import("./effect-types.js").Effect[] = [];
-    if (msg.type === "user_message" && nextData === prevData) {
+    if (msg.type === "user_message" && nextData === prevData && ws !== null) {
       // Reducer no-op means closed/closing session — send targeted error.
       extraEffects.push({
         type: "SEND_TO_CONSUMER",
@@ -328,7 +330,7 @@ export class SessionRuntime {
           message: "Session is closing or closed and cannot accept new messages.",
         },
       });
-    } else if (msg.type === "set_adapter") {
+    } else if (msg.type === "set_adapter" && ws !== null) {
       // Rejected for active sessions — send targeted error to the requesting consumer only.
       extraEffects.push({
         type: "SEND_TO_CONSUMER",
@@ -456,10 +458,16 @@ export class SessionRuntime {
         consumerCountAfter: this.session.consumerSockets.size + 1,
       };
     } else if (signal.kind === "CONSUMER_DISCONNECTED") {
+      const identity = this.session.consumerSockets.get(signal.ws);
+      if (!identity) {
+        this.deps.logger.warn(
+          `CONSUMER_DISCONNECTED for unregistered socket in session ${this.session.id} — possible double-disconnect`,
+        );
+      }
       enrichedSignal = {
         ...signal,
         consumerCountAfter: Math.max(0, this.session.consumerSockets.size - 1),
-        identity: this.session.consumerSockets.get(signal.ws),
+        identity,
       };
     }
 
@@ -525,6 +533,12 @@ export class SessionRuntime {
         if (result === "unsupported") {
           this.deps.logger.info(
             `Skipping NDJSON initialize for session ${this.session.id}: adapter does not support sendRaw`,
+          );
+          break;
+        }
+        if (result === "no_backend") {
+          this.deps.logger.warn(
+            `Skipping NDJSON initialize for session ${this.session.id}: no backend session attached`,
           );
           break;
         }

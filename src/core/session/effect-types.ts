@@ -4,8 +4,14 @@
  * `reduceSessionData` returns `[SessionData, Effect[]]`. The caller
  * (SessionRuntime) executes each effect via `executeEffects()`.
  *
- * Effects are plain data — no closures, no dependencies. This keeps
+ * Most effects are plain data — no closures, no dependencies. This keeps
  * the reducer 100% pure and makes effects easy to assert in tests.
+ *
+ * Exception: `SEND_TO_CONSUMER` carries a `WebSocketLike` handle, which is
+ * non-serializable. This is a deliberate pragmatic tradeoff — targeted error
+ * delivery requires the specific socket. The handle is always available at the
+ * call site (inbound command handler or signal enrichment), so the reducer
+ * never needs to look it up.
  *
  * @module SessionControl
  */
