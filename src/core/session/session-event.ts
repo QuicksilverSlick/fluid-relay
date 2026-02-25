@@ -80,6 +80,17 @@ export type SystemSignal =
     }
   /** Slash passthrough command failed. */
   | { kind: "SLASH_PASSTHROUGH_ERROR"; command: string; requestId?: string; error: string }
+  /** Local/adapter-native slash command completed successfully. */
+  | {
+      kind: "SLASH_LOCAL_RESULT";
+      command: string;
+      requestId?: string;
+      content: string;
+      source: string;
+      durationMs: number;
+    }
+  /** Local/adapter-native slash command failed. */
+  | { kind: "SLASH_LOCAL_ERROR"; command: string; requestId?: string; error: string }
   /** A passthrough slash command was enqueued for the CLI. */
   | {
       kind: "PASSTHROUGH_ENQUEUED";

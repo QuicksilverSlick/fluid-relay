@@ -247,32 +247,19 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     );
 
     // ── Slash service ────────────────────────────────────────────────────────
+    const processSignal = (session: Session, signal: SystemSignal) =>
+      this.getOrCreateRuntime(session).process({ type: "SYSTEM_SIGNAL", signal });
+
     const localHandler = new LocalHandler({
       executor: new SlashCommandExecutor(),
-      broadcaster: this.broadcaster,
-      emitEvent: this.emitEvent as (
-        type: keyof BridgeEventMap,
-        payload: BridgeEventMap[keyof BridgeEventMap],
-      ) => void,
+      processSignal,
       tracer: this.tracer,
     });
 
     const commandChain = new SlashCommandChain([
       localHandler,
-      new AdapterNativeHandler({
-        broadcaster: this.broadcaster,
-        emitEvent: this.emitEvent as (
-          type: keyof BridgeEventMap,
-          payload: BridgeEventMap[keyof BridgeEventMap],
-        ) => void,
-        tracer: this.tracer,
-      }),
+      new AdapterNativeHandler({ processSignal, tracer: this.tracer }),
       new PassthroughHandler({
-        broadcaster: this.broadcaster,
-        emitEvent: this.emitEvent as (
-          type: keyof BridgeEventMap,
-          payload: BridgeEventMap[keyof BridgeEventMap],
-        ) => void,
         registerPendingPassthrough: (
           session: Session,
           entry: Session["pendingPassthroughs"][number],
@@ -297,14 +284,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           }),
         tracer: this.tracer,
       }),
-      new UnsupportedHandler({
-        broadcaster: this.broadcaster,
-        emitEvent: this.emitEvent as (
-          type: keyof BridgeEventMap,
-          payload: BridgeEventMap[keyof BridgeEventMap],
-        ) => void,
-        tracer: this.tracer,
-      }),
+      new UnsupportedHandler({ processSignal, tracer: this.tracer }),
     ]);
 
     this.slashService = new SlashCommandService({

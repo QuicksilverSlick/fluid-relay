@@ -187,6 +187,53 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
         ],
       ];
 
+    case "SLASH_LOCAL_RESULT":
+      return [
+        data,
+        [
+          {
+            type: "BROADCAST",
+            message: {
+              type: "slash_command_result",
+              command: signal.command,
+              request_id: signal.requestId,
+              content: signal.content,
+              source: signal.source,
+            },
+          },
+          {
+            type: "EMIT_EVENT",
+            eventType: "slash_command:executed",
+            payload: {
+              command: signal.command,
+              source: signal.source,
+              durationMs: signal.durationMs,
+            },
+          },
+        ],
+      ];
+
+    case "SLASH_LOCAL_ERROR":
+      return [
+        data,
+        [
+          {
+            type: "BROADCAST",
+            message: {
+              type: "slash_command_error",
+              command: signal.command,
+              request_id: signal.requestId,
+              error: signal.error,
+            },
+          },
+          {
+            type: "EMIT_EVENT",
+            eventType: "slash_command:failed",
+            payload: { command: signal.command, error: signal.error },
+          },
+        ],
+      ];
+
     // ── Effect signals with lifecycle transitions ────────────────────────
     case "BACKEND_CONNECTED": {
       const drainEffects: Effect[] = data.pendingMessages.map((msg) => ({

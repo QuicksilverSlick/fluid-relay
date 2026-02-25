@@ -1,12 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  createMockSession,
-  createTestSocket,
-  findMessage,
-  flushPromises,
-  noopLogger,
-} from "../../testing/cli-message-factories.js";
-import { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import { createMockSession, flushPromises } from "../../testing/cli-message-factories.js";
 import {
   AdapterNativeHandler,
   type CommandHandler,
@@ -92,17 +85,10 @@ describe("SlashCommandChain", () => {
 
 function makeLocalSetup() {
   const executor = new SlashCommandExecutor();
-  const broadcaster = new ConsumerBroadcaster(noopLogger);
-  const emitEvent = vi.fn();
-  const handler = new LocalHandler({ executor, broadcaster, emitEvent });
-  const ws = createTestSocket();
+  const processSignal = vi.fn();
+  const handler = new LocalHandler({ executor, processSignal });
   const session = createMockSession();
-  session.consumerSockets.set(ws, {
-    userId: "u1",
-    displayName: "Alice",
-    role: "participant",
-  });
-  return { handler, ws, session, emitEvent };
+  return { handler, session, processSignal };
 }
 
 describe("LocalHandler", () => {
@@ -116,43 +102,34 @@ describe("LocalHandler", () => {
     expect(handler.handles(slashCtx(session, "/compact"))).toBe(false);
   });
 
-  it("executes /help and broadcasts slash_command_result", async () => {
-    const { handler, ws, session } = makeLocalSetup();
+  it("dispatches SLASH_LOCAL_RESULT signal on /help success", async () => {
+    const { handler, session, processSignal } = makeLocalSetup();
     handler.execute(slashCtx(session, "/help", "r1"));
     await flushPromises();
-    const msg = findMessage(ws, "slash_command_result");
-    expect(msg).toBeDefined();
-    expect(msg.command).toBe("/help");
-    expect(msg.request_id).toBe("r1");
-    expect(msg.source).toBe("emulated");
-    expect(msg.content).toContain("Available commands:");
+    expect(processSignal).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({
+        kind: "SLASH_LOCAL_RESULT",
+        command: "/help",
+        requestId: "r1",
+        source: "emulated",
+      }),
+    );
+    const signal = processSignal.mock.calls[0][1];
+    expect(signal.content).toContain("Available commands:");
   });
 
-  it("broadcasts slash_command_error when executor rejects", async () => {
+  it("dispatches SLASH_LOCAL_ERROR signal when executor rejects", async () => {
     const executor = new SlashCommandExecutor();
-    const broadcaster = new ConsumerBroadcaster(noopLogger);
     vi.spyOn(executor, "executeLocal").mockRejectedValue(new Error("boom"));
-    const handler = new LocalHandler({ executor, broadcaster, emitEvent: vi.fn() });
-    const ws = createTestSocket();
+    const processSignal = vi.fn();
+    const handler = new LocalHandler({ executor, processSignal });
     const session = createMockSession();
-    session.consumerSockets.set(ws, {
-      userId: "u1",
-      displayName: "Alice",
-      role: "participant",
-    });
     handler.execute(slashCtx(session, "/help", "r1"));
     await flushPromises();
-    const msg = findMessage(ws, "slash_command_error");
-    expect(msg.error).toBe("boom");
-  });
-
-  it("emits slash_command:executed on success", async () => {
-    const { handler, session, emitEvent } = makeLocalSetup();
-    handler.execute(slashCtx(session, "/help"));
-    await flushPromises();
-    expect(emitEvent).toHaveBeenCalledWith(
-      "slash_command:executed",
-      expect.objectContaining({ command: "/help", source: "emulated" }),
+    expect(processSignal).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({ kind: "SLASH_LOCAL_ERROR", error: "boom" }),
     );
   });
 
@@ -174,27 +151,19 @@ describe("AdapterNativeHandler", () => {
       execute: vi.fn().mockResolvedValue({ content: "ok", source: "emulated", durationMs: 10 }),
       supportedCommands: vi.fn().mockReturnValue(["/compact"]),
     };
-    const broadcaster = new ConsumerBroadcaster(noopLogger);
-    const handler = new AdapterNativeHandler({ broadcaster, emitEvent: vi.fn() });
+    const handler = new AdapterNativeHandler({ processSignal: vi.fn() });
     expect(handler.handles(slashCtx(session, "/compact"))).toBe(true);
   });
 
   it("does not handle when adapterSlashExecutor is null", () => {
     const session = createMockSession();
     session.adapterSlashExecutor = null;
-    const broadcaster = new ConsumerBroadcaster(noopLogger);
-    const handler = new AdapterNativeHandler({ broadcaster, emitEvent: vi.fn() });
+    const handler = new AdapterNativeHandler({ processSignal: vi.fn() });
     expect(handler.handles(slashCtx(session, "/compact"))).toBe(false);
   });
 
-  it("broadcasts result from adapter executor", async () => {
+  it("dispatches SLASH_LOCAL_RESULT signal from adapter executor", async () => {
     const session = createMockSession();
-    const ws = createTestSocket();
-    session.consumerSockets.set(ws, {
-      userId: "u1",
-      displayName: "Alice",
-      role: "participant",
-    });
     session.adapterSlashExecutor = {
       handles: vi.fn().mockReturnValue(true),
       execute: vi
@@ -202,59 +171,57 @@ describe("AdapterNativeHandler", () => {
         .mockResolvedValue({ content: "compact done", source: "emulated", durationMs: 5 }),
       supportedCommands: vi.fn().mockReturnValue(["/compact"]),
     };
-    const broadcaster = new ConsumerBroadcaster(noopLogger);
-    const handler = new AdapterNativeHandler({ broadcaster, emitEvent: vi.fn() });
+    const processSignal = vi.fn();
+    const handler = new AdapterNativeHandler({ processSignal });
     handler.execute(slashCtx(session, "/compact", "r1"));
     await flushPromises();
-    const msg = findMessage(ws, "slash_command_result");
-    expect(msg.content).toBe("compact done");
+    expect(processSignal).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({
+        kind: "SLASH_LOCAL_RESULT",
+        command: "/compact",
+        requestId: "r1",
+        content: "compact done",
+      }),
+    );
   });
 
-  it("broadcasts slash_command_error when adapter executor rejects", async () => {
+  it("dispatches SLASH_LOCAL_ERROR signal when adapter executor rejects", async () => {
     const session = createMockSession();
-    const ws = createTestSocket();
-    session.consumerSockets.set(ws, {
-      userId: "u1",
-      displayName: "Alice",
-      role: "participant",
-    });
     session.adapterSlashExecutor = {
       handles: vi.fn().mockReturnValue(true),
       execute: vi.fn().mockRejectedValue(new Error("adapter exploded")),
       supportedCommands: vi.fn().mockReturnValue(["/compact"]),
     };
-    const broadcaster = new ConsumerBroadcaster(noopLogger);
-    const emitEvent = vi.fn();
-    const handler = new AdapterNativeHandler({ broadcaster, emitEvent });
+    const processSignal = vi.fn();
+    const handler = new AdapterNativeHandler({ processSignal });
     handler.execute(slashCtx(session, "/compact", "r1"));
     await flushPromises();
-    const msg = findMessage(ws, "slash_command_error");
-    expect(msg.error).toBe("adapter exploded");
-    expect(emitEvent).toHaveBeenCalledWith(
-      "slash_command:failed",
-      expect.objectContaining({ command: "/compact", error: "adapter exploded" }),
+    expect(processSignal).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({
+        kind: "SLASH_LOCAL_ERROR",
+        command: "/compact",
+        error: "adapter exploded",
+      }),
     );
   });
 
   it("handles non-Error thrown from adapter executor (String(err) branch)", async () => {
     const session = createMockSession();
-    const ws = createTestSocket();
-    session.consumerSockets.set(ws, {
-      userId: "u1",
-      displayName: "Alice",
-      role: "participant",
-    });
     session.adapterSlashExecutor = {
       handles: vi.fn().mockReturnValue(true),
       execute: vi.fn().mockRejectedValue("plain string error"),
       supportedCommands: vi.fn().mockReturnValue(["/compact"]),
     };
-    const broadcaster = new ConsumerBroadcaster(noopLogger);
-    const handler = new AdapterNativeHandler({ broadcaster, emitEvent: vi.fn() });
+    const processSignal = vi.fn();
+    const handler = new AdapterNativeHandler({ processSignal });
     handler.execute(slashCtx(session, "/compact", "r1"));
     await flushPromises();
-    const msg = findMessage(ws, "slash_command_error");
-    expect(msg.error).toBe("plain string error");
+    expect(processSignal).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({ kind: "SLASH_LOCAL_ERROR", error: "plain string error" }),
+    );
   });
 });
 
@@ -265,8 +232,6 @@ describe("PassthroughHandler", () => {
     const session = createMockSession();
     session.data.adapterSupportsSlashPassthrough = true;
     const handler = new PassthroughHandler({
-      broadcaster: new ConsumerBroadcaster(noopLogger),
-      emitEvent: vi.fn(),
       sendUserMessage: vi.fn(),
       registerPendingPassthrough: (targetSession, entry) => {
         targetSession.pendingPassthroughs.push(entry);
@@ -279,8 +244,6 @@ describe("PassthroughHandler", () => {
     const session = createMockSession();
     session.data.adapterSupportsSlashPassthrough = false;
     const handler = new PassthroughHandler({
-      broadcaster: new ConsumerBroadcaster(noopLogger),
-      emitEvent: vi.fn(),
       sendUserMessage: vi.fn(),
       registerPendingPassthrough: (targetSession, entry) => {
         targetSession.pendingPassthroughs.push(entry);
@@ -294,8 +257,6 @@ describe("PassthroughHandler", () => {
     const session = createMockSession();
     session.data.adapterSupportsSlashPassthrough = true;
     const handler = new PassthroughHandler({
-      broadcaster: new ConsumerBroadcaster(noopLogger),
-      emitEvent: vi.fn(),
       sendUserMessage,
       registerPendingPassthrough: (targetSession, entry) => {
         targetSession.pendingPassthroughs.push(entry);
@@ -322,8 +283,6 @@ describe("PassthroughHandler", () => {
     const session = createMockSession();
     session.data.adapterSupportsSlashPassthrough = true;
     const handler = new PassthroughHandler({
-      broadcaster: new ConsumerBroadcaster(noopLogger),
-      emitEvent: vi.fn(),
       sendUserMessage,
       registerPendingPassthrough,
     });
@@ -347,24 +306,25 @@ describe("PassthroughHandler", () => {
 describe("UnsupportedHandler", () => {
   it("always handles any command", () => {
     const session = createMockSession();
-    const broadcaster = new ConsumerBroadcaster(noopLogger);
-    const handler = new UnsupportedHandler({ broadcaster, emitEvent: vi.fn() });
+    const handler = new UnsupportedHandler({ processSignal: vi.fn() });
     expect(handler.handles(slashCtx(session, "/anything"))).toBe(true);
   });
 
-  it("broadcasts slash_command_error", async () => {
-    const broadcaster = new ConsumerBroadcaster(noopLogger);
-    const handler = new UnsupportedHandler({ broadcaster, emitEvent: vi.fn() });
-    const ws = createTestSocket();
+  it("dispatches SLASH_LOCAL_ERROR signal for unsupported command", () => {
+    const processSignal = vi.fn();
+    const handler = new UnsupportedHandler({ processSignal });
     const session = createMockSession();
-    session.consumerSockets.set(ws, {
-      userId: "u1",
-      displayName: "Alice",
-      role: "participant",
-    });
     handler.execute(slashCtx(session, "/unknown", "r1"));
-    const msg = findMessage(ws, "slash_command_error");
-    expect(msg.error).toContain("/unknown");
-    expect(msg.error).toContain("not supported");
+    expect(processSignal).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({
+        kind: "SLASH_LOCAL_ERROR",
+        command: "/unknown",
+        requestId: "r1",
+      }),
+    );
+    const signal = processSignal.mock.calls[0][1];
+    expect(signal.error).toContain("/unknown");
+    expect(signal.error).toContain("not supported");
   });
 });
