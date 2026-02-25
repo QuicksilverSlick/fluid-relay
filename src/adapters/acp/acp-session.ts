@@ -18,6 +18,7 @@ import {
   isJsonRpcResponse,
   type JsonRpcCodec,
 } from "./json-rpc.js";
+import { killProcessGroup } from "./kill-process-group.js";
 import type { AcpInitializeResult, ErrorClassifier } from "./outbound-translator.js";
 import {
   translateAuthStatus,
@@ -171,28 +172,15 @@ export class AcpSession implements BackendSession {
     }
     this.pendingRequests.clear();
 
-    // Kill the entire process group so descendant processes (e.g. subprocesses
-    // spawned by the ACP agent that inherited the stdout pipe) are also terminated.
-    // Falls back to child.kill() if the pid is unavailable or the signal call fails.
-    const pid = this.child.pid;
-    const killGroup = (signal: NodeJS.Signals) => {
-      try {
-        if (pid !== undefined) process.kill(-pid, signal);
-        else this.child.kill(signal);
-      } catch {
-        this.child.kill(signal);
-      }
-    };
-
     const exitPromise = new Promise<void>((resolve) => {
       this.child.once("exit", () => resolve());
     });
 
-    killGroup("SIGTERM");
+    killProcessGroup(this.child, "SIGTERM");
 
     const timeout = new Promise<void>((resolve) => {
       setTimeout(() => {
-        killGroup("SIGKILL");
+        killProcessGroup(this.child, "SIGKILL");
         resolve();
       }, 5000);
     });
@@ -276,6 +264,9 @@ export class AcpSession implements BackendSession {
           }
         };
 
+        // Finalize the stream when the child process exits or stdout closes.
+        // Listening on both ensures we detect disconnection even if grandchild
+        // processes keep the stdout pipe open after the main process exits.
         const finalize = () => {
           done = true;
           if (resolve) {
@@ -285,16 +276,9 @@ export class AcpSession implements BackendSession {
           }
         };
 
-        const onClose = () => finalize();
-
-        // Drive finalize when the child process itself exits, even if grandchild
-        // processes keep the stdout pipe open (which would otherwise prevent onClose
-        // from firing and leave backendConnected=true indefinitely).
-        const onChildExit = () => finalize();
-
         child.stdout?.on("data", onData);
-        child.stdout?.on("close", onClose);
-        child.on("exit", onChildExit);
+        child.stdout?.on("close", finalize);
+        child.on("exit", finalize);
 
         // Replay any data buffered during the ACP handshake so messages that
         // arrived in the same chunk as the session/new response are not lost.
@@ -327,8 +311,8 @@ export class AcpSession implements BackendSession {
           },
           return(): Promise<IteratorResult<UnifiedMessage>> {
             child.stdout?.removeListener("data", onData);
-            child.stdout?.removeListener("close", onClose);
-            child.removeListener("exit", onChildExit);
+            child.stdout?.removeListener("close", finalize);
+            child.removeListener("exit", finalize);
             done = true;
             return Promise.resolve({
               value: undefined,

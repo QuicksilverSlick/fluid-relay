@@ -19,6 +19,7 @@ import type {
 import type { MessageTracer } from "../../core/messaging/message-tracer.js";
 import { AcpSession } from "./acp-session.js";
 import { JsonRpcCodec } from "./json-rpc.js";
+import { killProcessGroup } from "./kill-process-group.js";
 import type { AcpInitializeResult, ErrorClassifier } from "./outbound-translator.js";
 
 const PROTOCOL_VERSION = 1;
@@ -132,19 +133,8 @@ export class AcpAdapter implements BackendAdapter {
         sessionLeftover,
       );
     } catch (err) {
-      // Kill the entire process group to prevent zombies when handshake fails or times out.
-      // Falls back to child.kill() if the pid is unavailable or the signal call fails.
-      const pid = child.pid;
-      const killGroup = (signal: NodeJS.Signals) => {
-        try {
-          if (pid !== undefined) process.kill(-pid, signal);
-          else child.kill(signal);
-        } catch {
-          child.kill(signal);
-        }
-      };
-      killGroup("SIGTERM");
-      const killTimer = setTimeout(() => killGroup("SIGKILL"), killGracePeriodMs);
+      killProcessGroup(child, "SIGTERM");
+      const killTimer = setTimeout(() => killProcessGroup(child, "SIGKILL"), killGracePeriodMs);
       child.once("exit", () => clearTimeout(killTimer));
       killTimer.unref();
       throw err;
