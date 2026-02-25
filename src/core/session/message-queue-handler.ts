@@ -8,7 +8,6 @@
 
 import type { ConsumerIdentity } from "../../interfaces/auth.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
-import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionData } from "../session/session-data.js";
 import type { QueuedMessage, Session } from "./session-repository.js";
 import type { SessionRuntime } from "./session-runtime.js";
@@ -27,7 +26,6 @@ type SendUserMessage = (
 
 export class MessageQueueHandler {
   constructor(
-    private sendTo: (ws: WebSocketLike, message: ConsumerMessage) => void,
     private sendUserMessage: SendUserMessage,
     private getRuntime: (session: Session) => SessionRuntime,
   ) {}
@@ -63,9 +61,13 @@ export class MessageQueueHandler {
     // Enforce single-slot semantics before any fast-path dispatch. This keeps
     // restored queue state authoritative after restart.
     if (this.getQueuedMessage(session)) {
-      this.sendTo(ws, {
-        type: "error",
-        message: "A message is already queued for this session",
+      this.getRuntime(session).process({
+        type: "SYSTEM_SIGNAL",
+        signal: {
+          kind: "QUEUE_ERROR",
+          ws,
+          message: "A message is already queued for this session",
+        },
       });
       return;
     }
@@ -85,10 +87,14 @@ export class MessageQueueHandler {
 
     const identity = this.getConsumerIdentity(session, ws);
     if (!identity) {
-      this.sendTo(ws, {
-        type: "error",
-        message: "Cannot queue message: consumer identity not found. Please reconnect.",
-      } as ConsumerMessage);
+      this.getRuntime(session).process({
+        type: "SYSTEM_SIGNAL",
+        signal: {
+          kind: "QUEUE_ERROR",
+          ws,
+          message: "Cannot queue message: consumer identity not found. Please reconnect.",
+        },
+      });
       return;
     }
 
@@ -119,9 +125,13 @@ export class MessageQueueHandler {
 
     const identity = this.getConsumerIdentity(session, ws);
     if (!identity || identity.userId !== existing.consumerId) {
-      this.sendTo(ws, {
-        type: "error",
-        message: "Only the message author can edit a queued message",
+      this.getRuntime(session).process({
+        type: "SYSTEM_SIGNAL",
+        signal: {
+          kind: "QUEUE_ERROR",
+          ws,
+          message: "Only the message author can edit a queued message",
+        },
       });
       return;
     }
@@ -138,9 +148,13 @@ export class MessageQueueHandler {
 
     const identity = this.getConsumerIdentity(session, ws);
     if (!identity || identity.userId !== existing.consumerId) {
-      this.sendTo(ws, {
-        type: "error",
-        message: "Only the message author can cancel a queued message",
+      this.getRuntime(session).process({
+        type: "SYSTEM_SIGNAL",
+        signal: {
+          kind: "QUEUE_ERROR",
+          ws,
+          message: "Only the message author can cancel a queued message",
+        },
       });
       return;
     }

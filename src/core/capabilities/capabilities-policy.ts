@@ -11,7 +11,6 @@
  * @module SessionControl
  */
 
-import { randomUUID } from "node:crypto";
 import type { Logger } from "../../interfaces/logger.js";
 import type {
   InitializeAccount,
@@ -33,6 +32,10 @@ export class CapabilitiesPolicy {
     private getRuntime: (session: Session) => SessionRuntime,
   ) {}
 
+  get initializeTimeoutMs(): number {
+    return this.config.initializeTimeoutMs;
+  }
+
   private getState(session: Session): SessionData["state"] {
     return this.getRuntime(session).getState();
   }
@@ -48,42 +51,11 @@ export class CapabilitiesPolicy {
     this.getRuntime(session).setPendingInitialize(pendingInitialize);
   }
 
-  private trySendRawToBackend(
-    session: Session,
-    ndjson: string,
-  ): "sent" | "unsupported" | "no_backend" {
-    return this.getRuntime(session).trySendRawToBackend(ndjson);
-  }
-
   sendInitializeRequest(session: Session): void {
-    if (this.getPendingInitialize(session)) return; // dedup
-    const requestId = randomUUID();
-    const timer = setTimeout(() => {
-      if (this.getPendingInitialize(session)?.requestId === requestId) {
-        this.setPendingInitialize(session, null);
-        this.getRuntime(session).process({
-          type: "SYSTEM_SIGNAL",
-          signal: { kind: "CAPABILITIES_TIMEOUT" },
-        });
-      }
-    }, this.config.initializeTimeoutMs);
-    this.setPendingInitialize(session, { requestId, timer });
-
-    const ndjson = JSON.stringify({
-      type: "control_request",
-      request_id: requestId,
-      request: { subtype: "initialize" },
+    this.getRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "CAPABILITIES_INIT_REQUESTED" },
     });
-
-    if (this.trySendRawToBackend(session, ndjson) === "unsupported") {
-      // Adapter doesn't support raw NDJSON (e.g. Codex) -- cancel the
-      // initialize request. Capabilities arrive via the init response instead.
-      this.logger.info(
-        `Skipping NDJSON initialize for session ${session.id}: adapter does not support sendRaw`,
-      );
-      clearTimeout(timer);
-      this.setPendingInitialize(session, null);
-    }
   }
 
   cancelPendingInitialize(session: Session): void {

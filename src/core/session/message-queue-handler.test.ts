@@ -20,6 +20,8 @@ function createMockRuntime(session: any, broadcaster: ConsumerBroadcaster) {
       const signal = event.signal;
       if (signal.kind === "LAST_STATUS_UPDATED") {
         session.data.lastStatus = signal.status;
+      } else if (signal.kind === "QUEUE_ERROR") {
+        broadcaster.sendTo(signal.ws, { type: "error", message: signal.message } as any);
       } else if (signal.kind === "MESSAGE_QUEUED") {
         session.data.queuedMessage = signal.queued;
         broadcaster.broadcast(session, {
@@ -61,10 +63,8 @@ function createMockRuntime(session: any, broadcaster: ConsumerBroadcaster) {
 function setup() {
   const broadcaster = new ConsumerBroadcaster(noopLogger);
   const sendUserMessage = vi.fn();
-  const handler = new MessageQueueHandler(
-    (ws, message) => broadcaster.sendTo(ws, message as any),
-    sendUserMessage,
-    (session: any) => createMockRuntime(session, broadcaster),
+  const handler = new MessageQueueHandler(sendUserMessage, (session: any) =>
+    createMockRuntime(session, broadcaster),
   );
 
   const ws = createTestSocket();
@@ -90,7 +90,6 @@ describe("MessageQueueHandler", () => {
       let status: "compacting" | "idle" | "running" | null = "running";
       let queued: any = null;
       const handler = new MessageQueueHandler(
-        (ws, message) => broadcaster.sendTo(ws, message as any),
         sendUserMessage,
         () =>
           ({

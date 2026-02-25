@@ -41,13 +41,28 @@ export type SystemSignal =
   /** Backend adapter disconnected unexpectedly (stream ended or error). */
   | { kind: "BACKEND_DISCONNECTED"; reason: string }
   /** A consumer WebSocket connected and was authenticated. */
-  | { kind: "CONSUMER_CONNECTED"; ws: WebSocketLike; identity: ConsumerIdentity }
+  | {
+      kind: "CONSUMER_CONNECTED";
+      ws: WebSocketLike;
+      identity: ConsumerIdentity;
+      /** Post-connection consumer count — injected by runtime before reducer call. */
+      consumerCountAfter?: number;
+    }
   /** A consumer WebSocket disconnected. */
-  | { kind: "CONSUMER_DISCONNECTED"; ws: WebSocketLike }
+  | {
+      kind: "CONSUMER_DISCONNECTED";
+      ws: WebSocketLike;
+      /** Post-disconnection consumer count — injected by runtime before reducer call. */
+      consumerCountAfter?: number;
+      /** Identity of the disconnecting consumer — injected by runtime before reducer call. */
+      identity?: ConsumerIdentity;
+    }
   /** Git info was resolved asynchronously. */
   | { kind: "GIT_INFO_RESOLVED" }
   /** Capabilities handshake completed successfully. */
   | { kind: "CAPABILITIES_READY" }
+  /** Request the runtime to send the initialize handshake to the backend. */
+  | { kind: "CAPABILITIES_INIT_REQUESTED" }
   /** Session is idle with no consumers — eligible for reaping. */
   | { kind: "IDLE_REAP" }
   /** Backend did not connect within the reconnect grace window. */
@@ -80,6 +95,17 @@ export type SystemSignal =
     }
   /** Slash passthrough command failed. */
   | { kind: "SLASH_PASSTHROUGH_ERROR"; command: string; requestId?: string; error: string }
+  /** Local/adapter-native slash command completed successfully. */
+  | {
+      kind: "SLASH_LOCAL_RESULT";
+      command: string;
+      requestId?: string;
+      content: string;
+      source: "emulated" | "cli";
+      durationMs: number;
+    }
+  /** Local/adapter-native slash command failed. */
+  | { kind: "SLASH_LOCAL_ERROR"; command: string; requestId?: string; error: string }
   /** A passthrough slash command was enqueued for the CLI. */
   | {
       kind: "PASSTHROUGH_ENQUEUED";
@@ -138,7 +164,9 @@ export type SystemSignal =
   /** A queued message was cancelled — clear state, broadcast queued_message_cancelled. */
   | { kind: "QUEUED_MESSAGE_CANCELLED" }
   /** A queued message was auto-sent — clear state, broadcast queued_message_sent. */
-  | { kind: "QUEUED_MESSAGE_SENT" };
+  | { kind: "QUEUED_MESSAGE_SENT" }
+  /** Validation error during queue operations — send error to requesting consumer. */
+  | { kind: "QUEUE_ERROR"; ws: WebSocketLike; message: string };
 
 /**
  * Discriminated union of all events that SessionRuntime.process() accepts.

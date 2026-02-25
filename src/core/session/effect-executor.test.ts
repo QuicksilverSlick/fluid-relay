@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { WebSocketLike } from "../../interfaces/transport.js";
 import { noopTracer } from "../messaging/message-tracer.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
 import { executeEffects } from "./effect-executor.js";
@@ -13,6 +14,7 @@ function makeDeps() {
     broadcaster: {
       broadcast: vi.fn(),
       broadcastToParticipants: vi.fn(),
+      sendTo: vi.fn(),
     },
     emitEvent: vi.fn(),
     queueHandler: { autoSendQueuedMessage: vi.fn() },
@@ -195,5 +197,16 @@ describe("executeEffects", () => {
       sessionId: "sess-2",
       phase: "t1_to_backend",
     });
+  });
+
+  it("SEND_TO_CONSUMER effect calls broadcaster.sendTo with target ws and message", () => {
+    const deps = makeDeps();
+    const session = makeSession("s1");
+    const ws = {} as WebSocketLike;
+    const message = { type: "error", message: "boom" } as any;
+
+    executeEffects([{ type: "SEND_TO_CONSUMER", ws, message }], session, deps);
+
+    expect(deps.broadcaster.sendTo).toHaveBeenCalledWith(ws, message);
   });
 });

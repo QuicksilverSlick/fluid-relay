@@ -4,12 +4,19 @@
  * `reduceSessionData` returns `[SessionData, Effect[]]`. The caller
  * (SessionRuntime) executes each effect via `executeEffects()`.
  *
- * Effects are plain data — no closures, no dependencies. This keeps
+ * Most effects are plain data — no closures, no dependencies. This keeps
  * the reducer 100% pure and makes effects easy to assert in tests.
+ *
+ * Exception: `SEND_TO_CONSUMER` carries a `WebSocketLike` handle, which is
+ * non-serializable. This is a deliberate pragmatic tradeoff — targeted error
+ * delivery requires the specific socket. The handle is always available at the
+ * call site (inbound command handler or signal enrichment), so the reducer
+ * never needs to look it up.
  *
  * @module SessionControl
  */
 
+import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
@@ -30,4 +37,6 @@ export type Effect =
   /** Flush state to disk immediately (for critical user-visible writes). */
   | { type: "PERSIST_NOW" }
   /** Resolve git info for the session (after seeding cwd). */
-  | { type: "RESOLVE_GIT_INFO" };
+  | { type: "RESOLVE_GIT_INFO" }
+  /** Send a targeted message to a specific consumer WebSocket. */
+  | { type: "SEND_TO_CONSUMER"; ws: WebSocketLike; message: ConsumerMessage };
