@@ -852,10 +852,10 @@ describe("E2E: AgentSdkAdapter", () => {
   // 13. sendRaw throws
   // -------------------------------------------------------------------------
 
-  it("sendRaw throws 'does not support raw NDJSON'", async () => {
+  it("sendRaw is not defined (does not support raw NDJSON)", async () => {
     currentMock = createControllableMock();
     session = await createSession();
 
-    expect(() => session!.sendRaw("raw data")).toThrow("does not support raw NDJSON");
+    expect(session!.sendRaw).toBeUndefined();
   });
 });

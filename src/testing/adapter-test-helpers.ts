@@ -727,9 +727,6 @@ export class ErrorBackendSession implements BackendSession {
     this.sessionId = sessionId;
   }
   send(): void {}
-  sendRaw(_ndjson: string): void {
-    throw new Error("ErrorBackendSession does not support raw NDJSON");
-  }
   get messages(): AsyncIterable<UnifiedMessage> {
     return {
       [Symbol.asyncIterator](): AsyncIterator<UnifiedMessage> {

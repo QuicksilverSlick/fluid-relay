@@ -704,7 +704,7 @@ describe("E2E: GeminiAdapter Coverage Expansion", () => {
   // sendRaw throws
   // -------------------------------------------------------------------------
 
-  it("sendRaw throws with unsupported error", async () => {
+  it("sendRaw is not defined (not supported)", async () => {
     const adapter = createAdapter((stdin, stdout) => {
       createAcpAutoResponder(stdin, stdout);
     });
@@ -712,9 +712,7 @@ describe("E2E: GeminiAdapter Coverage Expansion", () => {
     const session = await adapter.connect({ sessionId: "raw-sess" });
     activeSessions.push(session);
 
-    expect(() => session.sendRaw('{"test": true}')).toThrow(
-      "AcpSession does not support raw NDJSON",
-    );
+    expect(session.sendRaw).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------

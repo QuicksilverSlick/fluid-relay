@@ -282,14 +282,6 @@ export class OpencodeSession implements BackendSession {
   }
 
   // ---------------------------------------------------------------------------
-  // BackendSession -- sendRaw
-  // ---------------------------------------------------------------------------
-
-  sendRaw(_ndjson: string): void {
-    throw new Error("opencode adapter does not support raw NDJSON");
-  }
-
-  // ---------------------------------------------------------------------------
   // BackendSession -- messages (async iterable)
   // ---------------------------------------------------------------------------
 

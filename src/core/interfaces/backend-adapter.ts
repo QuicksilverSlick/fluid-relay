@@ -62,8 +62,10 @@ export interface BackendSession {
   readonly sessionId: string;
   /** Send a message to the backend. */
   send(message: UnifiedMessage): void;
-  /** Send a raw NDJSON string to the backend (bypass UnifiedMessage translation). */
-  sendRaw(ndjson: string): void;
+  /** Send a raw NDJSON string to the backend (bypass UnifiedMessage translation).
+   *  Optional — adapters that do not support raw NDJSON (Codex, ACP, etc.)
+   *  should omit this method so that duck-type checks return "unsupported". */
+  sendRaw?(ndjson: string): void;
   /** Incoming messages from the backend as an async iterable. */
   readonly messages: AsyncIterable<UnifiedMessage>;
   /** Gracefully close the session. */

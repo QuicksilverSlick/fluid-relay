@@ -154,14 +154,12 @@ describe("AgentSdkSession", () => {
   });
 
   describe("sendRaw", () => {
-    it("throws when called", async () => {
+    it("is not defined (not supported)", async () => {
       const session = await AgentSdkSession.create({
         sessionId: "test-sendraw",
       });
 
-      expect(() => session.sendRaw('{"type":"test"}')).toThrow(
-        "AgentSdkSession does not support raw NDJSON",
-      );
+      expect(session.sendRaw).toBeUndefined();
 
       await session.close();
     });
