@@ -44,6 +44,7 @@ export class AcpSession implements BackendSession {
   private readonly pendingRequests = new Map<number | string, PendingRequest>();
   private pendingPermissionRequestId: number | string | undefined;
   private closed = false;
+  private readonly preBufferedData: string;
   /** Accumulated streaming text for synthesizing an assistant message when the prompt completes. */
   private streamedText = "";
   /** Whether a status_change(running) has been emitted for the current turn. */
@@ -56,6 +57,7 @@ export class AcpSession implements BackendSession {
     initResult: AcpInitializeResult,
     tracer?: MessageTracer,
     errorClassifier?: ErrorClassifier,
+    preBufferedData?: string,
   ) {
     this.sessionId = sessionId;
     this.child = child;
@@ -63,6 +65,7 @@ export class AcpSession implements BackendSession {
     this.initResult = initResult;
     this.tracer = tracer;
     this.errorClassifier = errorClassifier;
+    this.preBufferedData = preBufferedData ?? "";
   }
 
   send(message: UnifiedMessage): void {
@@ -168,16 +171,28 @@ export class AcpSession implements BackendSession {
     }
     this.pendingRequests.clear();
 
-    // Send SIGTERM and wait for exit with timeout
+    // Kill the entire process group so descendant processes (e.g. subprocesses
+    // spawned by the ACP agent that inherited the stdout pipe) are also terminated.
+    // Falls back to child.kill() if the pid is unavailable or the signal call fails.
+    const pid = this.child.pid;
+    const killGroup = (signal: NodeJS.Signals) => {
+      try {
+        if (pid !== undefined) process.kill(-pid, signal);
+        else this.child.kill(signal);
+      } catch {
+        this.child.kill(signal);
+      }
+    };
+
     const exitPromise = new Promise<void>((resolve) => {
       this.child.once("exit", () => resolve());
     });
 
-    this.child.kill("SIGTERM");
+    killGroup("SIGTERM");
 
     const timeout = new Promise<void>((resolve) => {
       setTimeout(() => {
-        this.child.kill("SIGKILL");
+        killGroup("SIGKILL");
         resolve();
       }, 5000);
     });
@@ -190,6 +205,7 @@ export class AcpSession implements BackendSession {
     const codec = this.codec;
     const initResult = this.initResult;
     const session = this;
+    const preBufferedData = this.preBufferedData;
 
     return {
       [Symbol.asyncIterator]() {
@@ -260,7 +276,7 @@ export class AcpSession implements BackendSession {
           }
         };
 
-        const onClose = () => {
+        const finalize = () => {
           done = true;
           if (resolve) {
             const r = resolve;
@@ -269,8 +285,22 @@ export class AcpSession implements BackendSession {
           }
         };
 
+        const onClose = () => finalize();
+
+        // Drive finalize when the child process itself exits, even if grandchild
+        // processes keep the stdout pipe open (which would otherwise prevent onClose
+        // from firing and leave backendConnected=true indefinitely).
+        const onChildExit = () => finalize();
+
         child.stdout?.on("data", onData);
         child.stdout?.on("close", onClose);
+        child.on("exit", onChildExit);
+
+        // Replay any data buffered during the ACP handshake so messages that
+        // arrived in the same chunk as the session/new response are not lost.
+        if (preBufferedData) {
+          onData(Buffer.from(preBufferedData, "utf-8"));
+        }
 
         return {
           next(): Promise<IteratorResult<UnifiedMessage>> {
@@ -298,6 +328,7 @@ export class AcpSession implements BackendSession {
           return(): Promise<IteratorResult<UnifiedMessage>> {
             child.stdout?.removeListener("data", onData);
             child.stdout?.removeListener("close", onClose);
+            child.removeListener("exit", onChildExit);
             done = true;
             return Promise.resolve({
               value: undefined,

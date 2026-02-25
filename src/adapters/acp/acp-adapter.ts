@@ -56,6 +56,11 @@ export class AcpAdapter implements BackendAdapter {
     const child = this.spawnFn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd,
+      // Create a new process group so we can kill all descendant processes
+      // (e.g. subprocesses spawned by the ACP agent that inherit the stdout
+      // pipe, which would otherwise keep the pipe alive after the main
+      // process exits and prevent backend-disconnected detection).
+      detached: true,
     });
 
     if (!child.stdin || !child.stdout) {
@@ -79,14 +84,15 @@ export class AcpAdapter implements BackendAdapter {
       });
       child.stdin.write(codec.encode(initReq));
 
-      const initResult = await waitForResponse<AcpInitializeResult>(
-        child.stdout,
-        codec,
-        initId,
-        tracer,
-        options.sessionId,
-        initializeTimeoutMs,
-      );
+      const { result: initResult, leftover: initLeftover } =
+        await waitForResponse<AcpInitializeResult>(
+          child.stdout,
+          codec,
+          initId,
+          tracer,
+          options.sessionId,
+          initializeTimeoutMs,
+        );
 
       // Create or resume session
       const sessionMethod = options.resume ? "session/load" : "session/new";
@@ -102,22 +108,43 @@ export class AcpAdapter implements BackendAdapter {
       });
       child.stdin.write(codec.encode(sessionReq));
 
-      const sessionResult = await waitForResponse<{ sessionId: string }>(
+      const { result: sessionResult, leftover: sessionLeftover } = await waitForResponse<{
+        sessionId: string;
+      }>(
         child.stdout,
         codec,
         sessionReqId,
         tracer,
         options.sessionId,
         initializeTimeoutMs,
+        initLeftover,
       );
 
       const sessionId = sessionResult.sessionId ?? options.sessionId;
 
-      return new AcpSession(sessionId, child, codec, initResult, tracer, this.errorClassifier);
+      return new AcpSession(
+        sessionId,
+        child,
+        codec,
+        initResult,
+        tracer,
+        this.errorClassifier,
+        sessionLeftover,
+      );
     } catch (err) {
-      // Kill the child process to prevent zombies when handshake fails or times out
-      child.kill("SIGTERM");
-      const killTimer = setTimeout(() => child.kill("SIGKILL"), killGracePeriodMs);
+      // Kill the entire process group to prevent zombies when handshake fails or times out.
+      // Falls back to child.kill() if the pid is unavailable or the signal call fails.
+      const pid = child.pid;
+      const killGroup = (signal: NodeJS.Signals) => {
+        try {
+          if (pid !== undefined) process.kill(-pid, signal);
+          else child.kill(signal);
+        } catch {
+          child.kill(signal);
+        }
+      };
+      killGroup("SIGTERM");
+      const killTimer = setTimeout(() => killGroup("SIGKILL"), killGracePeriodMs);
       child.once("exit", () => clearTimeout(killTimer));
       killTimer.unref();
       throw err;
@@ -125,7 +152,17 @@ export class AcpAdapter implements BackendAdapter {
   }
 }
 
-/** Read lines from stdout until we get a JSON-RPC response matching the given ID. */
+/**
+ * Read lines from stdout until we get a JSON-RPC response matching the given ID.
+ *
+ * Returns the decoded result and any raw data that arrived after the matched
+ * response in the same read chunk (leftover), so the caller can replay it
+ * rather than silently losing messages (e.g. a session/request_permission that
+ * Gemini sends in the same chunk as the session/new response).
+ *
+ * @param initialBuffer - Optional pre-existing data to process before listening
+ *   for new chunks (used to pass leftover from a prior waitForResponse call).
+ */
 async function waitForResponse<T>(
   stdout: NodeJS.ReadableStream,
   codec: JsonRpcCodec,
@@ -133,19 +170,27 @@ async function waitForResponse<T>(
   tracer?: MessageTracer,
   sessionId?: string,
   timeoutMs?: number,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let buffer = "";
+  initialBuffer?: string,
+): Promise<{ result: T; leftover: string }> {
+  return new Promise<{ result: T; leftover: string }>((resolve, reject) => {
+    let buffer = initialBuffer ?? "";
+    let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const onData = (chunk: Buffer) => {
-      buffer += chunk.toString("utf-8");
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
 
+    const processBuffer = () => {
       const lines = buffer.split("\n");
       // Keep the last incomplete line in the buffer
       buffer = lines.pop() ?? "";
 
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         if (!line.trim()) continue;
 
         try {
@@ -155,11 +200,14 @@ async function waitForResponse<T>(
             phase: "handshake_recv",
           });
           if ("id" in msg && msg.id === expectedId) {
-            cleanup();
+            // Collect remaining lines + incomplete buffer as leftover for the next stage
+            const remaining = lines.slice(i + 1);
+            const leftover = remaining.length > 0 ? `${remaining.join("\n")}\n${buffer}` : buffer;
             if ("error" in msg && msg.error) {
-              reject(new Error(`ACP error: ${msg.error.message}`));
+              const errorMsg = msg.error.message;
+              settle(() => reject(new Error(`ACP error: ${errorMsg}`)));
             } else {
-              resolve((msg as { result: T }).result);
+              settle(() => resolve({ result: (msg as { result: T }).result, leftover }));
             }
             return;
           }
@@ -169,14 +217,17 @@ async function waitForResponse<T>(
       }
     };
 
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString("utf-8");
+      processBuffer();
+    };
+
     const onError = (err: Error) => {
-      cleanup();
-      reject(err);
+      settle(() => reject(err));
     };
 
     const onClose = () => {
-      cleanup();
-      reject(new Error("ACP subprocess closed before responding"));
+      settle(() => reject(new Error("ACP subprocess closed before responding")));
     };
 
     const cleanup = () => {
@@ -188,9 +239,14 @@ async function waitForResponse<T>(
 
     if (timeoutMs !== undefined) {
       timer = setTimeout(() => {
-        cleanup();
-        reject(new Error(`ACP handshake timed out after ${timeoutMs}ms`));
+        settle(() => reject(new Error(`ACP handshake timed out after ${timeoutMs}ms`)));
       }, timeoutMs);
+    }
+
+    // Process any pre-existing buffer content before listening for more data
+    if (buffer) {
+      processBuffer();
+      if (settled) return;
     }
 
     stdout.on("data", onData);
