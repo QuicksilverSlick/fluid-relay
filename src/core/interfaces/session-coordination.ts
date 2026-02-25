@@ -4,7 +4,6 @@ import type { MetricsCollector } from "../../interfaces/metrics.js";
 import type { RateLimiter } from "../../interfaces/rate-limiter.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { BridgeEventMap } from "../../types/events.js";
-import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { GitInfoTracker } from "../session/git-info-tracker.js";
 import type { Session } from "../session/session-repository.js";
 import type { SessionRuntime } from "../session/session-runtime.js";
@@ -44,5 +43,4 @@ export interface ConsumerTransportCoordinatorDeps {
   getRuntime: (session: Session) => SessionRuntime;
   routeConsumerMessage: (session: Session, msg: InboundCommand, ws: WebSocketLike) => void;
   maxConsumerMessageSize: number;
-  tracer: MessageTracer;
 }

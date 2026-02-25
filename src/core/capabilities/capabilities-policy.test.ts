@@ -1,41 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockSession, noopLogger } from "../../testing/cli-message-factories.js";
 import { DEFAULT_CONFIG } from "../../types/config.js";
-import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import { CapabilitiesPolicy } from "./capabilities-policy.js";
 
 describe("CapabilitiesPolicy", () => {
   it("sends initialize control_request via backend sendRaw", () => {
-    const broadcaster = {
-      broadcast: vi.fn(),
-      broadcastToParticipants: vi.fn(),
-      sendTo: vi.fn(),
-    } as unknown as ConsumerBroadcaster;
-
-    const policy = new CapabilitiesPolicy(
-      DEFAULT_CONFIG,
-      noopLogger,
-      broadcaster,
-      vi.fn(),
-      (session: any) => ({
-        getState: () => session.data.state,
-        setState: (state: any) => {
-          session.data.state = state;
-        },
-        getPendingInitialize: () => session.pendingInitialize,
-        setPendingInitialize: (pendingInitialize: any) => {
-          session.pendingInitialize = pendingInitialize;
-        },
-        trySendRawToBackend: (ndjson: string) => {
-          if (!session.backendSession) return "no_backend";
-          session.backendSession.sendRaw?.(ndjson);
-          return "sent";
-        },
-        registerCLICommands: (commands: any[]) => {
-          session.registry.registerFromCLI(commands);
-        },
-      }),
-    );
+    const policy = new CapabilitiesPolicy(DEFAULT_CONFIG, noopLogger, (session: any) => ({
+      getState: () => session.data.state,
+      setState: (state: any) => {
+        session.data.state = state;
+      },
+      getPendingInitialize: () => session.pendingInitialize,
+      setPendingInitialize: (pendingInitialize: any) => {
+        session.pendingInitialize = pendingInitialize;
+      },
+      trySendRawToBackend: (ndjson: string) => {
+        if (!session.backendSession) return "no_backend";
+        session.backendSession.sendRaw?.(ndjson);
+        return "sent";
+      },
+      registerCLICommands: (commands: any[]) => {
+        session.registry.registerFromCLI(commands);
+      },
+    }));
 
     const session = createMockSession();
     const sendRaw = vi.fn();

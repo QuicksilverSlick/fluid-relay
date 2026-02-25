@@ -512,14 +512,17 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
 
     // Test watchdog broadcast internal method given to policies
     const reconnectBridge = (mgr as any).reconnectController["deps"]["bridge"];
-    const broadcastSpy = vi.spyOn((mgr as any).broadcaster, "broadcastWatchdogState");
+    const broadcastSpy = vi.spyOn((mgr as any).broadcaster, "broadcast");
 
     // With valid session
     reconnectBridge.broadcastWatchdogState(session.sessionId, {
       gracePeriodMs: 1000,
       startedAt: 0,
     });
-    expect(broadcastSpy).toHaveBeenCalled();
+    expect(broadcastSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: "session_update" }),
+    );
 
     // With invalid session (should not throw, just ignore)
     reconnectBridge.broadcastWatchdogState("invalid", null);
@@ -541,14 +544,18 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const session = await mgr.createSession({ cwd: process.cwd() });
 
     const broadcaster = (mgr as any).broadcaster;
-    const resumeFailedSpy = vi.spyOn(broadcaster, "broadcastResumeFailed");
-    const circuitBreakerSpy = vi.spyOn(broadcaster, "broadcastCircuitBreakerState");
+    const broadcastSpy = vi.spyOn(broadcaster, "broadcast");
 
     const relayHandlers = (mgr as any).relay["deps"].handlers;
 
     // Simulate backend:resume_failed
     relayHandlers.onProcessResumeFailed({ sessionId: session.sessionId });
-    expect(resumeFailedSpy).toHaveBeenCalledWith(expect.anything(), session.sessionId);
+    expect(broadcastSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: "resume_failed" }),
+    );
+
+    broadcastSpy.mockClear();
 
     // Simulate process_exited with circuit breaker state
     relayHandlers.onProcessExited({
@@ -557,10 +564,10 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
       signal: "SIGKILL",
       circuitBreaker: { status: "open", timeUntilResetMs: 5000 },
     });
-    expect(circuitBreakerSpy).toHaveBeenCalledWith(expect.anything(), {
-      status: "open",
-      timeUntilResetMs: 5000,
-    });
+    expect(broadcastSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: "session_update" }),
+    );
 
     await mgr.stop();
   });
@@ -582,10 +589,13 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     expect(mgr.isBackendConnected(session.sessionId)).toBeFalsy();
     expect(mgr.isBackendConnected("missing-session")).toBeFalsy();
 
-    // broadcastProcessOutput is internal (via handleProcessOutput)
-    const broadcastSpy = vi.spyOn((mgr as any).broadcaster, "broadcastProcessOutput");
+    // broadcastProcessOutput is internal (via handleProcessOutput → runtime.process → broadcastToParticipants)
+    const broadcastSpy = vi.spyOn((mgr as any).broadcaster, "broadcastToParticipants");
     (mgr as any).handleProcessOutput(session.sessionId, "stdout", "test");
-    expect(broadcastSpy).toHaveBeenCalled();
+    expect(broadcastSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: "process_output" }),
+    );
 
     // executeSlashCommand
     const slashSpy = vi.spyOn(mgr, "executeSlashCommand");
@@ -999,10 +1009,10 @@ describe("SessionCoordinator wiring", () => {
   });
 
   describe("process output forwarding", () => {
-    it("forwards stdout with redaction to broadcastProcessOutput", () => {
+    it("forwards stdout with redaction to broadcastToParticipants", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn((mgr as any).broadcaster, "broadcastProcessOutput")
+        .spyOn((mgr as any).broadcaster, "broadcastToParticipants")
         .mockImplementation(() => {});
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
@@ -1013,15 +1023,14 @@ describe("SessionCoordinator wiring", () => {
 
       expect(broadcastSpy).toHaveBeenCalledWith(
         expect.objectContaining({ id: info.sessionId }),
-        "stdout",
-        expect.any(String),
+        expect.objectContaining({ type: "process_output", stream: "stdout" }),
       );
     });
 
-    it("forwards stderr to broadcastProcessOutput", () => {
+    it("forwards stderr to broadcastToParticipants", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn((mgr as any).broadcaster, "broadcastProcessOutput")
+        .spyOn((mgr as any).broadcaster, "broadcastToParticipants")
         .mockImplementation(() => {});
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
@@ -1032,8 +1041,7 @@ describe("SessionCoordinator wiring", () => {
 
       expect(broadcastSpy).toHaveBeenCalledWith(
         expect.objectContaining({ id: info.sessionId }),
-        "stderr",
-        expect.any(String),
+        expect.objectContaining({ type: "process_output", stream: "stderr" }),
       );
     });
   });
@@ -1042,7 +1050,7 @@ describe("SessionCoordinator wiring", () => {
     it("derives name from first user message, truncates at 50, and broadcasts", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn((mgr as any).broadcaster, "broadcastNameUpdate")
+        .spyOn((mgr as any).broadcaster, "broadcast")
         .mockImplementation(() => {});
       const setNameSpy = vi.spyOn(mgr.launcher, "setSessionName").mockImplementation(() => {});
 
@@ -1053,11 +1061,12 @@ describe("SessionCoordinator wiring", () => {
         firstUserMessage: longMessage,
       });
 
-      expect(broadcastSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ id: info.sessionId }),
-        expect.stringContaining("..."),
+      const nameUpdateCall = broadcastSpy.mock.calls.find(
+        ([, msg]) => (msg as any).type === "session_name_update",
       );
-      const calledName = broadcastSpy.mock.calls[0][1];
+      expect(nameUpdateCall).toBeDefined();
+      const calledName = (nameUpdateCall![1] as any).name;
+      expect(calledName).toContain("...");
       expect(calledName.length).toBeLessThanOrEqual(50);
       expect(setNameSpy).toHaveBeenCalledWith(info.sessionId, calledName);
     });
@@ -1065,7 +1074,7 @@ describe("SessionCoordinator wiring", () => {
     it("skips naming if session already has a name", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn((mgr as any).broadcaster, "broadcastNameUpdate")
+        .spyOn((mgr as any).broadcaster, "broadcast")
         .mockImplementation(() => {});
 
       const info = mgr.launcher.launch({ cwd: "/tmp" });
@@ -1076,7 +1085,10 @@ describe("SessionCoordinator wiring", () => {
         firstUserMessage: "Hello world",
       });
 
-      expect(broadcastSpy).not.toHaveBeenCalled();
+      const nameUpdateCall = broadcastSpy.mock.calls.find(
+        ([, msg]) => (msg as any).type === "session_name_update",
+      );
+      expect(nameUpdateCall).toBeUndefined();
     });
   });
 
@@ -1084,7 +1096,7 @@ describe("SessionCoordinator wiring", () => {
     it("deletes processLogBuffers when session is closed", () => {
       mgr.start();
       const broadcastSpy = vi
-        .spyOn((mgr as any).broadcaster, "broadcastProcessOutput")
+        .spyOn((mgr as any).broadcaster, "broadcastToParticipants")
         .mockImplementation(() => {});
       const info = mgr.launcher.launch({ cwd: "/tmp" });
 
@@ -1094,8 +1106,11 @@ describe("SessionCoordinator wiring", () => {
       });
       expect(broadcastSpy).toHaveBeenCalledWith(
         expect.objectContaining({ id: info.sessionId }),
-        "stdout",
-        expect.stringContaining("line-before-close"),
+        expect.objectContaining({
+          type: "process_output",
+          stream: "stdout",
+          data: expect.stringContaining("line-before-close"),
+        }),
       );
 
       (mgr as any)._bridgeEmitter.emit("session:closed" as any, { sessionId: info.sessionId });
@@ -1107,8 +1122,11 @@ describe("SessionCoordinator wiring", () => {
       });
       expect(broadcastSpy).toHaveBeenCalledWith(
         expect.objectContaining({ id: info.sessionId }),
-        "stdout",
-        expect.stringContaining("line-after-close"),
+        expect.objectContaining({
+          type: "process_output",
+          stream: "stdout",
+          data: expect.stringContaining("line-after-close"),
+        }),
       );
     });
   });

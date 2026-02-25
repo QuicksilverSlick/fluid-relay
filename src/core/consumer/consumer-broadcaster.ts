@@ -131,22 +131,30 @@ export class ConsumerBroadcaster {
     this.broadcast(session, { type: "presence_update", consumers });
   }
 
-  /** Broadcast a session name update. */
+  /**
+   * @deprecated Use runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "SESSION_RENAMED", name } }) instead.
+   */
   broadcastNameUpdate(session: Session, name: string): void {
     this.broadcast(session, { type: "session_name_update", name });
   }
 
-  /** Broadcast resume_failed to all consumers. */
+  /**
+   * @deprecated Use runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "RESUME_FAILED" } }) instead.
+   */
   broadcastResumeFailed(session: Session, sessionId: string): void {
     this.broadcast(session, { type: "resume_failed", sessionId });
   }
 
-  /** Broadcast process output to participants only. */
+  /**
+   * @deprecated Use runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "PROCESS_OUTPUT_RECEIVED", stream, data } }) instead.
+   */
   broadcastProcessOutput(session: Session, stream: "stdout" | "stderr", data: string): void {
     this.broadcastToParticipants(session, { type: "process_output", stream, data });
   }
 
-  /** Broadcast watchdog state update. */
+  /**
+   * @deprecated Use runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "WATCHDOG_STATE_CHANGED", watchdog } }) instead.
+   */
   broadcastWatchdogState(
     session: Session,
     watchdog: { gracePeriodMs: number; startedAt: number } | null,
@@ -157,7 +165,9 @@ export class ConsumerBroadcaster {
     });
   }
 
-  /** Broadcast circuit breaker state update. */
+  /**
+   * @deprecated Use runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "CIRCUIT_BREAKER_CHANGED", circuitBreaker } }) instead.
+   */
   broadcastCircuitBreakerState(
     session: Session,
     circuitBreaker: { state: string; failureCount: number; recoveryTimeRemainingMs: number },

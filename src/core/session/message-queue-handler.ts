@@ -8,7 +8,7 @@
 
 import type { ConsumerIdentity } from "../../interfaces/auth.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
-import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionData } from "../session/session-data.js";
 import type { QueuedMessage, Session } from "./session-repository.js";
 import type { SessionRuntime } from "./session-runtime.js";
@@ -27,10 +27,9 @@ type SendUserMessage = (
 
 export class MessageQueueHandler {
   constructor(
-    private broadcaster: ConsumerBroadcaster,
+    private sendTo: (ws: WebSocketLike, message: ConsumerMessage) => void,
     private sendUserMessage: SendUserMessage,
     private getRuntime: (session: Session) => SessionRuntime,
-    private onQueuedMessageSet?: (session: Session) => void,
   ) {}
 
   private getLastStatus(session: Session): SessionData["lastStatus"] {
@@ -46,14 +45,6 @@ export class MessageQueueHandler {
 
   private getQueuedMessage(session: Session): QueuedMessage | null {
     return this.getRuntime(session).getQueuedMessage();
-  }
-
-  private setQueuedMessage(session: Session, queued: QueuedMessage | null): void {
-    this.getRuntime(session).process({
-      type: "SYSTEM_SIGNAL",
-      signal: { kind: "QUEUED_MESSAGE_UPDATED", message: queued },
-    });
-    this.onQueuedMessageSet?.(session);
   }
 
   private getConsumerIdentity(session: Session, ws: WebSocketLike): ConsumerIdentity | undefined {
@@ -72,7 +63,7 @@ export class MessageQueueHandler {
     // Enforce single-slot semantics before any fast-path dispatch. This keeps
     // restored queue state authoritative after restart.
     if (this.getQueuedMessage(session)) {
-      this.broadcaster.sendTo(ws, {
+      this.sendTo(ws, {
         type: "error",
         message: "A message is already queued for this session",
       });
@@ -93,7 +84,13 @@ export class MessageQueueHandler {
     }
 
     const identity = this.getConsumerIdentity(session, ws);
-    if (!identity) return;
+    if (!identity) {
+      this.sendTo(ws, {
+        type: "error",
+        message: "Cannot queue message: consumer identity not found. Please reconnect.",
+      } as ConsumerMessage);
+      return;
+    }
 
     const queued: QueuedMessage = {
       consumerId: identity.userId,
@@ -102,15 +99,9 @@ export class MessageQueueHandler {
       images: msg.images,
       queuedAt: Date.now(),
     };
-    this.setQueuedMessage(session, queued);
-
-    this.broadcaster.broadcast(session, {
-      type: "message_queued",
-      consumer_id: identity.userId,
-      display_name: identity.displayName,
-      content: msg.content,
-      images: msg.images,
-      queued_at: queued.queuedAt,
+    this.getRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "MESSAGE_QUEUED", queued },
     });
   }
 
@@ -128,23 +119,16 @@ export class MessageQueueHandler {
 
     const identity = this.getConsumerIdentity(session, ws);
     if (!identity || identity.userId !== existing.consumerId) {
-      this.broadcaster.sendTo(ws, {
+      this.sendTo(ws, {
         type: "error",
         message: "Only the message author can edit a queued message",
       });
       return;
     }
 
-    this.setQueuedMessage(session, {
-      ...existing,
-      content: msg.content,
-      images: msg.images,
-    });
-
-    this.broadcaster.broadcast(session, {
-      type: "queued_message_updated",
-      content: msg.content,
-      images: msg.images,
+    this.getRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_EDITED", content: msg.content, images: msg.images },
     });
   }
 
@@ -154,22 +138,26 @@ export class MessageQueueHandler {
 
     const identity = this.getConsumerIdentity(session, ws);
     if (!identity || identity.userId !== existing.consumerId) {
-      this.broadcaster.sendTo(ws, {
+      this.sendTo(ws, {
         type: "error",
         message: "Only the message author can cancel a queued message",
       });
       return;
     }
 
-    this.setQueuedMessage(session, null);
-    this.broadcaster.broadcast(session, { type: "queued_message_cancelled" });
+    this.getRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_CANCELLED" },
+    });
   }
 
   autoSendQueuedMessage(session: Session): void {
     const queued = this.getQueuedMessage(session);
     if (!queued) return;
-    this.setQueuedMessage(session, null);
-    this.broadcaster.broadcast(session, { type: "queued_message_sent" });
+    this.getRuntime(session).process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_SENT" },
+    });
     this.sendUserMessage(session.id, queued.content, {
       images: queued.images,
     });

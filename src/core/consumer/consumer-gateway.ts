@@ -123,18 +123,6 @@ export class ConsumerGateway {
       return;
     }
 
-    const traceId = (result.data as Record<string, unknown>).traceId as string | undefined;
-    const hasRequestId = msg.type === "slash_command" || msg.type === "permission_response";
-    const requestId = hasRequestId ? msg.request_id : undefined;
-    const command = msg.type === "slash_command" ? msg.command : undefined;
-    this.deps.tracer.recv("bridge", msg.type, result.data, {
-      sessionId,
-      traceId,
-      requestId,
-      command,
-      phase: "recv",
-    });
-
     this.deps.emit("message:inbound", { sessionId, message: msg });
     this.deps.routeConsumerMessage(session, msg, ws);
   }
@@ -158,11 +146,6 @@ export class ConsumerGateway {
         userId: identity.userId,
       });
     }
-    this.deps.emit("consumer:disconnected", {
-      sessionId,
-      consumerCount: rt.getConsumerCount(),
-      identity,
-    });
     this.deps.broadcaster.broadcastPresence(session);
   }
 
@@ -249,18 +232,6 @@ export class ConsumerGateway {
     }
 
     this.deps.broadcaster.broadcastPresence(session);
-
-    this.deps.emit("consumer:authenticated", {
-      sessionId,
-      userId: identity.userId,
-      displayName: identity.displayName,
-      role: identity.role,
-    });
-    this.deps.emit("consumer:connected", {
-      sessionId,
-      consumerCount: rt.getConsumerCount(),
-      identity,
-    });
 
     if (rt.isBackendConnected()) {
       this.deps.broadcaster.sendTo(ws, { type: "cli_connected" });

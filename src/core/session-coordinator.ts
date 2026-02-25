@@ -228,23 +228,18 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     });
 
     // ── Message plane ────────────────────────────────────────────────────────
-    this.capabilitiesPolicy = new CapabilitiesPolicy(
-      this.config,
-      this.logger,
-      this.broadcaster,
-      this.emitEvent,
-      (session: Session) => this.getOrCreateRuntime(session),
+    this.capabilitiesPolicy = new CapabilitiesPolicy(this.config, this.logger, (session: Session) =>
+      this.getOrCreateRuntime(session),
     );
 
     this.queueHandler = new MessageQueueHandler(
-      this.broadcaster,
+      (ws, message) => this.broadcaster.sendTo(ws, message),
       (
         sessionId: string,
         content: string,
         opts?: { images?: { media_type: string; data: string }[] },
       ) => this.sendUserMessageForSession(sessionId, content, opts),
       (session: Session) => this.getOrCreateRuntime(session),
-      (session: Session) => this.store.persistSync(session),
     );
 
     // ── Slash service ────────────────────────────────────────────────────────
@@ -305,7 +300,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     ]);
 
     this.slashService = new SlashCommandService({
-      tracer: this.tracer,
       now: () => Date.now(),
       generateTraceId: () => generateTraceId(),
       generateSlashRequestId: () => generateSlashRequestId(),
@@ -357,7 +351,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
           this.getOrCreateRuntime(s).process({ type: "INBOUND_COMMAND", command: msg, ws }),
         ),
       maxConsumerMessageSize: MAX_CONSUMER_MESSAGE_SIZE,
-      tracer: this.tracer,
     });
 
     // ── Transport + policies ─────────────────────────────────────────────────
@@ -398,7 +391,11 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         watchdog: { gracePeriodMs: number; startedAt: number } | null,
       ) => {
         const session = this.store.get(sessionId);
-        if (session) this.broadcaster.broadcastWatchdogState(session, watchdog);
+        if (session)
+          this.getOrCreateRuntime(session).process({
+            type: "SYSTEM_SIGNAL",
+            signal: { kind: "WATCHDOG_STATE_CHANGED", watchdog },
+          });
       },
     };
 
@@ -482,7 +479,11 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         },
         onProcessResumeFailed: (payload) => {
           const session = this.store.get(payload.sessionId);
-          if (session) this.broadcaster.broadcastResumeFailed(session, payload.sessionId);
+          if (session)
+            this.getOrCreateRuntime(session).process({
+              type: "SYSTEM_SIGNAL",
+              signal: { kind: "RESUME_FAILED", sessionId: payload.sessionId },
+            });
         },
         onProcessStdout: (payload) => {
           this.handleProcessOutput(payload.sessionId, "stdout", payload.data);
@@ -493,7 +494,10 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         onProcessExited: (payload) => {
           const session = this.store.get(payload.sessionId);
           if (session && payload.circuitBreaker) {
-            this.broadcaster.broadcastCircuitBreakerState(session, payload.circuitBreaker);
+            this.getOrCreateRuntime(session).process({
+              type: "SYSTEM_SIGNAL",
+              signal: { kind: "CIRCUIT_BREAKER_CHANGED", circuitBreaker: payload.circuitBreaker },
+            });
           }
         },
         onFirstTurnCompleted: (payload) => {
@@ -670,7 +674,10 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     this.registry.setSessionName(sessionId, name);
     const session = this.store.get(sessionId);
     if (session) {
-      this.broadcaster.broadcastNameUpdate(session, name);
+      this.getOrCreateRuntime(session).process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "SESSION_RENAMED", name },
+      });
     }
     this._bridgeEmitter.emit("session:renamed", { sessionId, name });
     return { ...existing, name };
@@ -882,7 +889,10 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     const redacted = this.processLogService.append(sessionId, stream, data);
     const session = this.store.get(sessionId);
     if (session) {
-      this.broadcaster.broadcastProcessOutput(session, stream, redacted);
+      this.getOrCreateRuntime(session).process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "PROCESS_OUTPUT_RECEIVED", stream, data: redacted },
+      });
     }
   }
 

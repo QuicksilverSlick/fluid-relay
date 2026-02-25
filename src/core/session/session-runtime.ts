@@ -21,17 +21,15 @@ import type {
   PermissionRequest,
 } from "../../types/cli-messages.js";
 
-import type { BridgeEventMap } from "../../types/events.js";
-import type { SessionSnapshot, SessionState } from "../../types/session-state.js";
+import type { SessionSnapshot } from "../../types/session-state.js";
 import type { BackendConnector } from "../backend/backend-connector.js";
 import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
+import { normalizeInbound } from "../messaging/inbound-normalizer.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
-import { tracedNormalizeInbound } from "../messaging/message-tracing-utils.js";
 import type { SessionData } from "../session/session-data.js";
 import type { SlashCommandService } from "../slash/slash-command-service.js";
-import { diffTeamState } from "../team/team-event-differ.js";
 import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { executeEffects } from "./effect-executor.js";
@@ -39,7 +37,6 @@ import { applyGitInfo, type GitInfoTracker } from "./git-info-tracker.js";
 import type { MessageQueueHandler } from "./message-queue-handler.js";
 import type { SessionEvent, SystemSignal } from "./session-event.js";
 import type { LifecycleState } from "./session-lifecycle.js";
-import { isLifecycleTransitionAllowed } from "./session-lifecycle.js";
 import { sessionReducer } from "./session-reducer.js";
 import type { Session, SessionRepository } from "./session-repository.js";
 
@@ -113,16 +110,6 @@ export class SessionRuntime {
         }
       }, 50);
     }
-  }
-
-  /** Flush immediately — used for critical metadata changes (adapter name, user messages). */
-  private persistNow(): void {
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
-    this.dirty = false;
-    this.deps.store.persist(this.session);
   }
 
   getLifecycleState(): LifecycleState {
@@ -314,22 +301,6 @@ export class SessionRuntime {
     return limiter.tryConsume();
   }
 
-  private transitionLifecycle(next: LifecycleState, reason: string): boolean {
-    const current = this.session.data.lifecycle;
-    if (current === next) return true;
-    if (!isLifecycleTransitionAllowed(current, next)) {
-      this.deps.logger.warn("Session lifecycle invalid transition", {
-        sessionId: this.session.id,
-        current,
-        next,
-        reason,
-      });
-      return false;
-    }
-    this.session = { ...this.session, data: { ...this.session.data, lifecycle: next } };
-    return true;
-  }
-
   private handleInboundCommand(msg: InboundCommand, ws: WebSocketLike): void {
     this.touchActivity();
     switch (msg.type) {
@@ -426,53 +397,41 @@ export class SessionRuntime {
   }
 
   /**
-   * I/O side of user message handling: normalizes the message, transitions
-   * the lifecycle, sends to backend (or queues it), and persists.
-   * Called after the reducer has already applied the pure state mutations.
-   * Returns `false` if the lifecycle transition was rejected.
+   * I/O side of user message handling: normalizes the message, sends to
+   * backend (or queues it via PENDING_MESSAGE_ADDED signal).
+   * Called after the reducer has already applied the pure state mutations
+   * (lastStatus, lifecycle, messageHistory).
    */
   private sendUserMessageIO(content: string, options?: RuntimeSendUserMessageOptions): boolean {
-    const unified = tracedNormalizeInbound(
-      this.deps.tracer,
-      {
-        type: "user_message",
-        content,
-        session_id: options?.sessionIdOverride || this.session.data.backendSessionId || "",
-        images: options?.images,
-      },
-      this.session.id,
-      {
-        traceId: options?.traceId,
-        requestId: options?.slashRequestId,
-        command: options?.slashCommand,
-      },
-    );
-    if (!unified) return true;
-
-    const backendSession = this.session.backendSession;
-    const lifecycleTransitioned = backendSession
-      ? this.transitionLifecycle("active", "inbound:user_message")
-      : this.transitionLifecycle("awaiting_backend", "inbound:user_message:queued");
-    if (!lifecycleTransitioned) {
-      return false;
+    const unified = normalizeInbound({
+      type: "user_message",
+      content,
+      session_id: options?.sessionIdOverride || this.session.data.backendSessionId || "",
+      images: options?.images,
+    });
+    if (!unified) {
+      this.deps.logger.error("normalizeInbound returned null for user_message — message dropped", {
+        sessionId: this.session.id,
+        contentLength: content.length,
+      });
+      return true;
     }
+    if (options?.traceId) unified.metadata.trace_id = options.traceId;
+    if (options?.slashRequestId) unified.metadata.slash_request_id = options.slashRequestId;
+    if (options?.slashCommand) unified.metadata.slash_command = options.slashCommand;
 
-    if (backendSession) {
+    if (this.session.backendSession) {
       executeEffects(
         [{ type: "SEND_TO_BACKEND", message: unified }],
         this.session,
         this.effectDeps(),
       );
     } else {
-      this.session = {
-        ...this.session,
-        data: {
-          ...this.session.data,
-          pendingMessages: [...this.session.data.pendingMessages, unified],
-        },
-      };
+      this.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "PENDING_MESSAGE_ADDED", message: unified },
+      });
     }
-    this.persistNow();
     return true;
   }
 
@@ -488,39 +447,33 @@ export class SessionRuntime {
       );
       return;
     }
-    const updatedPerms = new Map(this.session.data.pendingPermissions);
-    updatedPerms.delete(requestId);
-    this.session = {
-      ...this.session,
-      data: { ...this.session.data, pendingPermissions: updatedPerms },
-    };
-    this.deps.emitEvent("permission:resolved", {
-      sessionId: this.session.id,
-      requestId,
-      behavior,
+    this.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "PERMISSION_RESOLVED", requestId, behavior },
     });
 
-    const unified = tracedNormalizeInbound(
-      this.deps.tracer,
-      {
-        type: "permission_response",
-        request_id: requestId,
-        behavior,
-        updated_input: options?.updatedInput,
-        updated_permissions: options?.updatedPermissions as
-          | import("../../types/cli-messages.js").PermissionUpdate[]
-          | undefined,
-        message: options?.message,
-      },
-      this.session.id,
-    );
-    if (unified) {
-      executeEffects(
-        [{ type: "SEND_TO_BACKEND", message: unified }],
-        this.session,
-        this.effectDeps(),
+    const unified = normalizeInbound({
+      type: "permission_response",
+      request_id: requestId,
+      behavior,
+      updated_input: options?.updatedInput,
+      updated_permissions: options?.updatedPermissions as
+        | import("../../types/cli-messages.js").PermissionUpdate[]
+        | undefined,
+      message: options?.message,
+    });
+    if (!unified) {
+      this.deps.logger.error(
+        "normalizeInbound returned null for permission_response — response dropped",
+        { sessionId: this.session.id, requestId },
       );
+      return;
     }
+    executeEffects(
+      [{ type: "SEND_TO_BACKEND", message: unified }],
+      this.session,
+      this.effectDeps(),
+    );
   }
 
   sendInterrupt(): void {
@@ -557,6 +510,7 @@ export class SessionRuntime {
       backendConnector: this.deps.backendConnector,
       store: this.deps.store,
       gitTracker: this.deps.gitTracker,
+      tracer: this.deps.tracer,
     };
   }
 
@@ -607,11 +561,29 @@ export class SessionRuntime {
         break;
       case "CONSUMER_CONNECTED":
         this.session.consumerSockets.set(signal.ws, signal.identity);
+        this.deps.emitEvent("consumer:authenticated", {
+          sessionId: this.session.id,
+          userId: signal.identity.userId,
+          displayName: signal.identity.displayName,
+          role: signal.identity.role,
+        });
+        this.deps.emitEvent("consumer:connected", {
+          sessionId: this.session.id,
+          consumerCount: this.session.consumerSockets.size,
+          identity: signal.identity,
+        });
         break;
-      case "CONSUMER_DISCONNECTED":
+      case "CONSUMER_DISCONNECTED": {
+        const disconnectedIdentity = this.session.consumerSockets.get(signal.ws);
         this.session.consumerSockets.delete(signal.ws);
         this.session.consumerRateLimiters.delete(signal.ws);
+        this.deps.emitEvent("consumer:disconnected", {
+          sessionId: this.session.id,
+          consumerCount: this.session.consumerSockets.size,
+          identity: disconnectedIdentity,
+        });
         break;
+      }
       case "PASSTHROUGH_ENQUEUED":
         this.session.pendingPassthroughs.push(signal.entry);
         break;
@@ -629,14 +601,22 @@ export class SessionRuntime {
   }
 
   private sendControlRequest(msg: InboundCommand): void {
-    const unified = tracedNormalizeInbound(this.deps.tracer, msg, this.session.id);
-    if (unified) {
-      executeEffects(
-        [{ type: "SEND_TO_BACKEND", message: unified }],
-        this.session,
-        this.effectDeps(),
+    const unified = normalizeInbound(msg);
+    if (!unified) {
+      this.deps.logger.error(
+        "normalizeInbound returned null for control request — request dropped",
+        {
+          sessionId: this.session.id,
+          msgType: msg.type,
+        },
       );
+      return;
     }
+    executeEffects(
+      [{ type: "SEND_TO_BACKEND", message: unified }],
+      this.session,
+      this.effectDeps(),
+    );
   }
 
   private handleBackendMessage(msg: UnifiedMessage): void {
@@ -685,10 +665,17 @@ export class SessionRuntime {
     if (this.session.data.state.cwd && this.deps.gitResolver) {
       const gitInfo = this.deps.gitResolver.resolve(this.session.data.state.cwd);
       if (gitInfo) {
-        this.session = {
-          ...this.session,
-          data: { ...this.session.data, state: applyGitInfo(this.session.data.state, gitInfo) },
-        };
+        const { git_branch, is_worktree, repo_root, git_ahead, git_behind } = applyGitInfo(
+          this.session.data.state,
+          gitInfo,
+        );
+        this.process({
+          type: "SYSTEM_SIGNAL",
+          signal: {
+            kind: "STATE_PATCHED",
+            patch: { git_branch, is_worktree, repo_root, git_ahead, git_behind },
+          },
+        });
       }
     }
 
@@ -734,9 +721,9 @@ export class SessionRuntime {
     // refreshGitInfo already calls patchState → process(STATE_PATCHED) internally.
     const gitUpdate = this.deps.gitTracker.refreshGitInfo(this.session);
     if (gitUpdate) {
-      this.deps.broadcaster.broadcast(this.session, {
-        type: "session_update",
-        session: gitUpdate,
+      this.process({
+        type: "SYSTEM_SIGNAL",
+        signal: { kind: "STATE_PATCHED", patch: gitUpdate, broadcast: true },
       });
     }
   }
@@ -744,18 +731,15 @@ export class SessionRuntime {
   private emitTeamEvents(prevTeam: TeamState | undefined): void {
     const currentTeam = this.session.data.state.team;
     if (prevTeam === currentTeam) return;
-
-    // Broadcast team update
-    this.deps.broadcaster.broadcast(this.session, {
-      type: "session_update",
-      session: { team: currentTeam ?? null } as Partial<SessionState>,
+    this.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "TEAM_STATE_DIFFED",
+        prevTeam,
+        currentTeam,
+        sessionId: this.session.id,
+      },
     });
-
-    // Diff and emit internal events
-    const events = diffTeamState(this.session.id, prevTeam, currentTeam);
-    for (const event of events) {
-      this.deps.emitEvent(event.type, event.payload as BridgeEventMap[keyof BridgeEventMap]);
-    }
   }
 
   private handleSlashCommand(msg: Extract<InboundCommand, { type: "slash_command" }>): void {

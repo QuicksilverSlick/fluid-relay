@@ -671,11 +671,12 @@ describe("sessionReducer INBOUND_COMMAND", () => {
     expect(next.lastStatus).toBe("running");
     expect(next.messageHistory).toHaveLength(1);
     expect(next.messageHistory[0]).toMatchObject({ type: "user_message", content: "hi" });
-    expect(effects).toHaveLength(1);
+    expect(effects).toHaveLength(2);
     expect(effects[0]).toMatchObject({
       type: "BROADCAST",
       message: { type: "user_message", content: "hi" },
     });
+    expect(effects[1]).toMatchObject({ type: "PERSIST_NOW" });
   });
 
   it("returns data unchanged and empty effects for user_message when lifecycle is closing", () => {
@@ -718,5 +719,195 @@ describe("sessionReducer INBOUND_COMMAND", () => {
     );
     expect(next.messageHistory).toHaveLength(1);
     expect(next.messageHistory[0]).toMatchObject({ content: "new" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SystemSignal reducer tests (Phase 2 + Phase 5 signal variants)
+// ---------------------------------------------------------------------------
+
+const mockQueued = {
+  consumerId: "u1",
+  displayName: "Alice",
+  content: "original content",
+  queuedAt: 1000,
+};
+
+describe("systemSignal — queued message signals", () => {
+  it("QUEUED_MESSAGE_SENT clears queuedMessage and returns BROADCAST + PERSIST_NOW", () => {
+    const data = { ...baseData(), queuedMessage: mockQueued };
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_SENT" },
+    });
+    expect(next.queuedMessage).toBeNull();
+    expect(effects).toHaveLength(2);
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST",
+      message: { type: "queued_message_sent" },
+    });
+    expect(effects[1]).toMatchObject({ type: "PERSIST_NOW" });
+  });
+
+  it("QUEUED_MESSAGE_SENT is a no-op when queuedMessage is null", () => {
+    const data = { ...baseData(), queuedMessage: null };
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_SENT" },
+    });
+    expect(next).toBe(data);
+    expect(effects).toHaveLength(0);
+  });
+
+  it("QUEUED_MESSAGE_EDITED is a no-op when queuedMessage is null", () => {
+    const data = { ...baseData(), queuedMessage: null };
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_EDITED", content: "updated" },
+    });
+    expect(next).toBe(data);
+    expect(effects).toHaveLength(0);
+  });
+
+  it("QUEUED_MESSAGE_EDITED updates content and returns BROADCAST + PERSIST_NOW", () => {
+    const data = { ...baseData(), queuedMessage: mockQueued };
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_EDITED", content: "edited content" },
+    });
+    expect(next.queuedMessage?.content).toBe("edited content");
+    expect(effects.some((e) => e.type === "BROADCAST")).toBe(true);
+    expect(effects.some((e) => e.type === "PERSIST_NOW")).toBe(true);
+  });
+
+  it("QUEUED_MESSAGE_CANCELLED is a no-op when queuedMessage is null", () => {
+    const data = { ...baseData(), queuedMessage: null };
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_CANCELLED" },
+    });
+    expect(next).toBe(data);
+    expect(effects).toHaveLength(0);
+  });
+
+  it("QUEUED_MESSAGE_CANCELLED clears queuedMessage and returns BROADCAST + PERSIST_NOW", () => {
+    const data = { ...baseData(), queuedMessage: mockQueued };
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "QUEUED_MESSAGE_CANCELLED" },
+    });
+    expect(next.queuedMessage).toBeNull();
+    expect(
+      effects.some(
+        (e) => e.type === "BROADCAST" && (e as any).message.type === "queued_message_cancelled",
+      ),
+    ).toBe(true);
+    expect(effects.some((e) => e.type === "PERSIST_NOW")).toBe(true);
+  });
+});
+
+describe("systemSignal — Phase 2 broadcast signals", () => {
+  it("WATCHDOG_STATE_CHANGED returns BROADCAST_SESSION_UPDATE with watchdog patch", () => {
+    const watchdog = { gracePeriodMs: 5000, startedAt: 1000 };
+    const data = baseData();
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "WATCHDOG_STATE_CHANGED", watchdog },
+    });
+    expect(next).toBe(data); // no state mutation — pure broadcast only
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({ type: "BROADCAST_SESSION_UPDATE", patch: { watchdog } });
+  });
+
+  it("RESUME_FAILED returns BROADCAST with resume_failed message", () => {
+    const [, effects] = sessionReducer(baseData(), {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "RESUME_FAILED" },
+    });
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({ type: "BROADCAST", message: { type: "resume_failed" } });
+  });
+
+  it("SESSION_RENAMED returns BROADCAST with session_name_update message", () => {
+    const [, effects] = sessionReducer(baseData(), {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "SESSION_RENAMED", name: "My Session" },
+    });
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST",
+      message: { type: "session_name_update", name: "My Session" },
+    });
+  });
+
+  it("PROCESS_OUTPUT_RECEIVED returns BROADCAST_TO_PARTICIPANTS with process_output message", () => {
+    const [, effects] = sessionReducer(baseData(), {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "PROCESS_OUTPUT_RECEIVED", stream: "stdout", data: "hello\n" },
+    });
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST_TO_PARTICIPANTS",
+      message: { type: "process_output", stream: "stdout", data: "hello\n" },
+    });
+  });
+});
+
+describe("systemSignal — STATE_PATCHED broadcast flag", () => {
+  it("STATE_PATCHED without broadcast flag produces no broadcast effect", () => {
+    const [, effects] = sessionReducer(baseData(), {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "STATE_PATCHED", patch: { model: "new-model" } as any },
+    });
+    expect(effects).toHaveLength(0);
+  });
+
+  it("STATE_PATCHED with broadcast:true emits BROADCAST_SESSION_UPDATE", () => {
+    const [, effects] = sessionReducer(baseData(), {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "STATE_PATCHED", patch: { model: "new-model" } as any, broadcast: true },
+    });
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({
+      type: "BROADCAST_SESSION_UPDATE",
+      patch: { model: "new-model" },
+    });
+  });
+});
+
+describe("systemSignal — PENDING_MESSAGE_ADDED", () => {
+  it("transitions lifecycle to awaiting_backend when allowed and appends message", () => {
+    // baseData() has lifecycle "active"; active→awaiting_backend is the real-world path
+    // (user_message reducer transitions idle→active first, then PENDING_MESSAGE_ADDED fires)
+    const data = baseData();
+    const message = createUnifiedMessage({
+      type: "user_message",
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+      metadata: {},
+    });
+    const [next, effects] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "PENDING_MESSAGE_ADDED", message },
+    });
+    expect(next.lifecycle).toBe("awaiting_backend");
+    expect(next.pendingMessages).toHaveLength(1);
+    expect(effects).toContainEqual({ type: "PERSIST_NOW" });
+  });
+
+  it("keeps lifecycle unchanged when transition is not allowed (e.g. closing)", () => {
+    const data = { ...baseData(), lifecycle: "closing" as const };
+    const message = createUnifiedMessage({
+      type: "user_message",
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+      metadata: {},
+    });
+    const [next] = sessionReducer(data, {
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "PENDING_MESSAGE_ADDED", message },
+    });
+    expect(next.lifecycle).toBe("closing");
+    expect(next.pendingMessages).toHaveLength(1);
   });
 });

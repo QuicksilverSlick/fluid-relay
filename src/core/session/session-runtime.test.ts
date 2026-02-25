@@ -87,7 +87,7 @@ describe("SessionRuntime", () => {
   it("handles user_message with optimistic running state", () => {
     const session = createMockSession({
       id: "s1",
-      data: { lastStatus: null },
+      data: { lastStatus: null, lifecycle: "idle" },
       backendSession: { send: vi.fn() } as any,
     });
     const deps = makeDeps();
@@ -901,6 +901,58 @@ describe("SessionRuntime", () => {
     });
     expect(session.consumerSockets.has(ws)).toBe(false);
     expect(session.consumerRateLimiters.has(ws)).toBe(false);
+  });
+
+  it("emits consumer:authenticated and consumer:connected events on CONSUMER_CONNECTED", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+    const ws = createTestSocket();
+
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws,
+        identity: { userId: "u1", displayName: "User One", role: "participant", sessionId: "s1" },
+      },
+    });
+
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      "consumer:authenticated",
+      expect.objectContaining({ sessionId: "s1", userId: "u1", role: "participant" }),
+    );
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      "consumer:connected",
+      expect.objectContaining({ sessionId: "s1", consumerCount: 1 }),
+    );
+  });
+
+  it("emits consumer:disconnected event on CONSUMER_DISCONNECTED", () => {
+    const session = createMockSession({ id: "s1" });
+    const deps = makeDeps();
+    const runtime = new SessionRuntime(session, deps);
+    const ws = createTestSocket();
+
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: {
+        kind: "CONSUMER_CONNECTED",
+        ws,
+        identity: { userId: "u1", displayName: "User One", role: "participant", sessionId: "s1" },
+      },
+    });
+    vi.mocked(deps.emitEvent).mockClear();
+
+    runtime.process({
+      type: "SYSTEM_SIGNAL",
+      signal: { kind: "CONSUMER_DISCONNECTED", ws },
+    });
+
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      "consumer:disconnected",
+      expect.objectContaining({ sessionId: "s1", consumerCount: 0 }),
+    );
   });
 
   it("routes presence_query inbound commands to broadcaster presence updates", () => {

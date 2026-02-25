@@ -9,6 +9,7 @@
 
 import type { SessionState } from "../../types/session-state.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
+import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import type { Effect } from "./effect-types.js";
 import type { Session } from "./session-repository.js";
@@ -21,6 +22,7 @@ export interface EffectExecutorDeps {
   backendConnector: { sendToBackend: (session: Session, message: UnifiedMessage) => void };
   store: { persist: (session: Session) => void };
   gitTracker: { resolveGitInfo(session: Session): void };
+  tracer: MessageTracer;
 }
 
 /**
@@ -36,6 +38,15 @@ export function executeEffects(
     try {
       switch (effect.type) {
         case "BROADCAST":
+          deps.tracer.send(
+            "bridge",
+            (effect.message as Record<string, unknown>).type as string,
+            effect.message,
+            {
+              sessionId: session.id,
+              phase: "t4_to_consumer",
+            },
+          );
           deps.broadcaster.broadcast(session, effect.message);
           break;
 
@@ -65,6 +76,10 @@ export function executeEffects(
           break;
 
         case "SEND_TO_BACKEND":
+          deps.tracer.send("bridge", effect.message.type, effect.message, {
+            sessionId: session.id,
+            phase: "t1_to_backend",
+          });
           deps.backendConnector.sendToBackend(session, effect.message);
           break;
 
@@ -86,8 +101,15 @@ export function executeEffects(
           sessionId: session.id,
           error: err instanceof Error ? err : new Error(String(err)),
         });
-      } catch {
-        // emitEvent itself failed — nothing more we can do
+      } catch (innerErr) {
+        // emitEvent itself failed — use console.error as guaranteed last resort
+        console.error("[effect-executor] emitEvent failed during error reporting", {
+          source: "executeEffects",
+          effectType: effect.type,
+          sessionId: session.id,
+          originalError: err,
+          emitError: innerErr,
+        });
       }
     }
   }

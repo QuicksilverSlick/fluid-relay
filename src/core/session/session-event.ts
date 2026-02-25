@@ -11,10 +11,16 @@
 
 import type { ConsumerIdentity } from "../../interfaces/auth.js";
 import type { WebSocketLike } from "../../interfaces/transport.js";
+import type {
+  InitializeAccount,
+  InitializeCommand,
+  InitializeModel,
+} from "../../types/cli-messages.js";
 import type { SessionState } from "../../types/session-state.js";
 import type { AdapterSlashExecutor, BackendSession } from "../interfaces/backend-adapter.js";
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
 import type { QueuedMessage } from "../session/session-repository.js";
+import type { TeamState } from "../types/team-types.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 
 /**
@@ -54,8 +60,8 @@ export type SystemSignal =
   | { kind: "SESSION_CLOSING" }
   /** Explicit session close initiated by coordinator. */
   | { kind: "SESSION_CLOSED" }
-  /** Merge a partial SessionState patch into data.state (no lifecycle change). */
-  | { kind: "STATE_PATCHED"; patch: Partial<SessionState> }
+  /** Merge a partial SessionState patch into data.state (no lifecycle change). Broadcasts session_update if broadcast=true. */
+  | { kind: "STATE_PATCHED"; patch: Partial<SessionState>; broadcast?: boolean }
   /** Set lastStatus directly (e.g. optimistic "running" from MessageQueueHandler). */
   | { kind: "LAST_STATUS_UPDATED"; status: "compacting" | "idle" | "running" | null }
   /** Set queuedMessage (managed by MessageQueueHandler). */
@@ -86,7 +92,53 @@ export type SystemSignal =
       };
     }
   /** Seed initial session state (cwd, model) and trigger git info resolution. */
-  | { kind: "SESSION_SEEDED"; cwd?: string; model?: string };
+  | { kind: "SESSION_SEEDED"; cwd?: string; model?: string }
+  /** Watchdog reconnect state changed (for consumer UI updates). */
+  | {
+      kind: "WATCHDOG_STATE_CHANGED";
+      watchdog: { gracePeriodMs: number; startedAt: number } | null;
+    }
+  /** Backend process failed to resume. */
+  | { kind: "RESUME_FAILED"; sessionId: string }
+  /** Circuit breaker state changed (for consumer UI updates). */
+  | {
+      kind: "CIRCUIT_BREAKER_CHANGED";
+      circuitBreaker: { state: string; failureCount: number; recoveryTimeRemainingMs: number };
+    }
+  /** Session was renamed. */
+  | { kind: "SESSION_RENAMED"; name: string }
+  /** Backend process produced stdout/stderr output. */
+  | { kind: "PROCESS_OUTPUT_RECEIVED"; stream: "stdout" | "stderr"; data: string }
+  /** Permission request was resolved (allow/deny). */
+  | { kind: "PERMISSION_RESOLVED"; requestId: string; behavior: "allow" | "deny" }
+  /** A user message was added to the pending queue (no backend yet). */
+  | { kind: "PENDING_MESSAGE_ADDED"; message: UnifiedMessage }
+  /** Team state changed — diff and emit domain events. */
+  | {
+      kind: "TEAM_STATE_DIFFED";
+      prevTeam: TeamState | undefined;
+      currentTeam: TeamState | undefined;
+      sessionId: string;
+    }
+  /** Capabilities received from CLI — patch state, broadcast capabilities_ready, emit event. */
+  | {
+      kind: "CAPABILITIES_APPLIED";
+      commands: InitializeCommand[];
+      models: InitializeModel[];
+      account: InitializeAccount | null;
+    }
+  /** A message was queued for the session — update state, broadcast message_queued. */
+  | { kind: "MESSAGE_QUEUED"; queued: QueuedMessage }
+  /** A queued message was edited — update state, broadcast queued_message_updated. */
+  | {
+      kind: "QUEUED_MESSAGE_EDITED";
+      content: string;
+      images?: { media_type: string; data: string }[];
+    }
+  /** A queued message was cancelled — clear state, broadcast queued_message_cancelled. */
+  | { kind: "QUEUED_MESSAGE_CANCELLED" }
+  /** A queued message was auto-sent — clear state, broadcast queued_message_sent. */
+  | { kind: "QUEUED_MESSAGE_SENT" };
 
 /**
  * Discriminated union of all events that SessionRuntime.process() accepts.
