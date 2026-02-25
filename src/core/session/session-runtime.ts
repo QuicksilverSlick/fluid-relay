@@ -25,8 +25,7 @@ import type { SessionSnapshot } from "../../types/session-state.js";
 import type { BackendConnector } from "../backend/backend-connector.js";
 import type { CapabilitiesPolicy } from "../capabilities/capabilities-policy.js";
 import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
-import type { InboundCommand } from "../interfaces/runtime-commands.js";
-import { normalizeInbound } from "../messaging/inbound-normalizer.js";
+import type { InboundCommand, SlashTraceContext } from "../interfaces/runtime-commands.js";
 import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { SessionData } from "../session/session-data.js";
 import type { SlashCommandService } from "../slash/slash-command-service.js";
@@ -39,12 +38,6 @@ import type { SessionEvent, SystemSignal } from "./session-event.js";
 import type { LifecycleState } from "./session-lifecycle.js";
 import { sessionReducer } from "./session-reducer.js";
 import type { Session, SessionRepository } from "./session-repository.js";
-
-export type RuntimeTraceInfo = {
-  traceId?: string;
-  requestId?: string;
-  command?: string;
-};
 
 export interface SessionRuntimeDeps {
   config: { maxMessageHistoryLength: number };
@@ -73,9 +66,7 @@ export interface SessionRuntimeDeps {
 type RuntimeSendUserMessageOptions = {
   sessionIdOverride?: string;
   images?: { media_type: string; data: string }[];
-  traceId?: string;
-  slashRequestId?: string;
-  slashCommand?: string;
+  traceContext?: SlashTraceContext;
 };
 
 type RuntimeSendPermissionOptions = {
@@ -301,43 +292,59 @@ export class SessionRuntime {
     return limiter.tryConsume();
   }
 
+  /**
+   * Handle an inbound command with the reducer-first pattern.
+   *
+   * Mirrors handleBackendMessage and handleSystemSignal:
+   *   1. Run sessionReducer -- pure state mutations + effect list.
+   *   2. Apply new state + execute effects.
+   *   3. Post-reducer orchestration for commands needing live handles.
+   */
   private handleInboundCommand(msg: InboundCommand, ws: WebSocketLike): void {
     this.touchActivity();
+
+    const prevData = this.session.data;
+    const [nextData, effects] = sessionReducer(
+      this.session.data,
+      { type: "INBOUND_COMMAND", command: msg, ws: null as never },
+      this.deps.config,
+    );
+    if (nextData !== prevData) {
+      this.session = { ...this.session, data: nextData };
+      this.markDirty();
+    }
+    executeEffects(effects, this.session, this.effectDeps());
+
+    // Post-reducer orchestration — commands that need live WebSocket handles
+    // or that produce warnings based on whether state actually changed.
     switch (msg.type) {
-      case "user_message": {
-        const accepted = this.applyUserMessageReducer(msg.content, {
-          sessionIdOverride: msg.session_id,
-          images: msg.images,
-        });
-        if (!accepted) {
+      case "user_message":
+        if (nextData === prevData) {
+          // Reducer no-op means closed/closing session — send targeted error.
           this.deps.broadcaster.sendTo(ws, {
             type: "error",
             message: "Session is closing or closed and cannot accept new messages.",
           });
         }
         break;
-      }
-      case "permission_response":
-        this.sendPermissionResponse(msg.request_id, msg.behavior, {
-          updatedInput: msg.updated_input,
-          updatedPermissions: msg.updated_permissions,
-          message: msg.message,
+      case "set_adapter":
+        // Rejected for active sessions — send targeted error to the requesting consumer only.
+        this.deps.broadcaster.sendTo(ws, {
+          type: "error",
+          message:
+            "Adapter cannot be changed on an active session. Create a new session with the desired adapter.",
         });
         break;
-      case "interrupt":
-        this.sendInterrupt();
-        break;
-      case "set_model":
-        this.sendSetModel(msg.model);
-        break;
-      case "set_permission_mode":
-        this.sendSetPermissionMode(msg.mode);
-        break;
-      case "presence_query":
-        this.deps.broadcaster.broadcastPresence(this.session);
+      case "permission_response":
+        if (nextData === prevData) {
+          // Reducer no-op means unknown requestId — log warning.
+          this.deps.logger.warn(
+            `Permission response for unknown request_id ${msg.request_id} in session ${this.session.id}`,
+          );
+        }
         break;
       case "slash_command":
-        this.handleSlashCommand(msg);
+        this.deps.slashService.handleInbound(this.session, msg);
         break;
       case "queue_message":
         this.deps.queueHandler.handleQueueMessage(this.session, msg, ws);
@@ -348,158 +355,31 @@ export class SessionRuntime {
       case "cancel_queued_message":
         this.deps.queueHandler.handleCancelQueuedMessage(this.session, ws);
         break;
-      case "set_adapter":
-        this.deps.broadcaster.sendTo(ws, {
-          type: "error",
-          message:
-            "Adapter cannot be changed on an active session. Create a new session with the desired adapter.",
-        });
+      case "presence_query":
+        this.deps.broadcaster.broadcastPresence(this.session);
         break;
     }
   }
 
   /**
-   * Send a user message: applies pure state mutations via the reducer, then
-   * executes I/O (backend send or queue). Returns `false` if the session
+   * Send a user message programmatically — routes through process() so all
+   * state changes flow through the reducer. Returns `false` if the session
    * lifecycle rejected the message (closed/closing).
    */
   sendUserMessage(content: string, options?: RuntimeSendUserMessageOptions): boolean {
-    return this.applyUserMessageReducer(content, options);
-  }
-
-  /**
-   * Shared reducer + I/O path for user messages.
-   * Used by both handleInboundCommand (WebSocket path) and sendUserMessage (programmatic path).
-   * Returns `false` if the session lifecycle rejected the message.
-   */
-  private applyUserMessageReducer(
-    content: string,
-    options?: RuntimeSendUserMessageOptions,
-  ): boolean {
     const prevData = this.session.data;
-    const [nextData, effects] = sessionReducer(
-      this.session.data,
-      {
-        type: "INBOUND_COMMAND",
-        command: { type: "user_message", content, session_id: options?.sessionIdOverride ?? "" },
-        ws: null as never, // ws not needed for pure state mutations
-      },
-      this.deps.config,
-    );
-
-    if (nextData === prevData) {
-      return false;
-    }
-
-    this.session = { ...this.session, data: nextData };
-    executeEffects(effects, this.session, this.effectDeps());
-    return this.sendUserMessageIO(content, options);
-  }
-
-  /**
-   * I/O side of user message handling: normalizes the message, sends to
-   * backend (or queues it via PENDING_MESSAGE_ADDED signal).
-   * Called after the reducer has already applied the pure state mutations
-   * (lastStatus, lifecycle, messageHistory).
-   */
-  private sendUserMessageIO(content: string, options?: RuntimeSendUserMessageOptions): boolean {
-    const unified = normalizeInbound({
-      type: "user_message",
-      content,
-      session_id: options?.sessionIdOverride || this.session.data.backendSessionId || "",
-      images: options?.images,
-    });
-    if (!unified) {
-      this.deps.logger.error("normalizeInbound returned null for user_message — message dropped", {
-        sessionId: this.session.id,
-        contentLength: content.length,
-      });
-      return true;
-    }
-    if (options?.traceId) unified.metadata.trace_id = options.traceId;
-    if (options?.slashRequestId) unified.metadata.slash_request_id = options.slashRequestId;
-    if (options?.slashCommand) unified.metadata.slash_command = options.slashCommand;
-
-    if (this.session.backendSession) {
-      executeEffects(
-        [{ type: "SEND_TO_BACKEND", message: unified }],
-        this.session,
-        this.effectDeps(),
-      );
-    } else {
-      this.process({
-        type: "SYSTEM_SIGNAL",
-        signal: { kind: "PENDING_MESSAGE_ADDED", message: unified },
-      });
-    }
-    return true;
-  }
-
-  sendPermissionResponse(
-    requestId: string,
-    behavior: "allow" | "deny",
-    options?: RuntimeSendPermissionOptions,
-  ): void {
-    const pending = this.session.data.pendingPermissions.get(requestId);
-    if (!pending) {
-      this.deps.logger.warn(
-        `Permission response for unknown request_id ${requestId} in session ${this.session.id}`,
-      );
-      return;
-    }
     this.process({
-      type: "SYSTEM_SIGNAL",
-      signal: { kind: "PERMISSION_RESOLVED", requestId, behavior },
-    });
-
-    const unified = normalizeInbound({
-      type: "permission_response",
-      request_id: requestId,
-      behavior,
-      updated_input: options?.updatedInput,
-      updated_permissions: options?.updatedPermissions as
-        | import("../../types/cli-messages.js").PermissionUpdate[]
-        | undefined,
-      message: options?.message,
-    });
-    if (!unified) {
-      this.deps.logger.error(
-        "normalizeInbound returned null for permission_response — response dropped",
-        { sessionId: this.session.id, requestId },
-      );
-      return;
-    }
-    executeEffects(
-      [{ type: "SEND_TO_BACKEND", message: unified }],
-      this.session,
-      this.effectDeps(),
-    );
-  }
-
-  sendInterrupt(): void {
-    this.sendControlRequest({ type: "interrupt" });
-  }
-
-  sendSetModel(model: string): void {
-    if (!this.session.backendSession) return;
-    const [nextData, effects] = sessionReducer(
-      this.session.data,
-      {
-        type: "INBOUND_COMMAND",
-        command: { type: "set_model", model },
-        ws: null as never, // ws not needed for pure state mutations
+      type: "INBOUND_COMMAND",
+      command: {
+        type: "user_message",
+        content,
+        session_id: options?.sessionIdOverride ?? "",
+        images: options?.images,
+        traceContext: options?.traceContext,
       },
-      this.deps.config,
-    );
-    if (nextData !== this.session.data) {
-      this.session = { ...this.session, data: nextData };
-      executeEffects(effects, this.session, this.effectDeps());
-    }
-    this.sendControlRequest({ type: "set_model", model });
-  }
-
-  sendSetPermissionMode(mode: string): void {
-    this.sendControlRequest({ type: "set_permission_mode", mode });
+      ws: null as never,
+    });
+    return this.session.data !== prevData;
   }
 
   private effectDeps() {
@@ -512,6 +392,31 @@ export class SessionRuntime {
       gitTracker: this.deps.gitTracker,
       tracer: this.deps.tracer,
     };
+  }
+
+  /**
+   * Send a permission response programmatically — routes through process().
+   * Unknown requestId will emit a logger.warn via handleInboundCommand post-reducer hook.
+   */
+  sendPermissionResponse(
+    requestId: string,
+    behavior: "allow" | "deny",
+    options?: RuntimeSendPermissionOptions,
+  ): void {
+    this.process({
+      type: "INBOUND_COMMAND",
+      command: {
+        type: "permission_response",
+        request_id: requestId,
+        behavior,
+        updated_input: options?.updatedInput,
+        updated_permissions: options?.updatedPermissions as
+          | import("../../types/cli-messages.js").PermissionUpdate[]
+          | undefined,
+        message: options?.message,
+      },
+      ws: null as never,
+    });
   }
 
   /**
@@ -587,6 +492,14 @@ export class SessionRuntime {
       case "PASSTHROUGH_ENQUEUED":
         this.session.pendingPassthroughs.push(signal.entry);
         break;
+      case "CAPABILITIES_APPLIED":
+        // Post-effect: hydrate the handle-level slash registry from applied capabilities.
+        // Called here (not in CapabilitiesPolicy) to keep registry mutations in the
+        // runtime's post-reducer orchestration layer.
+        if (signal.commands.length > 0) {
+          this.registerCLICommands(signal.commands);
+        }
+        break;
     }
   }
 
@@ -598,25 +511,6 @@ export class SessionRuntime {
 
   sendToBackend(message: UnifiedMessage): void {
     this.deps.backendConnector.sendToBackend(this.session, message);
-  }
-
-  private sendControlRequest(msg: InboundCommand): void {
-    const unified = normalizeInbound(msg);
-    if (!unified) {
-      this.deps.logger.error(
-        "normalizeInbound returned null for control request — request dropped",
-        {
-          sessionId: this.session.id,
-          msgType: msg.type,
-        },
-      );
-      return;
-    }
-    executeEffects(
-      [{ type: "SEND_TO_BACKEND", message: unified }],
-      this.session,
-      this.effectDeps(),
-    );
   }
 
   private handleBackendMessage(msg: UnifiedMessage): void {
@@ -651,14 +545,6 @@ export class SessionRuntime {
 
   private orchestrateSessionInit(msg: UnifiedMessage): void {
     const m = msg.metadata;
-
-    // Store backend session ID for resume
-    if (m.session_id) {
-      this.deps.emitEvent("backend:session_id", {
-        sessionId: this.session.id,
-        backendSessionId: m.session_id as string,
-      });
-    }
 
     // Resolve git info
     this.deps.gitTracker.resetAttempt(this.session.id);
@@ -718,7 +604,7 @@ export class SessionRuntime {
   }
 
   private orchestrateResult(_msg: UnifiedMessage): void {
-    // refreshGitInfo already calls patchState → process(STATE_PATCHED) internally.
+    // refreshGitInfo patches state directly; broadcast the diff via STATE_PATCHED.
     const gitUpdate = this.deps.gitTracker.refreshGitInfo(this.session);
     if (gitUpdate) {
       this.process({
@@ -740,10 +626,6 @@ export class SessionRuntime {
         sessionId: this.session.id,
       },
     });
-  }
-
-  private handleSlashCommand(msg: Extract<InboundCommand, { type: "slash_command" }>): void {
-    this.deps.slashService.handleInbound(this.session, msg);
   }
 
   private touchActivity(): void {

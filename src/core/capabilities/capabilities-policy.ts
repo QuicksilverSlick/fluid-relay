@@ -55,10 +55,6 @@ export class CapabilitiesPolicy {
     return this.getRuntime(session).trySendRawToBackend(ndjson);
   }
 
-  private registerCLICommands(session: Session, commands: InitializeCommand[]): void {
-    this.getRuntime(session).registerCLICommands(commands);
-  }
-
   sendInitializeRequest(session: Session): void {
     if (this.getPendingInitialize(session)) return; // dedup
     const requestId = randomUUID();
@@ -152,9 +148,5 @@ export class CapabilitiesPolicy {
     this.logger.info(
       `Capabilities received for session ${session.id}: ${commands.length} commands, ${models.length} models`,
     );
-
-    if (commands.length > 0) {
-      this.registerCLICommands(session, commands);
-    }
   }
 }

@@ -311,7 +311,7 @@ The SessionRuntime is a **per-session actor**. One instance exists per active se
 │  │  handles: SessionHandles   (mutable — runtime references)         │ │
 │  │  ├─ backendSession, backendAbort                                  │ │
 │  │  ├─ consumerSockets, consumerRateLimiters                         │ │
-│  │  ├─ teamCorrelationBuffer, registry, pendingPassthroughs          │ │
+│  │  ├─ teamCorrelation, registry, pendingPassthroughs                │ │
 │  │  └─ adapterSlashExecutor, pendingInitialize                       │ │
 │  │                                                                   │ │
 │  │  ═══════ SessionData is readonly — NO OTHER MODULE CAN WRITE ═══  │ │
@@ -363,24 +363,24 @@ The SessionRuntime is a **per-session actor**. One instance exists per active se
 The SessionReducer is the **single pure function** that contains all state-transition logic. It takes current `SessionData` and a `SessionEvent`, and returns a tuple of `[SessionData, Effect[]]`.
 
 **Responsibilities:**
-- **State reduction for all backend messages:** session_init, status_change, assistant, result, permission_request, tool_use_summary, configuration_change, auth_status, session_lifecycle, stream_event, tool_progress, control_response
+- **State reduction for all backend messages:** session_init, assistant, result, status_change, assistant, result, stream_event, permission_request, control_response, tool_progress, tool_use_summary, auth_status, configuration_change, session_lifecycle
 - **State reduction for inbound commands:** user_message (echo + normalize), permission_response, interrupt, set_model, queue operations
-- **State reduction for system signals:** backend connected/disconnected, consumer connected/disconnected, idle reap, reconnect timeout, capabilities timeout, session closed, git info resolved
+- **State reduction for system signals:** backend connected/disconnected, consumer connected/disconnected, idle reap, reconnect timeout, capabilities timeout, session closed, git info resolved, process output received, team state diffed, etc.
 - **History management:** Append, replace (dedup), trim to max length
 - **Status inference:** result → idle, status_change → update lastStatus
 - **Permission tracking:** Store pending permissions from backend requests
-- **Effect determination:** For each event, compute which side effects need to happen (broadcast, send-to-backend, emit domain event, async workflow trigger)
+- **Effect determination:** For each event, compute which side effects need to happen (broadcast, send-to-backend, emit domain event, auto-send queued, etc.)
 
 **Composed from sub-reducers:**
 
 ```typescript
 function sessionReducer(data: SessionData, event: SessionEvent): [SessionData, Effect[]] {
   switch (event.type) {
-    case 'BACKEND_MESSAGE':
+    case "BACKEND_MESSAGE":
       return reduceBackendMessage(data, event.message);
-    case 'INBOUND_COMMAND':
+    case "INBOUND_COMMAND":
       return reduceInboundCommand(data, event.command);
-    case 'SYSTEM_SIGNAL':
+    case "SYSTEM_SIGNAL":
       return reduceSystemSignal(data, event.signal);
   }
 }
@@ -390,13 +390,13 @@ Each sub-reducer further delegates to focused pure functions:
 
 | Sub-reducer | From file | Responsibility |
 |-------------|-----------|----------------|
-| `reduceSessionState` | `session-state-reducer.ts` | AI context: model, cwd, tools, team state, capabilities, cost |
+| `reduce` | `session-state-reducer.ts` | AI context: model, cwd, tools, team state, capabilities, cost |
 | `reduceHistory` | `history-reducer.ts` | Append, replace, dedup assistant messages, trim to max |
 | `reduceStatus` | inline | `status_change` → update lastStatus; `result` → idle |
 | `reducePermissions` | inline | Store/clear pending permission requests |
 | `reduceLifecycle` | `session-lifecycle.ts` | Enforce lifecycle state machine transitions |
 | `reduceTeamState` | `team/team-state-reducer.ts` | Team member/task state from tool-use messages |
-| `mapToEffects` | `effect-mapper.ts` | Determine side effects for each message type |
+| `mapInboundCommandEffects` | `effect-mapper.ts` | Determine side effects for each command |
 
 **Key property:** Same-reference optimization — returns the original `data` reference if no fields changed. This allows `nextData !== this.data` check in the runtime to skip persistence when nothing changed.
 
@@ -574,13 +574,14 @@ interface SessionData {
   readonly lifecycle: LifecycleState;
   readonly backendSessionId?: string;
   readonly state: SessionState;
-  readonly messageHistory: readonly ConsumerMessage[];
-  readonly lastStatus: "compacting" | "idle" | "running" | null;
   readonly pendingPermissions: ReadonlyMap<string, PermissionRequest>;
+  readonly messageHistory: readonly ConsumerMessage[];
   readonly pendingMessages: readonly UnifiedMessage[];
   readonly queuedMessage: QueuedMessage | null;
+  readonly lastStatus: "compacting" | "idle" | "running" | null;
   readonly adapterName?: string;
   readonly adapterSupportsSlashPassthrough: boolean;
+  readonly teamCorrelation: ReadonlyMap<string, PendingToolUse>;
 }
 ```
 
@@ -601,7 +602,6 @@ interface SessionHandles {
   anonymousCounter: number;
   lastActivity: number;
   pendingInitialize: { requestId: string; timer: ReturnType<typeof setTimeout> } | null;
-  teamCorrelationBuffer: TeamToolCorrelationBuffer;
   registry: SlashCommandRegistry;
   pendingPassthroughs: Array<{...}>;
   adapterSlashExecutor: AdapterSlashExecutor | null;
@@ -619,7 +619,7 @@ type SessionEvent =
   | { type: "SYSTEM_SIGNAL"; signal: SystemSignal };
 
 type SystemSignal =
-  | { kind: "BACKEND_CONNECTED" }
+  | { kind: "BACKEND_CONNECTED"; backendSession: BackendSession; ... }
   | { kind: "BACKEND_DISCONNECTED"; reason: string }
   | { kind: "CONSUMER_CONNECTED"; ws: WebSocketLike; identity: ConsumerIdentity }
   | { kind: "CONSUMER_DISCONNECTED"; ws: WebSocketLike }
@@ -628,7 +628,31 @@ type SystemSignal =
   | { kind: "IDLE_REAP" }
   | { kind: "RECONNECT_TIMEOUT" }
   | { kind: "CAPABILITIES_TIMEOUT" }
-  | { kind: "SESSION_CLOSED" };
+  | { kind: "BACKEND_RELAUNCH_NEEDED" }
+  | { kind: "SESSION_CLOSING" }
+  | { kind: "SESSION_CLOSED" }
+  | { kind: "STATE_PATCHED"; patch: Partial<SessionState>; broadcast?: boolean }
+  | { kind: "LAST_STATUS_UPDATED"; status: string }
+  | { kind: "QUEUED_MESSAGE_UPDATED"; message: QueuedMessage | null }
+  | { kind: "MODEL_UPDATED"; model: string }
+  | { kind: "ADAPTER_NAME_SET"; name: string }
+  | { kind: "SLASH_PASSTHROUGH_RESULT"; ... }
+  | { kind: "SLASH_PASSTHROUGH_ERROR"; ... }
+  | { kind: "PASSTHROUGH_ENQUEUED"; entry: ... }
+  | { kind: "SESSION_SEEDED"; cwd?: string; model?: string }
+  | { kind: "WATCHDOG_STATE_CHANGED"; watchdog: ... }
+  | { kind: "RESUME_FAILED"; sessionId: string }
+  | { kind: "CIRCUIT_BREAKER_CHANGED"; circuitBreaker: ... }
+  | { kind: "SESSION_RENAMED"; name: string }
+  | { kind: "PROCESS_OUTPUT_RECEIVED"; stream: string; data: string }
+  | { kind: "PERMISSION_RESOLVED"; requestId: string; behavior: string }
+  | { kind: "PENDING_MESSAGE_ADDED"; message: UnifiedMessage }
+  | { kind: "TEAM_STATE_DIFFED"; prevTeam: TeamState; currentTeam: TeamState; ... }
+  | { kind: "CAPABILITIES_APPLIED"; commands: ... }
+  | { kind: "MESSAGE_QUEUED"; queued: QueuedMessage }
+  | { kind: "QUEUED_MESSAGE_EDITED"; content: string; ... }
+  | { kind: "QUEUED_MESSAGE_CANCELLED" }
+  | { kind: "QUEUED_MESSAGE_SENT" };
 ```
 
 ### Effect (Output Union)
@@ -1331,7 +1355,7 @@ src/core/
 ├── index.ts                         — barrel exports
 │
 ├── backend/                         — BackendPlane
-│   └── backend-connector.ts         — adapter lifecycle + consumption + passthrough (~611L)
+│   └── backend-connector.ts         — adapter lifecycle + consumption + passthrough (~644L)
 │
 ├── capabilities/                    — Capabilities handshake policy
 │   └── capabilities-policy.ts       — observe + advise (~178L)
@@ -1370,12 +1394,12 @@ src/core/
 │   └── trace-differ.ts              — diff computation for trace inspection (~143L)
 │
 ├── policies/                        — Policy services (observe + advise)
-│   ├── idle-policy.ts               — idle session sweep (~141L)
+│   ├── idle-policy.ts               │ idle session sweep (~141L)
 │   └── reconnect-policy.ts          — awaiting_backend watchdog (~119L)
 │
 ├── session/                         — Per-session state + lifecycle + reducer
 │   ├── session-runtime.ts           — per-session actor: process(event) (~733L)
-│   ├── session-reducer.ts           — top-level pure reducer (~852L)
+│   ├── session-reducer.ts           — top-level pure reducer (~946L)
 │   ├── session-state-reducer.ts     — AI context sub-reducer (~273L)
 │   ├── history-reducer.ts           — message history sub-reducer (~133L)
 │   ├── effect-mapper.ts             — event → Effect[] mapping (~104L)
@@ -1445,4 +1469,15 @@ src/core/
 │  DomainEventBus        → emit(event), on(type, handler): Disposable  │
 │  SessionRepository     → persist(data), remove(id), restoreAll()     │
 └──────────────────────────────────────────────────────────────────────┘
+
+---
+
+## Violations to Core Design Principles
+
+| # | Principle | Violation | Rationale / Mitigation |
+|---|-----------|-----------|------------------------|
+| 1 | Zero manual persistence calls | `ClaudeLauncher.persistState()` manually saves launcher state (PID/session mappings). | This state is launcher-global, not session-specific, and is currently required for process tracking across restarts. Mitigation: Move launcher state into a specialized store or the shared repository. |
+| 2 | Only `SessionRuntime.process()` can change session state | `SessionRuntime.touchActivity()` directly mutates `this.session.lastActivity`. | `lastActivity` is a non-serializable runtime handle (not part of `SessionData`), but it still bypasses the canonical `process()` path. Mitigation: Add an `ACTIVITY_TOUCHED` signal. |
+| 3 | Side effects are descriptions (Effect[]), not inline I/O | `MessageQueueHandler` uses `broadcaster.sendTo()` directly for error reporting. | Errors during queue handling skip the `EffectExecutor`. Mitigation: Wrap queue errors in an `EMIT_EFFECT` signal or similar. |
+| 4 | Only `SessionRuntime.process()` can change session state | `SessionRuntime` hydrates slash registry directly in `hydrateSlashRegistryFromState()`. | This is called during initialization and bypasses the reducer. Mitigation: Make slash registry hydration an effect of `ADAPTER_NAME_SET`. |
 ```

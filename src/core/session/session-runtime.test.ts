@@ -241,13 +241,22 @@ describe("SessionRuntime", () => {
     );
   });
 
-  it("routes permission_response inbound commands to sendPermissionResponse", () => {
-    const session = createMockSession({ id: "s1" });
+  it("routes permission_response inbound commands through reducer (clears pending, sends to backend)", () => {
+    const perm: any = {
+      request_id: "perm-1",
+      options: [],
+      expires_at: Date.now() + 1000,
+      tool_name: "Bash",
+      tool_use_id: "tu-1",
+      safety_risk: null,
+    };
+    const session = createMockSession({
+      id: "s1",
+      data: { pendingPermissions: new Map([["perm-1", perm]]) },
+      backendSession: { send: vi.fn() } as any,
+    });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
-    const sendPermissionResponse = vi
-      .spyOn(runtime, "sendPermissionResponse")
-      .mockImplementation(() => {});
 
     runtime.process({
       type: "INBOUND_COMMAND",
@@ -262,18 +271,18 @@ describe("SessionRuntime", () => {
       ws: createTestSocket(),
     });
 
-    expect(sendPermissionResponse).toHaveBeenCalledWith("perm-1", "allow", {
-      updatedInput: { key: "value" },
-      updatedPermissions: [{ type: "setMode", mode: "plan", destination: "session" }],
-      message: "ok",
-    });
+    // Reducer cleared the pending permission and emitted SEND_TO_BACKEND
+    expect(runtime.getPendingPermissions().find((p) => p.request_id === "perm-1")).toBeUndefined();
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+      expect.objectContaining({ type: "permission_response" }),
+    );
   });
 
-  it("routes interrupt inbound commands to sendInterrupt", () => {
-    const session = createMockSession({ id: "s1" });
+  it("routes interrupt inbound commands through reducer (sends to backend)", () => {
+    const session = createMockSession({ id: "s1", backendSession: { send: vi.fn() } as any });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
-    const sendInterrupt = vi.spyOn(runtime, "sendInterrupt").mockImplementation(() => {});
 
     runtime.process({
       type: "INBOUND_COMMAND",
@@ -281,48 +290,53 @@ describe("SessionRuntime", () => {
       ws: createTestSocket(),
     });
 
-    expect(sendInterrupt).toHaveBeenCalledTimes(1);
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+      expect.objectContaining({ type: "interrupt" }),
+    );
   });
 
-  it("routes set_model inbound commands to sendSetModel", () => {
-    const session = createMockSession({ id: "s1" });
+  it("routes set_model inbound commands through reducer (updates state, sends to backend)", () => {
+    // set_model requires active/idle lifecycle to trigger effects
+    const session = createMockSession({
+      id: "s1",
+      data: { lifecycle: "idle" },
+      backendSession: { send: vi.fn() } as any,
+    });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
-    const sendSetModel = vi.spyOn(runtime, "sendSetModel").mockImplementation(() => {});
 
     runtime.process({
       type: "INBOUND_COMMAND",
-      command: {
-        type: "set_model",
-        model: "claude-opus",
-      },
+      command: { type: "set_model", model: "claude-opus" },
       ws: createTestSocket(),
     });
 
-    expect(sendSetModel).toHaveBeenCalledWith("claude-opus");
+    expect(runtime.getState().model).toBe("claude-opus");
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+      expect.objectContaining({ type: "configuration_change" }),
+    );
   });
 
-  it("routes set_permission_mode inbound commands to sendSetPermissionMode", () => {
-    const session = createMockSession({ id: "s1" });
+  it("routes set_permission_mode inbound commands through reducer (sends to backend)", () => {
+    const session = createMockSession({ id: "s1", backendSession: { send: vi.fn() } as any });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
-    const sendSetPermissionMode = vi
-      .spyOn(runtime, "sendSetPermissionMode")
-      .mockImplementation(() => {});
 
     runtime.process({
       type: "INBOUND_COMMAND",
-      command: {
-        type: "set_permission_mode",
-        mode: "plan",
-      },
+      command: { type: "set_permission_mode", mode: "plan" },
       ws: createTestSocket(),
     });
 
-    expect(sendSetPermissionMode).toHaveBeenCalledWith("plan");
+    expect(deps.backendConnector.sendToBackend).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1" }),
+      expect.objectContaining({ type: "configuration_change" }),
+    );
   });
 
-  it("rejects set_adapter for active sessions", () => {
+  it("rejects set_adapter for active sessions with targeted sendTo (not broadcast)", () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
     const ws = createTestSocket();
@@ -337,8 +351,13 @@ describe("SessionRuntime", () => {
       ws: ws,
     });
 
+    // set_adapter sends error only to the requesting consumer, not all consumers
     expect(deps.broadcaster.sendTo).toHaveBeenCalledWith(
       ws,
+      expect.objectContaining({ type: "error" }),
+    );
+    expect(deps.broadcaster.broadcast).not.toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({ type: "error" }),
     );
   });
@@ -636,21 +655,33 @@ describe("SessionRuntime", () => {
     );
   });
 
-  it("normalizes and sends control requests for interrupt/model/mode", () => {
-    const session = createMockSession({ id: "s1", backendSession: { send: vi.fn() } as any });
+  it("normalizes and sends control requests for interrupt/model/mode via process()", () => {
+    // set_model requires active/idle lifecycle; use idle to mirror a connected session.
+    const session = createMockSession({
+      id: "s1",
+      data: { lifecycle: "idle" },
+      backendSession: { send: vi.fn() } as any,
+    });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
+    const ws = createTestSocket();
 
-    runtime.sendInterrupt();
-    runtime.sendSetModel("claude-opus");
-    runtime.sendSetPermissionMode("plan");
+    runtime.process({ type: "INBOUND_COMMAND", command: { type: "interrupt" }, ws });
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: { type: "set_model", model: "claude-opus" },
+      ws,
+    });
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: { type: "set_permission_mode", mode: "plan" },
+      ws,
+    });
 
     expect(deps.backendConnector.sendToBackend).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ id: "s1" }),
-      expect.objectContaining({
-        type: "interrupt",
-      }),
+      expect.objectContaining({ type: "interrupt" }),
     );
     expect(deps.backendConnector.sendToBackend).toHaveBeenNthCalledWith(
       2,
@@ -670,17 +701,22 @@ describe("SessionRuntime", () => {
     );
   });
 
-  it("sendSetModel updates session.data.state.model and broadcasts session_update", () => {
+  it("set_model via process() updates session.data.state.model and broadcasts session_update", () => {
     const send = vi.fn();
     const session = createMockSession({
       id: "s1",
-      data: { state: { ...makeDefaultState("s1"), model: "claude-sonnet-4-6" } },
+      // lifecycle must be active or idle for set_model to have effects
+      data: { lifecycle: "idle", state: { ...makeDefaultState("s1"), model: "claude-sonnet-4-6" } },
       backendSession: { send } as any,
     });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.sendSetModel("claude-haiku-4-5");
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: { type: "set_model", model: "claude-haiku-4-5" },
+      ws: null as never,
+    });
 
     expect(runtime.getState().model).toBe("claude-haiku-4-5");
     expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
@@ -692,7 +728,8 @@ describe("SessionRuntime", () => {
     );
   });
 
-  it("sendSetModel does not update state or broadcast when backendSession is null", () => {
+  it("set_model is a no-op when lifecycle is not active/idle (no backend)", () => {
+    // Default lifecycle is awaiting_backend — reducer guard rejects set_model
     const session = createMockSession({
       id: "s1",
       data: { state: { ...makeDefaultState("s1"), model: "claude-sonnet-4-6" } },
@@ -700,7 +737,11 @@ describe("SessionRuntime", () => {
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    runtime.sendSetModel("claude-haiku-4-5");
+    runtime.process({
+      type: "INBOUND_COMMAND",
+      command: { type: "set_model", model: "claude-haiku-4-5" },
+      ws: null as never,
+    });
 
     expect(runtime.getState().model).toBe("claude-sonnet-4-6");
     expect(deps.broadcaster.broadcast).not.toHaveBeenCalled();
@@ -1360,15 +1401,17 @@ describe("SessionRuntime", () => {
     expect(() => runtime.trySendRawToBackend("ndjson-line")).toThrow("connection reset");
   });
 
-  it("CAPABILITIES_TIMEOUT signal is a no-op", () => {
+  it("CAPABILITIES_TIMEOUT signal emits capabilities:timeout event", () => {
     const session = createMockSession({ id: "s1" });
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    // Should not throw or change state
-    expect(() =>
-      runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "CAPABILITIES_TIMEOUT" } }),
-    ).not.toThrow();
+    runtime.process({ type: "SYSTEM_SIGNAL", signal: { kind: "CAPABILITIES_TIMEOUT" } });
+
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      "capabilities:timeout",
+      expect.objectContaining({ sessionId: "s1" }),
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -1398,13 +1441,19 @@ describe("SessionRuntime", () => {
     expect(runtime.getPendingPermissions()[0].request_id).toBe("perm-x");
   });
 
-  it("sendInterrupt is a no-op when no backendSession is attached", () => {
+  it("interrupt via process() does not throw and emits no broadcast when no backendSession", () => {
     const session = createMockSession({ id: "s1" }); // no backendSession
     const deps = makeDeps();
     const runtime = new SessionRuntime(session, deps);
 
-    // Should not throw — sendControlRequest returns early at the null-check
-    expect(() => runtime.sendInterrupt()).not.toThrow();
+    // Should not throw — SEND_TO_BACKEND effect is produced but no broadcast occurs
+    expect(() =>
+      runtime.process({
+        type: "INBOUND_COMMAND",
+        command: { type: "interrupt" },
+        ws: createTestSocket(),
+      }),
+    ).not.toThrow();
     expect(deps.broadcaster.broadcast).not.toHaveBeenCalled();
   });
 

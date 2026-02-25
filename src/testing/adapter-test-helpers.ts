@@ -386,9 +386,13 @@ export function createBridgeWithAdapter(options?: {
       sendUserMessage: (sessionId, content, trace) =>
         withMutableSession(sessionId, "sendUserMessage", (s) =>
           getOrCreateRuntime(s).sendUserMessage(content, {
-            traceId: trace?.traceId,
-            slashRequestId: trace?.requestId,
-            slashCommand: trace?.command,
+            traceContext: trace
+              ? {
+                  traceId: trace.traceId,
+                  slashRequestId: trace.requestId,
+                  slashCommand: trace.command,
+                }
+              : undefined,
           }),
         ),
       tracer,

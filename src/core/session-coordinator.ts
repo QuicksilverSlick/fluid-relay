@@ -44,7 +44,11 @@ import type { CliAdapterName } from "./interfaces/adapter-names.js";
 import type { AdapterResolver } from "./interfaces/adapter-resolver.js";
 import type { BackendAdapter } from "./interfaces/backend-adapter.js";
 import { isInvertedConnectionAdapter } from "./interfaces/inverted-connection-adapter.js";
-import type { InboundCommand, PolicyCommand } from "./interfaces/runtime-commands.js";
+import type {
+  InboundCommand,
+  PolicyCommand,
+  SlashTraceContext,
+} from "./interfaces/runtime-commands.js";
 import type {
   IdleSessionReaper as IIdleSessionReaper,
   ReconnectController as IReconnectController,
@@ -280,12 +284,16 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
         sendUserMessage: (
           sessionId: string,
           content: string,
-          trace?: { traceId?: string; requestId?: string; command?: string },
+          trace?: { traceId: string; requestId: string; command: string },
         ) =>
           this.sendUserMessageForSession(sessionId, content, {
-            traceId: trace?.traceId,
-            slashRequestId: trace?.requestId,
-            slashCommand: trace?.command,
+            traceContext: trace
+              ? {
+                  traceId: trace.traceId,
+                  slashRequestId: trace.requestId,
+                  slashCommand: trace.command,
+                }
+              : undefined,
           }),
         tracer: this.tracer,
       }),
@@ -850,9 +858,7 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     sessionId: string,
     text: string,
     options?: {
-      traceId?: string;
-      slashRequestId?: string;
-      slashCommand?: string;
+      traceContext?: SlashTraceContext;
       images?: { media_type: string; data: string }[];
     },
   ): void {
