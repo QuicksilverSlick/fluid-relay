@@ -65,12 +65,6 @@ function createDeps(overrides?: Partial<ConsumerGatewayDeps>): ConsumerGatewayDe
     getRuntime: vi.fn((_session: any) => createMockRuntime(fallbackSession)),
     routeConsumerMessage: vi.fn(),
     maxConsumerMessageSize: 256 * 1024,
-    tracer: {
-      recv: vi.fn(),
-      send: vi.fn(),
-      translate: vi.fn(),
-      error: vi.fn(),
-    } as any,
     ...overrides,
   };
 }
@@ -144,7 +138,7 @@ describe("ConsumerGateway", () => {
   }
 
   it("rejects consumer open for unknown session", () => {
-    const { gateway, deps, ws, emitted, metrics, mockRuntime } = createHarness({
+    const { gateway, ws, emitted, metrics, mockRuntime } = createHarness({
       sessionExists: false,
     });
 
@@ -168,7 +162,7 @@ describe("ConsumerGateway", () => {
   });
 
   it("accepts anonymous consumer and sends identity + session_init + cli_disconnected", () => {
-    const { gateway, deps, ws, sentToWs, emitted, mockRuntime } = createHarness({
+    const { gateway, deps, ws, sentToWs, mockRuntime } = createHarness({
       backendConnected: false,
       history: [],
       pendingPermissions: [],
@@ -320,7 +314,6 @@ describe("ConsumerGateway", () => {
         message: expect.objectContaining({ type: "user_message", content: "hello" }),
       }),
     );
-    expect(vi.mocked(deps.tracer.recv)).toHaveBeenCalled();
   });
 
   it("parses Buffer payloads and routes them", () => {
@@ -394,7 +387,7 @@ describe("ConsumerGateway", () => {
   });
 
   it("handleConsumerClose unregisters consumer, emits event, and broadcasts presence", () => {
-    const { gateway, deps, ws, emitted, mockRuntime } = createHarness();
+    const { gateway, deps, ws, mockRuntime } = createHarness();
     gateway.handleConsumerOpen(ws, { sessionId: "s1" } as any);
 
     gateway.handleConsumerClose(ws, "s1");
@@ -407,7 +400,6 @@ describe("ConsumerGateway", () => {
       }),
     );
     expect(vi.mocked(deps.broadcaster.broadcastPresence)).toHaveBeenCalled();
-    expect(emitted.some((e) => e.event === "consumer:disconnected")).toBe(true);
   });
 
   it("handleConsumerClose is safe when session is missing", () => {

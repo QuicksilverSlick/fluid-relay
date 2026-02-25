@@ -35,6 +35,7 @@ import {
   mapToolProgress,
   mapToolUseSummary,
 } from "../messaging/consumer-message-mapper.js";
+import { diffTeamState } from "../team/team-event-differ.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
 import { mapInboundCommandEffects } from "./effect-mapper.js";
 import type { Effect } from "./effect-types.js";
@@ -98,14 +99,18 @@ export function sessionReducer(
 function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionData, Effect[]] {
   switch (signal.kind) {
     // ── Data-patch signals (no lifecycle transition) ──────────────────────
-    case "STATE_PATCHED":
-      return [{ ...data, state: { ...data.state, ...signal.patch } }, []];
+    case "STATE_PATCHED": {
+      const effects: Effect[] = signal.broadcast
+        ? [{ type: "BROADCAST_SESSION_UPDATE", patch: signal.patch }]
+        : [];
+      return [{ ...data, state: { ...data.state, ...signal.patch } }, effects];
+    }
 
     case "LAST_STATUS_UPDATED":
       return [{ ...data, lastStatus: signal.status }, []];
 
     case "QUEUED_MESSAGE_UPDATED":
-      return [{ ...data, queuedMessage: signal.message }, []];
+      return [{ ...data, queuedMessage: signal.message }, [{ type: "PERSIST_NOW" }]];
 
     case "MODEL_UPDATED":
       return [
@@ -243,9 +248,186 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
     case "IDLE_REAP":
       return applyLifecycleTransition(data, "closing");
 
+    case "WATCHDOG_STATE_CHANGED":
+      return [data, [{ type: "BROADCAST_SESSION_UPDATE", patch: { watchdog: signal.watchdog } }]];
+
+    case "RESUME_FAILED":
+      return [
+        data,
+        [{ type: "BROADCAST", message: { type: "resume_failed", sessionId: signal.sessionId } }],
+      ];
+
+    case "CIRCUIT_BREAKER_CHANGED":
+      return [
+        data,
+        [{ type: "BROADCAST_SESSION_UPDATE", patch: { circuitBreaker: signal.circuitBreaker } }],
+      ];
+
+    case "SESSION_RENAMED":
+      return [
+        data,
+        [{ type: "BROADCAST", message: { type: "session_name_update", name: signal.name } }],
+      ];
+
+    case "PROCESS_OUTPUT_RECEIVED":
+      return [
+        data,
+        [
+          {
+            type: "BROADCAST_TO_PARTICIPANTS",
+            message: { type: "process_output", stream: signal.stream, data: signal.data },
+          },
+        ],
+      ];
+
+    case "PERMISSION_RESOLVED": {
+      const updatedPerms = new Map(data.pendingPermissions);
+      updatedPerms.delete(signal.requestId);
+      return [
+        { ...data, pendingPermissions: updatedPerms },
+        [
+          {
+            type: "EMIT_EVENT",
+            eventType: "permission:resolved",
+            payload: { requestId: signal.requestId, behavior: signal.behavior },
+          },
+        ],
+      ];
+    }
+
+    case "PENDING_MESSAGE_ADDED": {
+      const shouldTransition = isLifecycleTransitionAllowed(data.lifecycle, "awaiting_backend");
+      const nextLifecycle = shouldTransition ? ("awaiting_backend" as const) : data.lifecycle;
+      return [
+        {
+          ...data,
+          lifecycle: nextLifecycle,
+          pendingMessages: [...data.pendingMessages, signal.message],
+        },
+        [{ type: "PERSIST_NOW" }],
+      ];
+    }
+
+    case "TEAM_STATE_DIFFED": {
+      if (signal.prevTeam === signal.currentTeam) return [data, []];
+      const teamEvents = diffTeamState(signal.sessionId, signal.prevTeam, signal.currentTeam);
+      const effects: Effect[] = [
+        {
+          type: "BROADCAST_SESSION_UPDATE",
+          patch: { team: signal.currentTeam ?? null } as Partial<
+            import("../../types/session-state.js").SessionState
+          >,
+        },
+        ...teamEvents.map(
+          (e) =>
+            ({
+              type: "EMIT_EVENT" as const,
+              eventType: e.type as string,
+              payload: e.payload,
+            }) satisfies Effect,
+        ),
+      ];
+      return [data, effects];
+    }
+
+    case "CAPABILITIES_APPLIED": {
+      const capabilities = {
+        commands: signal.commands,
+        models: signal.models,
+        account: signal.account,
+        receivedAt: Date.now(),
+      };
+      const nextData = { ...data, state: { ...data.state, capabilities } };
+      return [
+        nextData,
+        [
+          {
+            type: "BROADCAST",
+            message: {
+              type: "capabilities_ready",
+              commands: signal.commands,
+              models: signal.models,
+              account: signal.account,
+              skills: nextData.state.skills,
+            },
+          },
+          {
+            type: "EMIT_EVENT",
+            eventType: "capabilities:ready",
+            payload: {
+              commands: signal.commands,
+              models: signal.models,
+              account: signal.account,
+            },
+          },
+          { type: "PERSIST_NOW" },
+        ],
+      ];
+    }
+
+    case "MESSAGE_QUEUED":
+      return [
+        { ...data, queuedMessage: signal.queued },
+        [
+          {
+            type: "BROADCAST",
+            message: {
+              type: "message_queued",
+              consumer_id: signal.queued.consumerId,
+              display_name: signal.queued.displayName,
+              content: signal.queued.content,
+              images: signal.queued.images,
+              queued_at: signal.queued.queuedAt,
+            },
+          },
+          { type: "PERSIST_NOW" },
+        ],
+      ];
+
+    case "QUEUED_MESSAGE_EDITED":
+      if (!data.queuedMessage) return [data, []];
+      return [
+        {
+          ...data,
+          queuedMessage: { ...data.queuedMessage, content: signal.content, images: signal.images },
+        },
+        [
+          {
+            type: "BROADCAST",
+            message: {
+              type: "queued_message_updated",
+              content: signal.content,
+              images: signal.images,
+            },
+          },
+          { type: "PERSIST_NOW" },
+        ],
+      ];
+
+    case "QUEUED_MESSAGE_CANCELLED":
+      if (!data.queuedMessage) return [data, []];
+      return [
+        { ...data, queuedMessage: null },
+        [
+          { type: "BROADCAST", message: { type: "queued_message_cancelled" } },
+          { type: "PERSIST_NOW" },
+        ],
+      ];
+
+    case "QUEUED_MESSAGE_SENT":
+      if (!data.queuedMessage) return [data, []];
+      return [
+        { ...data, queuedMessage: null },
+        [{ type: "BROADCAST", message: { type: "queued_message_sent" } }, { type: "PERSIST_NOW" }],
+      ];
+
+    case "CAPABILITIES_TIMEOUT":
+      // Note: sessionId is injected by executeEffects EMIT_EVENT handler.
+      // coordinator-event-relay depends on this injection to route the event.
+      return [data, [{ type: "EMIT_EVENT", eventType: "capabilities:timeout", payload: {} }]];
+
     // ── No-op signals (handled by runtime or no pure data change) ────────
     case "PASSTHROUGH_ENQUEUED":
-    case "CAPABILITIES_TIMEOUT":
     case "CONSUMER_CONNECTED":
     case "CONSUMER_DISCONNECTED":
     case "GIT_INFO_RESOLVED":
@@ -254,7 +436,14 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
   }
 }
 
-/** Apply a lifecycle transition if allowed, returning unchanged data otherwise. */
+/**
+ * Apply a lifecycle transition if allowed, returning unchanged data otherwise.
+ *
+ * Silently rejects invalid transitions (pure reducer cannot log). The runtime
+ * detects no-ops via `nextData !== prevData` reference equality. Callers that
+ * need to diagnose a rejected transition should check `session.data.lifecycle`
+ * after the process() call.
+ */
 function applyLifecycleTransition(
   data: SessionData,
   next: LifecycleState,
@@ -303,12 +492,16 @@ function reduceInboundCommand(
         [...data.messageHistory, userMsg],
         config.maxMessageHistoryLength,
       );
+      // Transition lifecycle to active for backend-connected path (idle/active states).
+      const nextLifecycle: LifecycleState =
+        data.lifecycle === "idle" || data.lifecycle === "active" ? "active" : data.lifecycle;
       const nextData: SessionData = {
         ...data,
         lastStatus: "running",
+        lifecycle: nextLifecycle,
         messageHistory: nextHistory,
       };
-      return [nextData, [{ type: "BROADCAST", message: userMsg }]];
+      return [nextData, [{ type: "BROADCAST", message: userMsg }, { type: "PERSIST_NOW" }]];
     }
 
     case "set_model": {

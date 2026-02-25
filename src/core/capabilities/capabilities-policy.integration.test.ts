@@ -8,12 +8,39 @@ import { CapabilitiesPolicy } from "./capabilities-policy.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function createMockRuntime(session: any) {
+function createMockRuntime(session: any, broadcaster: any, emitEvent: any) {
   return {
     getState: () => session.data.state,
     process: (event: any) => {
-      if (event.type === "SYSTEM_SIGNAL" && event.signal.kind === "STATE_PATCHED") {
-        session.data.state = { ...session.data.state, ...event.signal.patch };
+      if (event.type !== "SYSTEM_SIGNAL") return;
+      const signal = event.signal;
+      if (signal.kind === "STATE_PATCHED") {
+        session.data.state = { ...session.data.state, ...signal.patch };
+      } else if (signal.kind === "CAPABILITIES_APPLIED") {
+        session.data.state = {
+          ...session.data.state,
+          capabilities: {
+            commands: signal.commands,
+            models: signal.models,
+            account: signal.account,
+            receivedAt: Date.now(),
+          },
+        };
+        broadcaster.broadcast(session, {
+          type: "capabilities_ready",
+          commands: signal.commands,
+          models: signal.models,
+          account: signal.account,
+          skills: session.data.state.skills,
+        });
+        emitEvent("capabilities:ready", {
+          sessionId: session.id,
+          commands: signal.commands,
+          models: signal.models,
+          account: signal.account,
+        });
+      } else if (signal.kind === "CAPABILITIES_TIMEOUT") {
+        emitEvent("capabilities:timeout", { sessionId: session.id });
       }
     },
     getPendingInitialize: () => session.pendingInitialize,
@@ -50,13 +77,10 @@ function createDeps(
   } as unknown as ConsumerBroadcaster;
   const emitEvent = vi.fn();
 
-  const protocol = new CapabilitiesPolicy(
-    config,
-    noopLogger,
-    broadcaster,
-    emitEvent,
-    (session: any) => ({ ...createMockRuntime(session), ...(runtimeOverrides ?? {}) }),
-  );
+  const protocol = new CapabilitiesPolicy(config, noopLogger, (session: any) => ({
+    ...createMockRuntime(session, broadcaster, emitEvent),
+    ...(runtimeOverrides ?? {}),
+  }));
 
   return { protocol, config, broadcaster, emitEvent };
 }
@@ -566,12 +590,35 @@ describe("CapabilitiesPolicy", () => {
 
     it("uses callback-backed state accessors when provided", () => {
       const session = createMockSession();
-      let state = { ...session.state, skills: ["commit"] };
-      const { protocol, broadcaster } = createDeps(undefined, {
+      let state = { ...session.data.state, skills: ["commit"] };
+      const { protocol, broadcaster, emitEvent } = createDeps(undefined, {
         getState: () => state,
         process: (event: any) => {
-          if (event.type === "SYSTEM_SIGNAL" && event.signal.kind === "STATE_PATCHED") {
-            state = { ...state, ...event.signal.patch };
+          if (event.type !== "SYSTEM_SIGNAL") return;
+          const signal = event.signal;
+          if (signal.kind === "CAPABILITIES_APPLIED") {
+            state = {
+              ...state,
+              capabilities: {
+                commands: signal.commands,
+                models: signal.models,
+                account: signal.account,
+                receivedAt: Date.now(),
+              },
+            };
+            broadcaster.broadcast(session, {
+              type: "capabilities_ready",
+              commands: signal.commands,
+              models: signal.models,
+              account: signal.account,
+              skills: state.skills,
+            });
+            emitEvent("capabilities:ready", {
+              sessionId: session.id,
+              commands: signal.commands,
+              models: signal.models,
+              account: signal.account,
+            });
           }
         },
       });

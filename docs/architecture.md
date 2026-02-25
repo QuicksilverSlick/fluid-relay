@@ -1,7 +1,7 @@
-# BeamCode Architecture (Post-Refactor)
+# BeamCode Architecture
 
-> Date: 2026-02-23
-> Status: Current state — all refactoring phases complete
+> Date: 2026-02-24
+> Status: Current state
 > Scope: Full system architecture — core, adapters, consumer, relay, daemon
 
 ## Table of Contents
@@ -158,7 +158,7 @@ The core is built around a **per-session actor** (`SessionRuntime`) that is the 
 | 6 | Policy services observe state and emit commands — they never mutate | Reconnect, idle, capabilities are advisors |
 | 7 | Explicit lifecycle states for each session | Testable state machine, no implicit status inference |
 | 8 | Session-scoped domain events flow from runtime; coordinator emits only global lifecycle events | Typed, meaningful events replace forwarding chains |
-| 9 | Direct method calls, not actor mailbox | Node.js is single-threaded — the principle matters, not the mechanism |
+| 9 | Synchronous processing of events to avoid interleaving | Each `process()` call completes state transition before next one starts |
 
 ### Three Bounded Contexts
 
@@ -167,8 +167,6 @@ The core is built around a **per-session actor** (`SessionRuntime`) that is the 
 | **SessionControl** | Global lifecycle, per-session actor ownership, persistence | `SessionCoordinator`, `session/SessionRuntime` (per-session), `session/SessionRepository`, `policies/*`, `capabilities/*` |
 | **BackendPlane** | Adapter abstraction, connect/send/stream | `backend/BackendConnector`, `AdapterResolver`, `BackendAdapter`(s) |
 | **ConsumerPlane** | WebSocket transport, auth, rate limits, outbound push | `consumer/ConsumerGateway`, `consumer/ConsumerBroadcaster`, `consumer/ConsumerGatekeeper` |
-
-> **Note:** The pre-refactor "MessagePlane" bounded context has been absorbed. The `UnifiedMessageRouter` was deleted — its state-transition logic moved into the `SessionReducer` (pure), its broadcast/emit logic became `Effect` variants executed by the runtime, and its pure mapping functions remain in `consumer-message-mapper.ts`.
 
 ---
 
@@ -230,14 +228,12 @@ The core is built around a **per-session actor** (`SessionRuntime`) that is the 
 **Context:** SessionControl
 **Writes state:** No (delegates to runtime via `process()`)
 
-The SessionCoordinator is the **top-level orchestrator** and the only composition root for session infrastructure. It directly owns the runtime map, service registry, transport hub, policies, and extracted services.
-
-> **Key change from pre-refactor:** `SessionBridge` and `compose-*-plane.ts` factories have been removed. The coordinator wires services directly via `buildServices()` and manages the `Map<string, SessionRuntime>` itself.
+The SessionCoordinator is the **top-level orchestrator** and the only composition root for session infrastructure. It directly owns the runtime map, service registry, transport hub, policies, and extracted services. It uses a `SessionLeaseCoordinator` to ensure only one instance of the bridge can mutate a given session (lease-based ownership).
 
 **Responsibilities:**
 - **Create sessions:** Routes to the correct adapter (inverted vs direct connection), initiates the backend, seeds session state
 - **Delete sessions:** Orchestrates teardown — kills CLI process, clears dedup state, closes WS connections, removes from registry
-- **Route events to runtimes:** `coordinator.process(sessionId, event)` looks up the runtime and calls `runtime.process(event)`
+- **Route events to runtimes:** Specialized routing callbacks (`routeConsumerMessage`, `routeUnifiedMessage`, etc.) lookup the runtime and call `runtime.process(event)`
 - **Own the service registry:** Constructs `SessionServices` (broadcaster, connector, storage, tracer, logger) once at startup
 - **Restore from storage:** Delegates to `StartupRestoreService`
 - **React to domain events:** Delegates to `CoordinatorEventRelay`
@@ -323,10 +319,10 @@ The SessionRuntime is a **per-session actor**. One instance exists per active se
 │                                                                        │
 │  ┌─── Single Entry Point ────────────────────────────────── ────────┐  │
 │  │                                                                  │  │
-│  │  async process(event: SessionEvent): Promise<void>               │  │
+│  │  process(event: SessionEvent): void                              │  │
 │  │    1. [nextData, effects] = sessionReducer(this.data, event)     │  │
 │  │    2. if (nextData !== this.data) { this.data = nextData; dirty }│  │
-│  │    3. for (effect of effects) { executeEffect(effect) }          │  │
+│  │    3. executeEffects(effects)                                    │  │
 │  │                                                                  │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 │                                                                        │
@@ -354,7 +350,7 @@ The SessionRuntime is a **per-session actor**. One instance exists per active se
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Serialization:** To avoid async interleaving across `await` boundaries, each runtime processes events through a lightweight per-session serial executor (promise chain).
+**Serialization:** Event processing is synchronous. Only one `process()` call runs at a time per runtime instance, avoiding race conditions on session state.
 
 ---
 
@@ -425,11 +421,13 @@ The EffectExecutor translates `Effect` descriptions into actual I/O operations. 
 - **Broadcast state patch:** `BROADCAST_SESSION_UPDATE` → `ConsumerBroadcaster.broadcast()` with `session_update` type
 - **Emit domain events:** `EMIT_EVENT` → injects `sessionId` and calls `emitEvent(type, payload)`
 - **Queue drain:** `AUTO_SEND_QUEUED` → `MessageQueueHandler.autoSendQueuedMessage()`
+- **Send to backend:** `SEND_TO_BACKEND` → `BackendConnector.sendToBackend()`
+- **Resolve git info:** `RESOLVE_GIT_INFO` → `GitInfoTracker.resolveGitInfo()`
+- **Flush to disk:** `PERSIST_NOW` → `SessionRepository.persist()`
 
 **Does NOT do:**
 - Decide which effects to produce (the reducer does that)
 - Hold any state
-- Send to backends, resolve git info, handle capabilities, or trace messages (those are done directly by `SessionRuntime` methods that have access to the live `SessionRuntimeDeps`)
 
 ---
 
@@ -637,8 +635,6 @@ type SystemSignal =
 
 Side effects returned by the reducer. Never executed inside the reducer — the runtime's `EffectExecutor` handles them.
 
-> **Note:** Backend sends (`sendToBackend`), git resolution, capabilities handshake, and trace I/O are performed directly by `SessionRuntime` methods (not through the `Effect` system), because they require live runtime handles (`BackendSession`, `GitTracker`, etc.) not available to the pure reducer.
-
 ```typescript
 type Effect =
   // Broadcast to consumers
@@ -650,7 +646,12 @@ type Effect =
   | { type: "EMIT_EVENT"; eventType: string; payload: unknown }
 
   // Queue drain
-  | { type: "AUTO_SEND_QUEUED" };
+  | { type: "AUTO_SEND_QUEUED" }
+
+  // I/O
+  | { type: "SEND_TO_BACKEND"; message: UnifiedMessage }
+  | { type: "RESOLVE_GIT_INFO" }
+  | { type: "PERSIST_NOW" };
 ```
 
 ---
@@ -1318,12 +1319,6 @@ CoreSessionState → DevToolSessionState → SessionState
   consumer/ + backend/ modules emit SessionEvents to coordinator.
   policies/ observe and advise via DomainEventBus.
   coordinator/ services handle cross-session concerns.
-
-  DELETED (post-refactor):
-  • session-bridge.ts — absorbed into coordinator
-  • session-bridge/ (compose-*-plane.ts) — no longer needed
-  • unified-message-router.ts — logic split into reducer + effects
-  • bridge/ service modules — simplified into coordinator
 ```
 
 ---
@@ -1379,17 +1374,17 @@ src/core/
 │   └── reconnect-policy.ts          — awaiting_backend watchdog (~119L)
 │
 ├── session/                         — Per-session state + lifecycle + reducer
-│   ├── session-runtime.ts           — per-session actor: process(event) (~859L)
-│   ├── session-reducer.ts           — top-level pure reducer (~468L)
+│   ├── session-runtime.ts           — per-session actor: process(event) (~733L)
+│   ├── session-reducer.ts           — top-level pure reducer (~852L)
 │   ├── session-state-reducer.ts     — AI context sub-reducer (~273L)
 │   ├── history-reducer.ts           — message history sub-reducer (~133L)
 │   ├── effect-mapper.ts             — event → Effect[] mapping (~104L)
-│   ├── effect-executor.ts           — Effect → I/O dispatch (~62L)
-│   ├── effect-types.ts              — Effect union type (~26L)
+│   ├── effect-executor.ts           — Effect → I/O dispatch (~95L)
+│   ├── effect-types.ts              — Effect union type (~40L)
 │   ├── session-event.ts             — SessionEvent, SystemSignal types (~55L)
 │   ├── session-data.ts              — SessionData, SessionHandles types (~78L)
-│   ├── session-repository.ts        — in-memory store + persistence + Session type (~241L)
-│   ├── session-lease-coordinator.ts — per-session serial execution coordinator
+│   ├── session-repository.ts        — in-memory store + persistence + Session type (~240L)
+│   ├── session-lease-coordinator.ts ── per-session lease ownership coordinator
 │   ├── session-lifecycle.ts         — lifecycle state transitions
 │   ├── session-transport-hub.ts     — transport wiring per session
 │   ├── cli-gateway.ts               — CLI WebSocket connection handler

@@ -10,17 +10,48 @@ import { MessageQueueHandler } from "./message-queue-handler.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function createMockRuntime(session: any) {
+function createMockRuntime(session: any, broadcaster: ConsumerBroadcaster) {
   return {
     getLastStatus: () => session.data.lastStatus,
     getQueuedMessage: () => session.data.queuedMessage,
     getConsumerIdentity: (ws: any) => session.consumerSockets.get(ws),
     process: (event: any) => {
-      if (event.type === "SYSTEM_SIGNAL") {
-        if (event.signal.kind === "LAST_STATUS_UPDATED") {
-          session.data.lastStatus = event.signal.status;
-        } else if (event.signal.kind === "QUEUED_MESSAGE_UPDATED") {
-          session.data.queuedMessage = event.signal.message;
+      if (event.type !== "SYSTEM_SIGNAL") return;
+      const signal = event.signal;
+      if (signal.kind === "LAST_STATUS_UPDATED") {
+        session.data.lastStatus = signal.status;
+      } else if (signal.kind === "MESSAGE_QUEUED") {
+        session.data.queuedMessage = signal.queued;
+        broadcaster.broadcast(session, {
+          type: "message_queued",
+          consumer_id: signal.queued.consumerId,
+          display_name: signal.queued.displayName,
+          content: signal.queued.content,
+          images: signal.queued.images,
+          queued_at: signal.queued.queuedAt,
+        });
+      } else if (signal.kind === "QUEUED_MESSAGE_EDITED") {
+        if (session.data.queuedMessage) {
+          session.data.queuedMessage = {
+            ...session.data.queuedMessage,
+            content: signal.content,
+            images: signal.images,
+          };
+          broadcaster.broadcast(session, {
+            type: "queued_message_updated",
+            content: signal.content,
+            images: signal.images,
+          });
+        }
+      } else if (signal.kind === "QUEUED_MESSAGE_CANCELLED") {
+        if (session.data.queuedMessage) {
+          session.data.queuedMessage = null;
+          broadcaster.broadcast(session, { type: "queued_message_cancelled" });
+        }
+      } else if (signal.kind === "QUEUED_MESSAGE_SENT") {
+        if (session.data.queuedMessage) {
+          session.data.queuedMessage = null;
+          broadcaster.broadcast(session, { type: "queued_message_sent" });
         }
       }
     },
@@ -30,8 +61,10 @@ function createMockRuntime(session: any) {
 function setup() {
   const broadcaster = new ConsumerBroadcaster(noopLogger);
   const sendUserMessage = vi.fn();
-  const handler = new MessageQueueHandler(broadcaster, sendUserMessage, (session: any) =>
-    createMockRuntime(session),
+  const handler = new MessageQueueHandler(
+    (ws, message) => broadcaster.sendTo(ws, message as any),
+    sendUserMessage,
+    (session: any) => createMockRuntime(session, broadcaster),
   );
 
   const ws = createTestSocket();
@@ -57,7 +90,7 @@ describe("MessageQueueHandler", () => {
       let status: "compacting" | "idle" | "running" | null = "running";
       let queued: any = null;
       const handler = new MessageQueueHandler(
-        broadcaster,
+        (ws, message) => broadcaster.sendTo(ws, message as any),
         sendUserMessage,
         () =>
           ({
@@ -68,8 +101,8 @@ describe("MessageQueueHandler", () => {
               if (event.type === "SYSTEM_SIGNAL") {
                 if (event.signal.kind === "LAST_STATUS_UPDATED") {
                   status = event.signal.status;
-                } else if (event.signal.kind === "QUEUED_MESSAGE_UPDATED") {
-                  queued = event.signal.message;
+                } else if (event.signal.kind === "MESSAGE_QUEUED") {
+                  queued = event.signal.queued;
                 }
               }
             },
@@ -196,7 +229,7 @@ describe("MessageQueueHandler", () => {
       expect(session.data.queuedMessage.content).toBe("existing");
     });
 
-    it("is a silent no-op when ws has no identity", () => {
+    it("sends error to ws and does not queue when ws has no identity", () => {
       const { handler, sendUserMessage, session } = setup();
       session.data.lastStatus = "running";
 
@@ -207,7 +240,8 @@ describe("MessageQueueHandler", () => {
 
       expect(sendUserMessage).not.toHaveBeenCalled();
       expect(session.data.queuedMessage).toBeNull();
-      expect(unknownWs.sentMessages).toHaveLength(0);
+      expect(unknownWs.sentMessages).toHaveLength(1);
+      expect(JSON.parse(unknownWs.sentMessages[0] as string)).toMatchObject({ type: "error" });
     });
 
     it("includes images in the queued message and broadcast", () => {

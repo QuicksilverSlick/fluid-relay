@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { noopTracer } from "../messaging/message-tracer.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
 import { executeEffects } from "./effect-executor.js";
 import type { Session } from "./session-repository.js";
@@ -18,6 +19,7 @@ function makeDeps() {
     backendConnector: { sendToBackend: vi.fn() },
     store: { persist: vi.fn() },
     gitTracker: { resolveGitInfo: vi.fn() },
+    tracer: noopTracer,
   };
 }
 
@@ -153,5 +155,45 @@ describe("executeEffects", () => {
     );
 
     expect(order).toEqual(["broadcast", "auto_send"]);
+  });
+
+  it("calls tracer.send with t4_to_consumer phase before broadcasting BROADCAST effect", () => {
+    const deps = makeDeps();
+    const mockTracer = { ...noopTracer, send: vi.fn() };
+    const session = makeSession("sess-1");
+    const message = { type: "status_change", status: "idle" } as any;
+    const callOrder: string[] = [];
+    mockTracer.send.mockImplementation(() => callOrder.push("tracer"));
+    vi.mocked(deps.broadcaster.broadcast).mockImplementation(() => callOrder.push("broadcast"));
+
+    executeEffects([{ type: "BROADCAST", message }], session, { ...deps, tracer: mockTracer });
+
+    expect(mockTracer.send).toHaveBeenCalledWith("bridge", "status_change", message, {
+      sessionId: "sess-1",
+      phase: "t4_to_consumer",
+    });
+    expect(callOrder).toEqual(["tracer", "broadcast"]);
+  });
+
+  it("calls tracer.send with t1_to_backend phase for SEND_TO_BACKEND effect", () => {
+    const deps = makeDeps();
+    const mockTracer = { ...noopTracer, send: vi.fn() };
+    const session = makeSession("sess-2");
+    const msg = createUnifiedMessage({
+      type: "user_message",
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+      metadata: {},
+    });
+
+    executeEffects([{ type: "SEND_TO_BACKEND", message: msg }], session, {
+      ...deps,
+      tracer: mockTracer,
+    });
+
+    expect(mockTracer.send).toHaveBeenCalledWith("bridge", msg.type, msg, {
+      sessionId: "sess-2",
+      phase: "t1_to_backend",
+    });
   });
 });

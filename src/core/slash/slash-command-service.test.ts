@@ -1,19 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockSession } from "../../testing/cli-message-factories.js";
-import { noopTracer } from "../messaging/message-tracer.js";
 import { SlashCommandService } from "./slash-command-service.js";
 
 describe("SlashCommandService", () => {
   it("handles inbound slash commands with generated ids and dispatches chain", () => {
     const session = createMockSession({ id: "s1" });
-    const tracer = { ...noopTracer, recv: vi.fn() };
     const commandChain = { dispatch: vi.fn() };
     const localHandler = {
       handles: vi.fn(() => false),
       executeLocal: vi.fn(),
     };
     const service = new SlashCommandService({
-      tracer: tracer as any,
       now: () => 1700000000000,
       generateTraceId: () => "t_test",
       generateSlashRequestId: () => "sr_test",
@@ -23,17 +20,6 @@ describe("SlashCommandService", () => {
 
     service.handleInbound(session, { type: "slash_command", command: "/help" });
 
-    expect(tracer.recv).toHaveBeenCalledWith(
-      "bridge",
-      "slash_command",
-      expect.objectContaining({ command: "/help" }),
-      expect.objectContaining({
-        sessionId: "s1",
-        traceId: "t_test",
-        requestId: "sr_test",
-        command: "/help",
-      }),
-    );
     expect(commandChain.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         command: "/help",
@@ -50,7 +36,6 @@ describe("SlashCommandService", () => {
     const session = createMockSession({ id: "s1" });
     const commandChain = { dispatch: vi.fn() };
     const service = new SlashCommandService({
-      tracer: { ...noopTracer, recv: vi.fn() } as any,
       now: () => 1700000000000,
       generateTraceId: () => "t_test",
       generateSlashRequestId: () => "sr_test",
@@ -80,7 +65,6 @@ describe("SlashCommandService", () => {
       executeLocal: vi.fn(async () => ({ content: "help", source: "emulated" as const })),
     };
     const service = new SlashCommandService({
-      tracer: noopTracer,
       now: () => 1700000000000,
       generateTraceId: () => "t_test",
       generateSlashRequestId: () => "sr_test",
@@ -99,7 +83,6 @@ describe("SlashCommandService", () => {
     const session = createMockSession({ id: "s1" });
     const commandChain = { dispatch: vi.fn() };
     const service = new SlashCommandService({
-      tracer: noopTracer,
       now: () => 1700000000000,
       generateTraceId: () => "t_test",
       generateSlashRequestId: () => "sr_test",

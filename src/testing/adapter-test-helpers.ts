@@ -340,18 +340,17 @@ export function createBridgeWithAdapter(options?: {
       }),
   });
 
-  capabilitiesPolicy = new CapabilitiesPolicy(config, logger, broadcaster, emitEvent, (session) =>
+  capabilitiesPolicy = new CapabilitiesPolicy(config, logger, (session) =>
     getOrCreateRuntime(session),
   );
 
   queueHandler = new MessageQueueHandler(
-    broadcaster,
+    (ws, message) => broadcaster.sendTo(ws, message as any),
     (sessionId, content, opts?: { images?: { media_type: string; data: string }[] }) =>
       withMutableSession(sessionId, "sendUserMessage", (s) =>
         getOrCreateRuntime(s).sendUserMessage(content, opts),
       ),
     (session) => getOrCreateRuntime(session),
-    (session) => store.persistSync(session),
   );
 
   const localHandler = new LocalHandler({
@@ -404,7 +403,6 @@ export function createBridgeWithAdapter(options?: {
     }),
   ]);
   slashService = new SlashCommandService({
-    tracer,
     now: () => Date.now(),
     generateTraceId: () => generateTraceId(),
     generateSlashRequestId: () => generateSlashRequestId(),
@@ -447,7 +445,6 @@ export function createBridgeWithAdapter(options?: {
         getOrCreateRuntime(s).process({ type: "INBOUND_COMMAND", command: msg, ws }),
       ),
     maxConsumerMessageSize: MAX_CONSUMER_MESSAGE_SIZE,
-    tracer,
   });
 
   // ── Lifecycle helpers ────────────────────────────────────────────────────

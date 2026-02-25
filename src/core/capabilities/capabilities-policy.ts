@@ -19,15 +19,10 @@ import type {
   InitializeModel,
 } from "../../types/cli-messages.js";
 import type { ResolvedConfig } from "../../types/config.js";
-import type { ConsumerBroadcaster } from "../consumer/consumer-broadcaster.js";
 import type { SessionData } from "../session/session-data.js";
 import type { Session } from "../session/session-repository.js";
 import type { SessionRuntime } from "../session/session-runtime.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
-
-// ─── Dependency contracts ────────────────────────────────────────────────────
-
-type EmitEvent = (type: string, payload: unknown) => void;
 
 // ─── CapabilitiesPolicy ─────────────────────────────────────────────────────
 
@@ -35,8 +30,6 @@ export class CapabilitiesPolicy {
   constructor(
     private config: ResolvedConfig,
     private logger: Logger,
-    private broadcaster: ConsumerBroadcaster,
-    private emitEvent: EmitEvent,
     private getRuntime: (session: Session) => SessionRuntime,
   ) {}
 
@@ -72,7 +65,10 @@ export class CapabilitiesPolicy {
     const timer = setTimeout(() => {
       if (this.getPendingInitialize(session)?.requestId === requestId) {
         this.setPendingInitialize(session, null);
-        this.emitEvent("capabilities:timeout", { sessionId: session.id });
+        this.getRuntime(session).process({
+          type: "SYSTEM_SIGNAL",
+          signal: { kind: "CAPABILITIES_TIMEOUT" },
+        });
       }
     }, this.config.initializeTimeoutMs);
     this.setPendingInitialize(session, { requestId, timer });
@@ -151,10 +147,7 @@ export class CapabilitiesPolicy {
   ): void {
     this.getRuntime(session).process({
       type: "SYSTEM_SIGNAL",
-      signal: {
-        kind: "STATE_PATCHED",
-        patch: { capabilities: { commands, models, account, receivedAt: Date.now() } },
-      },
+      signal: { kind: "CAPABILITIES_APPLIED", commands, models, account },
     });
     this.logger.info(
       `Capabilities received for session ${session.id}: ${commands.length} commands, ${models.length} models`,
@@ -163,14 +156,5 @@ export class CapabilitiesPolicy {
     if (commands.length > 0) {
       this.registerCLICommands(session, commands);
     }
-
-    this.broadcaster.broadcast(session, {
-      type: "capabilities_ready",
-      commands,
-      models,
-      account,
-      skills: this.getState(session).skills,
-    });
-    this.emitEvent("capabilities:ready", { sessionId: session.id, commands, models, account });
   }
 }

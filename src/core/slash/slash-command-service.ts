@@ -9,7 +9,6 @@
  */
 
 import type { InboundCommand } from "../interfaces/runtime-commands.js";
-import type { MessageTracer } from "../messaging/message-tracer.js";
 import type { Session } from "../session/session-repository.js";
 import type {
   CommandHandlerContext,
@@ -18,7 +17,6 @@ import type {
 } from "./slash-command-chain.js";
 
 export interface SlashCommandServiceDeps {
-  tracer: MessageTracer;
   now: () => number;
   generateTraceId: () => string;
   generateSlashRequestId: () => string;
@@ -32,13 +30,6 @@ export class SlashCommandService {
   handleInbound(session: Session, msg: Extract<InboundCommand, { type: "slash_command" }>): void {
     const slashRequestId = msg.request_id ?? this.deps.generateSlashRequestId();
     const traceId = this.deps.generateTraceId();
-    this.deps.tracer.recv("bridge", "slash_command", msg, {
-      sessionId: session.id,
-      traceId,
-      requestId: slashRequestId,
-      command: msg.command,
-      phase: "recv",
-    });
     this.deps.commandChain.dispatch({
       command: msg.command,
       requestId: msg.request_id,
