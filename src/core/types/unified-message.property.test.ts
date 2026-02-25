@@ -10,7 +10,6 @@ import {
   isToolUseContent,
   isUnifiedMessage,
   type UnifiedContent,
-  type UnifiedMessage,
   type UnifiedMessageType,
   type UnifiedRole,
 } from "./unified-message.js";

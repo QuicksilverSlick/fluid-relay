@@ -929,7 +929,7 @@ describe("BackendConnector — cliUserEchoToText via passthrough", () => {
   });
 
   it("handles object content with text property", async () => {
-    const { testSession, deps } = await setupWithPassthrough();
+    const { testSession: _testSession, deps: _deps } = await setupWithPassthrough();
 
     // Reset pendingPassthroughs for another call
     const session2 = createSession({

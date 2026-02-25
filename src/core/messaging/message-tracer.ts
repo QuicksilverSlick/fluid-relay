@@ -300,7 +300,7 @@ export class MessageTracerImpl implements MessageTracer {
   constructor(opts: MessageTracerOptions) {
     this.level = opts.level;
     this.allowSensitive = opts.allowSensitive;
-    this.writeLine = opts.write ?? ((line) => process.stderr.write(line + "\n"));
+    this.writeLine = opts.write ?? ((line) => process.stderr.write(`${line}\n`));
     this.now = opts.now ?? (() => process.hrtime.bigint());
     this.staleTimeoutMs = opts.staleTimeoutMs ?? 30_000;
 
@@ -366,10 +366,11 @@ export class MessageTracerImpl implements MessageTracer {
     if (sessionId) this.errorTraceSessions.set(traceId, sessionId);
     // Evict oldest error entries to bound memory
     if (this.errorTraces.size > MessageTracerImpl.MAX_ERRORS) {
-      const it = this.errorTraces.values();
-      const oldest = it.next().value!;
-      this.errorTraces.delete(oldest);
-      this.errorTraceSessions.delete(oldest);
+      const oldest = this.errorTraces.values().next().value;
+      if (oldest !== undefined) {
+        this.errorTraces.delete(oldest);
+        this.errorTraceSessions.delete(oldest);
+      }
     }
     this.emit({
       layer,
@@ -472,8 +473,10 @@ export class MessageTracerImpl implements MessageTracer {
     if (!seq) {
       // Evict oldest session to bound memory
       if (this.sessionSeqs.size >= MessageTracerImpl.MAX_SESSIONS) {
-        const oldest = this.sessionSeqs.keys().next().value!;
-        this.sessionSeqs.delete(oldest);
+        const oldest = this.sessionSeqs.keys().next().value;
+        if (oldest !== undefined) {
+          this.sessionSeqs.delete(oldest);
+        }
       }
       seq = { counter: 0 };
       this.sessionSeqs.set(sessionId, seq);
@@ -652,10 +655,13 @@ export class MessageTracerImpl implements MessageTracer {
     }
     // Evict oldest stale entries to bound memory
     while (this.staleTraces.size > MessageTracerImpl.MAX_STALE) {
-      const it = this.staleTraces.values();
-      const oldest = it.next().value!;
-      this.staleTraces.delete(oldest);
-      this.staleTraceSessions.delete(oldest);
+      const oldest = this.staleTraces.values().next().value;
+      if (oldest !== undefined) {
+        this.staleTraces.delete(oldest);
+        this.staleTraceSessions.delete(oldest);
+      } else {
+        break;
+      }
     }
   }
 

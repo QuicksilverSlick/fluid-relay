@@ -124,13 +124,13 @@ describe("SessionTransportHub", () => {
 
   describe("handleCliConnection", () => {
     let capturedOnCLI: (socket: any, sessionId: string) => void;
-    let capturedOnConsumer: (socket: any, context: any) => void;
+    let _capturedOnConsumer: (socket: any, context: any) => void;
 
     function setupServer(overrides: Partial<SessionTransportHubDeps> = {}) {
       const server = {
         listen: vi.fn(async (onCli: any, onConsumer: any) => {
           capturedOnCLI = onCli;
-          capturedOnConsumer = onConsumer;
+          _capturedOnConsumer = onConsumer;
         }),
         close: vi.fn().mockResolvedValue(undefined),
       };

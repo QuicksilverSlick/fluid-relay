@@ -660,7 +660,7 @@ describe("CodexAdapter", () => {
 
     it("rejects when handshake times out", async () => {
       vi.useFakeTimers();
-      const ws = setupOpenableWs();
+      const _ws = setupOpenableWs();
       // Don't intercept initialize — let the handshake hang
 
       const connectPromise = adapter.connect({ sessionId: "hs-timeout" });

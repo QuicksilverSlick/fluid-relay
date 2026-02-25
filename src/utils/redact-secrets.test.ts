@@ -15,22 +15,22 @@ describe("redactSecrets", () => {
   });
 
   it("redacts GitHub personal access tokens (ghp_*)", () => {
-    const token = "ghp_" + "a".repeat(36);
+    const token = `ghp_${"a".repeat(36)}`;
     expect(redactSecrets(`token: ${token}`)).toBe("token: [REDACTED]");
   });
 
   it("redacts GitHub OAuth tokens (gho_*)", () => {
-    const token = "gho_" + "b".repeat(36);
+    const token = `gho_${"b".repeat(36)}`;
     expect(redactSecrets(`token: ${token}`)).toBe("token: [REDACTED]");
   });
 
   it("redacts GitHub fine-grained PATs (github_pat_*)", () => {
-    const token = "github_pat_" + "c".repeat(22);
+    const token = `github_pat_${"c".repeat(22)}`;
     expect(redactSecrets(`token: ${token}`)).toBe("token: [REDACTED]");
   });
 
   it("redacts Bearer tokens", () => {
-    const bearer = "Bearer " + "x".repeat(30);
+    const bearer = `Bearer ${"x".repeat(30)}`;
     expect(redactSecrets(`Authorization: ${bearer}`)).toBe("Authorization: [REDACTED]");
   });
 
@@ -65,7 +65,7 @@ describe("redactSecrets", () => {
   });
 
   it("redacts multiple secrets in one string", () => {
-    const input = "keys: sk-ant-abc123 and ghp_" + "d".repeat(36);
+    const input = `keys: sk-ant-abc123 and ghp_${"d".repeat(36)}`;
     const result = redactSecrets(input);
     expect(result).toBe("keys: [REDACTED] and [REDACTED]");
   });

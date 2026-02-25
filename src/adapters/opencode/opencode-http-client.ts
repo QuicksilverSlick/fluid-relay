@@ -97,7 +97,7 @@ export class OpencodeHttpClient {
     };
 
     if (this.authHeader) {
-      headers["Authorization"] = this.authHeader;
+      headers.Authorization = this.authHeader;
     }
 
     const res = await globalThis.fetch(url.toString(), {

@@ -98,7 +98,6 @@ const harness = vi.hoisted(() => {
     info = loggerInfo;
     warn = loggerWarn;
     error = loggerError;
-    constructor(_opts: unknown) {}
   }
 
   return {
@@ -148,19 +147,13 @@ vi.mock("../adapters/adapter-resolver.js", () => ({
   createAdapterResolver: harness.createAdapterResolver,
 }));
 vi.mock("../adapters/claude/claude-launcher.js", () => ({
-  ClaudeLauncher: class {
-    constructor(_opts: unknown) {}
-  },
+  ClaudeLauncher: class {},
 }));
 vi.mock("../adapters/composite-metrics-collector.js", () => ({
-  CompositeMetricsCollector: class {
-    constructor(_collectors: unknown[]) {}
-  },
+  CompositeMetricsCollector: class {},
 }));
 vi.mock("../adapters/console-metrics-collector.js", () => ({
-  ConsoleMetricsCollector: class {
-    constructor(_logger: unknown, _errorAggregator: unknown) {}
-  },
+  ConsoleMetricsCollector: class {},
 }));
 vi.mock("../adapters/default-git-resolver.js", () => ({
   DefaultGitResolver: class {},
@@ -169,9 +162,7 @@ vi.mock("../adapters/error-aggregator.js", () => ({
   ErrorAggregator: class {},
 }));
 vi.mock("../adapters/file-storage.js", () => ({
-  FileStorage: class {
-    constructor(_dir: string) {}
-  },
+  FileStorage: class {},
 }));
 vi.mock("../adapters/node-process-manager.js", () => ({
   NodeProcessManager: class {},
@@ -184,9 +175,7 @@ vi.mock("../adapters/structured-logger.js", () => ({
   StructuredLogger: harness.MockStructuredLogger,
 }));
 vi.mock("../adapters/token-bucket-limiter.js", () => ({
-  TokenBucketLimiter: class {
-    constructor(_burstSize: number, _refillIntervalMs: number, _tokensPerInterval: number) {}
-  },
+  TokenBucketLimiter: class {},
 }));
 vi.mock("../core/messaging/message-tracer.js", () => ({
   MessageTracerImpl: harness.MockMessageTracerImpl,

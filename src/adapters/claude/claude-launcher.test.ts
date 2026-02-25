@@ -398,7 +398,7 @@ describe("ClaudeLauncher", () => {
 
     it("beforeSpawn hook is called with correct args", () => {
       const beforeSpawn = vi.fn();
-      const { launcher, pm } = createLauncher({ beforeSpawn });
+      const { launcher, pm: _pm } = createLauncher({ beforeSpawn });
       launcher.launch({});
       expect(beforeSpawn).toHaveBeenCalledWith(
         "test-uuid-0",

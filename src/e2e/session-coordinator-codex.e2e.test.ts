@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { SessionCoordinator } from "../core/session-coordinator.js";
 import {
   assistantTextContains,
-  canBindLocalhostSync,
   closeWebSockets,
   connectConsumerAndWaitReady,
   deleteTrace,
