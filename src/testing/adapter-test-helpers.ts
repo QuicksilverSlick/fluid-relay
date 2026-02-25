@@ -113,7 +113,7 @@ export class MockBackendSession implements BackendSession {
   readonly sessionId: string;
   readonly channel = createMessageChannel();
   readonly sentMessages: UnifiedMessage[] = [];
-  readonly sentRawMessages: string[] = [];
+  readonly sentInitializeRequestIds: string[] = [];
   private _closed = false;
 
   constructor(sessionId: string) {
@@ -125,9 +125,9 @@ export class MockBackendSession implements BackendSession {
     this.sentMessages.push(message);
   }
 
-  sendRaw(ndjson: string): void {
+  initialize(requestId: string): void {
     if (this._closed) throw new Error("Session is closed");
-    this.sentRawMessages.push(ndjson);
+    this.sentInitializeRequestIds.push(requestId);
   }
 
   get messages(): AsyncIterable<UnifiedMessage> {
@@ -766,7 +766,7 @@ export class PassthroughBackendSession implements BackendSession {
     this.sentMessages.push(message);
   }
 
-  sendRaw(): void {}
+  initialize(_requestId: string): void {}
 
   get messages(): AsyncIterable<UnifiedMessage> {
     return {

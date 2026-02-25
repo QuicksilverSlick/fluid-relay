@@ -1108,7 +1108,7 @@ describe("CodexSession — finish behavior", () => {
     expect(result.done).toBe(true);
   });
 
-  it("sendRaw is not defined (CodexSession does not support raw NDJSON)", () => {
+  it("initialize is not defined (CodexSession does not support the initialize handshake)", () => {
     const ws = new MockWebSocket();
     const launcher = new CodexLauncher({ processManager: createMockProcessManager() });
     const session = new CodexSession({
@@ -1118,7 +1118,7 @@ describe("CodexSession — finish behavior", () => {
       threadId: "t-1",
     });
 
-    expect(session.sendRaw).toBeUndefined();
+    expect(session.initialize).toBeUndefined();
     ws.close();
   });
 });

@@ -48,13 +48,6 @@ export class CapabilitiesPolicy {
     this.getRuntime(session).setPendingInitialize(pendingInitialize);
   }
 
-  private trySendRawToBackend(
-    session: Session,
-    ndjson: string,
-  ): "sent" | "unsupported" | "no_backend" {
-    return this.getRuntime(session).trySendRawToBackend(ndjson);
-  }
-
   sendInitializeRequest(session: Session): void {
     if (this.getPendingInitialize(session)) return; // dedup
     const requestId = randomUUID();
@@ -69,17 +62,20 @@ export class CapabilitiesPolicy {
     }, this.config.initializeTimeoutMs);
     this.setPendingInitialize(session, { requestId, timer });
 
-    const ndjson = JSON.stringify({
-      type: "control_request",
-      request_id: requestId,
-      request: { subtype: "initialize" },
-    });
-
-    if (this.trySendRawToBackend(session, ndjson) === "unsupported") {
-      // Adapter doesn't support raw NDJSON (e.g. Codex) -- cancel the
-      // initialize request. Capabilities arrive via the init response instead.
+    const result = this.getRuntime(session).tryInitializeBackend(requestId);
+    if (result === "unsupported") {
+      // Adapter doesn't support the initialize handshake (e.g. Codex) —
+      // capabilities arrive via the init response instead.
       this.logger.info(
-        `Skipping NDJSON initialize for session ${session.id}: adapter does not support sendRaw`,
+        `Skipping initialize for session ${session.id}: adapter does not support initialize`,
+      );
+      clearTimeout(timer);
+      this.setPendingInitialize(session, null);
+    } else if (result === "no_backend") {
+      // Backend not yet attached — cancel the pending initialize so the timer
+      // doesn't fire a spurious CAPABILITIES_TIMEOUT.
+      this.logger.warn(
+        `sendInitializeRequest called for session ${session.id} before backend connected — cancelling`,
       );
       clearTimeout(timer);
       this.setPendingInitialize(session, null);
@@ -124,7 +120,12 @@ export class CapabilitiesPolicy {
     const response = m.response as
       | { commands?: unknown[]; models?: unknown[]; account?: unknown }
       | undefined;
-    if (!response) return;
+    if (!response) {
+      this.logger.warn(
+        `Initialize control_response for session ${session.id} has no response body`,
+      );
+      return;
+    }
 
     const commands = Array.isArray(response.commands)
       ? (response.commands as InitializeCommand[])

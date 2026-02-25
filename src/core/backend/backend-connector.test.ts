@@ -29,7 +29,7 @@ function createDeps(overrides?: Partial<BackendConnectorDeps>): BackendConnector
       connect: vi.fn().mockResolvedValue({
         sessionId: "s1",
         send: vi.fn(),
-        sendRaw: vi.fn(),
+        initialize: vi.fn(),
         messages: { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) },
         close: vi.fn().mockResolvedValue(undefined),
       }),

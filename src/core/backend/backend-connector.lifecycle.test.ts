@@ -2,7 +2,7 @@
  * Focused tests for BackendConnector branch coverage.
  *
  * Targets: cliUserEchoToText, passthrough handler, connect with
- * existing session, sendToBackend with no session, sendRaw failure
+ * existing session, sendToBackend with no session
  * during flush, and unexpected backend disconnection.
  */
 
@@ -72,14 +72,12 @@ class TestBackendSession implements BackendSession {
   readonly sessionId: string;
   readonly channel = createMessageChannel();
   readonly sentMessages: UnifiedMessage[] = [];
-  readonly sentRaw: string[] = [];
+  readonly sentInitializeRequestIds: string[] = [];
   closed = false;
-  private _sendRawFail = false;
   private _passthroughHandler: ((msg: CLIMessage) => boolean) | null = null;
 
-  constructor(sessionId: string, opts?: { sendRawFail?: boolean; passthrough?: boolean }) {
+  constructor(sessionId: string, opts?: { passthrough?: boolean }) {
     this.sessionId = sessionId;
-    this._sendRawFail = opts?.sendRawFail ?? false;
     if (opts?.passthrough) {
       // Add setPassthroughHandler to make supportsPassthroughHandler return true
       (this as any).setPassthroughHandler = (handler: ((msg: CLIMessage) => boolean) | null) => {
@@ -92,9 +90,8 @@ class TestBackendSession implements BackendSession {
     this.sentMessages.push(msg);
   }
 
-  sendRaw(ndjson: string): void {
-    if (this._sendRawFail) throw new Error("sendRaw not supported");
-    this.sentRaw.push(ndjson);
+  initialize(requestId: string): void {
+    this.sentInitializeRequestIds.push(requestId);
   }
 
   get messages(): AsyncIterable<UnifiedMessage> {
@@ -822,7 +819,7 @@ describe("BackendConnector", () => {
       adapter.nextSession = {
         sessionId: "sess-1",
         send: vi.fn(),
-        sendRaw: vi.fn(),
+        initialize: vi.fn(),
         messages: {
           [Symbol.asyncIterator]: () => ({
             next: async () => {

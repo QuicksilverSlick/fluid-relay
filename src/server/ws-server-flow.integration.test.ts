@@ -63,10 +63,12 @@ class E2EBackendSession implements BackendSession {
     }
   }
 
-  sendRaw(ndjson: string): void {
+  initialize(requestId: string): void {
     if (this._closed) throw new Error("Session is closed");
     if (this.cliSocket) {
-      this.cliSocket.send(`${ndjson}\n`);
+      this.cliSocket.send(
+        `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "initialize" } })}\n`,
+      );
     }
   }
 

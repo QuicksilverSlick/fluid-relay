@@ -785,7 +785,7 @@ describe("SessionRuntime", () => {
     expect(runtime.getLifecycleState()).toBe("closed");
 
     // Attempt to reopen — should stay closed (reducer rejects invalid transitions)
-    const mockBackendSession = { send: vi.fn(), sendRaw: vi.fn(), close: vi.fn(), messages: [] };
+    const mockBackendSession = { send: vi.fn(), initialize: vi.fn(), close: vi.fn(), messages: [] };
     runtime.process({
       type: "SYSTEM_SIGNAL",
       signal: {
@@ -803,7 +803,7 @@ describe("SessionRuntime", () => {
     const session = createMockSession({ id: "s1" });
     const runtime = new SessionRuntime(session, makeDeps());
 
-    const mockBackendSession = { send: vi.fn(), sendRaw: vi.fn(), close: vi.fn(), messages: [] };
+    const mockBackendSession = { send: vi.fn(), initialize: vi.fn(), close: vi.fn(), messages: [] };
     runtime.process({
       type: "SYSTEM_SIGNAL",
       signal: {
@@ -1162,7 +1162,7 @@ describe("SessionRuntime", () => {
       send: vi.fn(),
       close: vi.fn(),
       sessionId: "s1",
-      sendRaw: vi.fn(),
+      initialize: vi.fn(),
       messages: [],
     } as any;
     const abort = new AbortController();
@@ -1202,7 +1202,7 @@ describe("SessionRuntime", () => {
     const m2 = createUnifiedMessage({ type: "interrupt", role: "system", metadata: { seq: 2 } });
     const mockBackendSession = {
       send: vi.fn(),
-      sendRaw: vi.fn(),
+      initialize: vi.fn(),
       messages: { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) },
       close: vi.fn(),
     };
@@ -1265,7 +1265,7 @@ describe("SessionRuntime", () => {
     const runtime = new SessionRuntime(session, deps);
 
     // Connect with supportsSlashPassthrough: true so we can verify it resets on disconnect
-    const mockBackendSession = { send: vi.fn(), sendRaw: vi.fn(), close: vi.fn(), messages: [] };
+    const mockBackendSession = { send: vi.fn(), initialize: vi.fn(), close: vi.fn(), messages: [] };
     runtime.process({
       type: "SYSTEM_SIGNAL",
       signal: {
@@ -1367,12 +1367,20 @@ describe("SessionRuntime", () => {
     expect(runtime.getAccountInfo()).toBeNull();
   });
 
-  it("trySendRawToBackend returns 'unsupported' when sendRaw is not present", () => {
+  it("tryInitializeBackend returns 'no_backend' when backendSession is null", () => {
+    const session = createMockSession({ id: "s1", backendSession: null });
+    const runtime = new SessionRuntime(session, makeDeps());
+
+    expect(runtime.tryInitializeBackend("req-id")).toBe("no_backend");
+  });
+
+  it("tryInitializeBackend returns 'sent' and calls initialize when backend supports it", () => {
+    const initialize = vi.fn();
     const session = createMockSession({
       id: "s1",
       backendSession: {
         send: vi.fn(),
-        // sendRaw intentionally absent — adapter does not support raw send
+        initialize,
         close: vi.fn(),
         messages: (async function* () {})(),
         sessionId: "s1",
@@ -1380,15 +1388,33 @@ describe("SessionRuntime", () => {
     });
     const runtime = new SessionRuntime(session, makeDeps());
 
-    expect(runtime.trySendRawToBackend("ndjson-line")).toBe("unsupported");
+    expect(runtime.tryInitializeBackend("req-id-123")).toBe("sent");
+    expect(initialize).toHaveBeenCalledOnce();
+    expect(initialize).toHaveBeenCalledWith("req-id-123");
   });
 
-  it("trySendRawToBackend propagates errors thrown by sendRaw (network errors are not misclassified as unsupported)", () => {
+  it("tryInitializeBackend returns 'unsupported' when initialize is not present", () => {
     const session = createMockSession({
       id: "s1",
       backendSession: {
         send: vi.fn(),
-        sendRaw: vi.fn(() => {
+        // initialize intentionally absent — adapter does not support the handshake
+        close: vi.fn(),
+        messages: (async function* () {})(),
+        sessionId: "s1",
+      } as any,
+    });
+    const runtime = new SessionRuntime(session, makeDeps());
+
+    expect(runtime.tryInitializeBackend("req-id")).toBe("unsupported");
+  });
+
+  it("tryInitializeBackend propagates errors thrown by initialize (network errors are not misclassified as unsupported)", () => {
+    const session = createMockSession({
+      id: "s1",
+      backendSession: {
+        send: vi.fn(),
+        initialize: vi.fn(() => {
           throw new Error("connection reset");
         }),
         close: vi.fn(),
@@ -1398,7 +1424,7 @@ describe("SessionRuntime", () => {
     });
     const runtime = new SessionRuntime(session, makeDeps());
 
-    expect(() => runtime.trySendRawToBackend("ndjson-line")).toThrow("connection reset");
+    expect(() => runtime.tryInitializeBackend("req-id")).toThrow("connection reset");
   });
 
   it("CAPABILITIES_TIMEOUT signal emits capabilities:timeout event", () => {
@@ -1777,7 +1803,7 @@ describe("SessionRuntime", () => {
 
     const mockBackendSession = {
       send: vi.fn(),
-      sendRaw: vi.fn(),
+      initialize: vi.fn(),
       close: vi.fn(),
       messages: [],
     };

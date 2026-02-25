@@ -16,7 +16,7 @@ function mockAdapter(name: string): BackendAdapter {
     connect: vi.fn().mockResolvedValue({
       sessionId: "test-session",
       send: vi.fn(),
-      sendRaw: vi.fn(),
+      initialize: vi.fn(),
       messages: { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) },
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as BackendSession),
@@ -253,7 +253,7 @@ describe("BackendConnector per-session adapter", () => {
     const sessionImpl = {
       sessionId: "test-session",
       send: vi.fn(),
-      sendRaw: vi.fn(),
+      initialize: vi.fn(),
       messages: { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) },
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as BackendSession;

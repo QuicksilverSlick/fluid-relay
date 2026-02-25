@@ -236,7 +236,6 @@ describe("Session Core — auth integration", () => {
     bridge.handleConsumerOpen(ws, authContext("sess-1"));
 
     backendSession.sentMessages.length = 0;
-    backendSession.sentRawMessages.length = 0;
 
     bridge.handleConsumerMessage(
       ws,
@@ -245,7 +244,6 @@ describe("Session Core — auth integration", () => {
     );
 
     expect(backendSession.sentMessages).toHaveLength(0);
-    expect(backendSession.sentRawMessages).toHaveLength(0);
 
     resolveAuth({ userId: "u1", displayName: "User 1", role: "participant" });
     await flushAuth();
@@ -256,9 +254,7 @@ describe("Session Core — auth integration", () => {
       JSON.stringify({ type: "user_message", content: "now it works" }),
     );
 
-    expect(
-      backendSession.sentMessages.length + backendSession.sentRawMessages.length,
-    ).toBeGreaterThan(0);
+    expect(backendSession.sentMessages.length).toBeGreaterThan(0);
   });
 
   it("observer receives broadcasts but cannot send participant-only messages", async () => {
@@ -283,7 +279,6 @@ describe("Session Core — auth integration", () => {
 
     ws.sentMessages.length = 0;
     backendSession.sentMessages.length = 0;
-    backendSession.sentRawMessages.length = 0;
 
     backendSession.pushMessage(makeAssistantUnifiedMsg());
     await tick();
@@ -299,7 +294,6 @@ describe("Session Core — auth integration", () => {
     );
 
     expect(backendSession.sentMessages).toHaveLength(0);
-    expect(backendSession.sentRawMessages).toHaveLength(0);
     const parsed = ws.sentMessages.map((m) => JSON.parse(m));
     const errorMsg = parsed.find((m: any) => m.type === "error");
     expect(errorMsg).toBeDefined();
@@ -429,11 +423,7 @@ describe("Session Core Characterization", () => {
     expect(initMsg.session.model).toBe("claude-sonnet-4-5-20250929");
     expect(initMsg.session.cwd).toBe("/home/user");
 
-    const initializeReq = backendSession.sentRawMessages.find((raw) => {
-      const parsed = JSON.parse(raw);
-      return parsed.type === "control_request" && parsed.request?.subtype === "initialize";
-    });
-    expect(initializeReq).toBeDefined();
+    expect(backendSession.sentInitializeRequestIds.length).toBeGreaterThan(0);
   });
 
   it("control_request can_use_tool broadcasts permission_request", async () => {
@@ -542,11 +532,8 @@ describe("Session Core Characterization", () => {
     );
     await tick();
 
-    const initRaw = backendSession.sentRawMessages.find((raw) => {
-      const parsed = JSON.parse(raw);
-      return parsed.type === "control_request" && parsed.request?.subtype === "initialize";
-    });
-    const requestId = JSON.parse(initRaw!).request_id;
+    expect(backendSession.sentInitializeRequestIds.length).toBeGreaterThan(0);
+    const requestId = backendSession.sentInitializeRequestIds[0];
 
     consumer.sentMessages.length = 0;
     translateAndPush(

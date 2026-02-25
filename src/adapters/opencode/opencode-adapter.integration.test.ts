@@ -988,10 +988,10 @@ describe("E2E: OpencodeAdapter", () => {
     expect(() => session!.send(msg)).toThrow("Unsupported message type for opencode: result");
   });
 
-  it("sendRaw is not defined (not supported)", () => {
+  it("initialize is not defined (not supported)", () => {
     session = createSession();
 
-    expect(session!.sendRaw).toBeUndefined();
+    expect(session!.initialize).toBeUndefined();
   });
 
   // ---------------------------------------------------------------------------

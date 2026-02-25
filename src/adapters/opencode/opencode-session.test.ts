@@ -148,11 +148,11 @@ describe("OpencodeSession", () => {
   });
 
   // -------------------------------------------------------------------------
-  // sendRaw is not defined (opencode does not support raw NDJSON)
+  // initialize is not defined (opencode does not support the initialize handshake)
   // -------------------------------------------------------------------------
 
-  it("sendRaw is not defined", () => {
-    expect(session.sendRaw).toBeUndefined();
+  it("initialize is not defined", () => {
+    expect(session.initialize).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------

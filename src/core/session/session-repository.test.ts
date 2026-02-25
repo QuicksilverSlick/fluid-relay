@@ -168,7 +168,7 @@ describe("SessionRepository", () => {
       session.backendSession = {
         sessionId: "s1",
         send: vi.fn(),
-        sendRaw: vi.fn(),
+        initialize: vi.fn(),
         messages: {
           [Symbol.asyncIterator]: () => ({
             next: () => Promise.resolve({ done: true, value: undefined }),
