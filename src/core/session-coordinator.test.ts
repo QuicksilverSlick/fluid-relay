@@ -85,8 +85,9 @@ class TrackingProcessManager implements ProcessManager {
     const handle: TrackingProcessHandle = {
       pid,
       exited,
-      kill(signal: "SIGTERM" | "SIGKILL" | "SIGINT" = "SIGTERM") {
+      kill: (signal: "SIGTERM" | "SIGKILL" | "SIGINT" = "SIGTERM") => {
         killCalls.push(signal);
+        resolveExit!(0);
       },
       stdout: null,
       stderr: null,
@@ -115,10 +116,20 @@ class TrackingProcessManager implements ProcessManager {
 
 const noopLogger = { info() {}, warn() {}, error() {}, debug() {} };
 
+function createTestConfig(overrides?: Partial<import("../types/config.js").ProviderConfig>) {
+  return {
+    port: 3456,
+    relaunchDedupMs: 1,
+    killGracePeriodMs: 1,
+    initializeTimeoutMs: 1,
+    ...overrides,
+  };
+}
+
 function createLauncher(pm: ProcessManager, storage?: MemoryStorage) {
   return new ClaudeLauncher({
     processManager: pm,
-    config: { port: 3456 },
+    config: createTestConfig(),
     storage,
     logger: noopLogger,
   });
@@ -149,7 +160,7 @@ describe("SessionCoordinator.createSession", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -182,7 +193,7 @@ describe("SessionCoordinator.createSession", () => {
     });
 
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       adapterResolver: resolver,
@@ -221,7 +232,7 @@ describe("SessionCoordinator.createSession", () => {
     });
 
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       adapterResolver: resolver,
@@ -255,7 +266,7 @@ describe("SessionCoordinator.createSession", () => {
     });
 
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       adapterResolver: resolver,
@@ -285,7 +296,7 @@ describe("SessionCoordinator.createSession", () => {
     );
 
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       adapterResolver: resolver,
@@ -307,7 +318,7 @@ describe("SessionCoordinator.deleteSession", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -331,7 +342,7 @@ describe("SessionCoordinator.deleteSession", () => {
     });
 
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       adapterResolver: resolver,
@@ -353,7 +364,7 @@ describe("SessionCoordinator.deleteSession", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -376,7 +387,7 @@ describe("SessionCoordinator.deleteSession", () => {
     const launcher = createLauncher(pm, new MemoryStorage());
 
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage: new MemoryStorage(),
       logger,
       launcher,
@@ -407,7 +418,7 @@ describe("SessionCoordinator.renameSession", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -435,7 +446,7 @@ describe("SessionCoordinator.renameSession", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -455,7 +466,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -476,7 +487,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const warnSpy = vi.spyOn(noopLogger, "warn");
 
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -496,7 +507,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -534,7 +545,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -576,7 +587,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -616,7 +627,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -661,7 +672,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const pm = new TestProcessManager();
     const storage = new MemoryStorage();
     const mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -727,10 +738,11 @@ describe("SessionCoordinator wiring", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
     pm = new TrackingProcessManager();
     storage = new MemoryStorage();
     mgr = new SessionCoordinator({
-      config: { port: 3456 },
+      config: createTestConfig(),
       storage,
       logger: noopLogger,
       launcher: createLauncher(pm, storage),
@@ -739,6 +751,7 @@ describe("SessionCoordinator wiring", () => {
 
   afterEach(async () => {
     await mgr.stop().catch(() => {});
+    vi.useRealTimers();
   });
 
   describe("start() and stop()", () => {
@@ -806,7 +819,8 @@ describe("SessionCoordinator wiring", () => {
       (mgr as any)._bridgeEmitter.emit("backend:relaunch_needed" as any, {
         sessionId: info.sessionId,
       });
-      await new Promise((r) => setTimeout(r, 10));
+      vi.advanceTimersByTime(10);
+      await Promise.resolve();
 
       expect(pm.spawnCalls.length).toBeGreaterThan(spawnsBefore);
     });
@@ -869,7 +883,6 @@ describe("SessionCoordinator wiring", () => {
       mgr.launcher.launch({ cwd: "/tmp" });
       expect(pm.spawnedProcesses).toHaveLength(1);
 
-      setTimeout(() => pm.lastProcess!.resolveExit(0), 5);
       await mgr.stop();
 
       expect(pm.lastProcess!.killCalls).toContain("SIGTERM");
@@ -891,7 +904,7 @@ describe("SessionCoordinator wiring", () => {
       };
 
       const coord = new SessionCoordinator({
-        config: { port: 3456 },
+        config: createTestConfig(),
         server: mockServer,
         launcher: createLauncher(pm),
       });
@@ -905,7 +918,7 @@ describe("SessionCoordinator wiring", () => {
 
     it("works without WS server (backwards compatible)", async () => {
       const coord = new SessionCoordinator({
-        config: { port: 3456 },
+        config: createTestConfig(),
         launcher: createLauncher(pm),
       });
 
@@ -924,7 +937,7 @@ describe("SessionCoordinator wiring", () => {
       };
 
       const coord = new SessionCoordinator({
-        config: { port: 3456 },
+        config: createTestConfig(),
         server: mockServer,
         launcher: createLauncher(pm),
       });
@@ -993,7 +1006,7 @@ describe("SessionCoordinator wiring", () => {
       };
 
       const resolverMgr = new SessionCoordinator({
-        config: { port: 3456 },
+        config: createTestConfig(),
         storage,
         logger: noopLogger,
         adapterResolver: resolver as any,
