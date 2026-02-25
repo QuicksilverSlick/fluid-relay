@@ -363,7 +363,7 @@ The SessionRuntime is a **per-session actor**. One instance exists per active se
 The SessionReducer is the **single pure function** that contains all state-transition logic. It takes current `SessionData` and a `SessionEvent`, and returns a tuple of `[SessionData, Effect[]]`.
 
 **Responsibilities:**
-- **State reduction for all backend messages:** session_init, assistant, result, status_change, assistant, result, stream_event, permission_request, control_response, tool_progress, tool_use_summary, auth_status, configuration_change, session_lifecycle
+- **State reduction for all backend messages:** session_init, status_change, assistant, result, stream_event, permission_request, control_response, tool_progress, tool_use_summary, auth_status, configuration_change, session_lifecycle
 - **State reduction for inbound commands:** user_message (echo + normalize), permission_response, interrupt, set_model, queue operations
 - **State reduction for system signals:** backend connected/disconnected, consumer connected/disconnected, idle reap, reconnect timeout, capabilities timeout, session closed, git info resolved, process output received, team state diffed, etc.
 - **History management:** Append, replace (dedup), trim to max length

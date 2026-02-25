@@ -494,7 +494,7 @@ function reduceInboundCommand(
       const baseUnified = normalizeInbound({
         type: "user_message",
         content: command.content,
-        session_id: command.session_id || data.backendSessionId || "",
+        session_id: data.backendSessionId || command.session_id || "",
         images: command.images,
       });
       if (!baseUnified) return [data, []];
