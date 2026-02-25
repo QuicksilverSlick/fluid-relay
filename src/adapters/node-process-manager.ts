@@ -3,6 +3,34 @@ import { Readable } from "node:stream";
 import type { ProcessHandle, ProcessManager, SpawnOptions } from "../interfaces/process-manager.js";
 
 /**
+ * Polls until no process in the group with the given PGID is alive, or until
+ * timeoutMs elapses. Resolves in both cases — the caller (killProcess) handles
+ * any remaining stragglers via SIGKILL.
+ *
+ * Only meaningful when the child was spawned with detached:true so that
+ * child.pid === child's PGID (it is the process group leader).
+ */
+function waitForProcessGroupDead(pgid: number, timeoutMs = 30_000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const poll = () => {
+      try {
+        process.kill(-pgid, 0); // no-op if group still exists; throws if gone
+        if (Date.now() >= deadline) {
+          resolve();
+          return;
+        }
+        setTimeout(poll, 50);
+      } catch {
+        // ESRCH: group is gone; EPERM: can't signal (treat as gone)
+        resolve();
+      }
+    };
+    poll();
+  });
+}
+
+/**
  * Node.js process manager using child_process.spawn.
  * Requires Node 22+ for Readable.toWeb().
  */
@@ -37,11 +65,18 @@ export class NodeProcessManager implements ProcessManager {
       ? (Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>)
       : null;
 
-    // Fabricate the exited Promise from the "exit" event
+    // Fabricate the exited Promise. It resolves only after the *entire process
+    // group* is gone — not just the direct child. This matters for wrapper
+    // binaries (e.g. the opencode Node shim) that use spawnSync internally:
+    // the direct child exits on SIGTERM while the grandchild (Go binary) is
+    // still doing its graceful shutdown. Without this extra wait, killProcess()
+    // returns too early and the grandchild appears as an orphan.
     const exited = new Promise<number | null>((resolve) => {
       child.on("exit", (code, signal) => {
-        // null code when killed by signal
-        resolve(signal ? null : (code ?? null));
+        const exitCode = signal ? null : (code ?? null);
+        // After the direct child exits, wait for any remaining members of the
+        // process group (grandchildren spawned via spawnSync) to also exit.
+        waitForProcessGroupDead(pid).then(() => resolve(exitCode));
       });
       child.on("error", () => {
         resolve(null);
