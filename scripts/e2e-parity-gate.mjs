@@ -9,7 +9,7 @@ const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const REQUIRED_SCRIPTS = [
   "test:e2e:smoke",
   "test:e2e:smoke:process",
-  "test:e2e:claude:smoke",
+  "test:e2e:smoke:claude",
 ];
 
 const REQUIRED_TEST_FILES = [
