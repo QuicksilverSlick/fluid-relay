@@ -182,4 +182,204 @@ describe("ReconnectPolicy — uncovered branches", () => {
     expect(domainEvents.on).not.toHaveBeenCalled();
     expect(domainEvents.off).not.toHaveBeenCalled();
   });
+
+  it("process:connected event clears watchdog for that session", () => {
+    vi.useFakeTimers();
+
+    const { launcher, bridge, logger, domainEvents } = makeDeps({
+      starting: [{ sessionId: "s-connect", state: "starting", cwd: "/tmp", createdAt: 1 } as any],
+    });
+
+    const policy = new ReconnectPolicy({
+      launcher,
+      bridge,
+      logger,
+      reconnectGracePeriodMs: 5000,
+      domainEvents,
+    });
+
+    policy.start();
+    bridge.broadcastWatchdogState.mockClear();
+
+    domainEvents._emit("process:connected", { payload: { sessionId: "s-connect" } });
+
+    expect(bridge.broadcastWatchdogState).toHaveBeenCalledWith("s-connect", null);
+    policy.stop();
+  });
+
+  it("backend:connected event clears watchdog for that session", () => {
+    vi.useFakeTimers();
+
+    const { launcher, bridge, logger, domainEvents } = makeDeps({
+      starting: [{ sessionId: "s-backend", state: "starting", cwd: "/tmp", createdAt: 1 } as any],
+    });
+
+    const policy = new ReconnectPolicy({
+      launcher,
+      bridge,
+      logger,
+      reconnectGracePeriodMs: 5000,
+      domainEvents,
+    });
+
+    policy.start();
+    bridge.broadcastWatchdogState.mockClear();
+
+    domainEvents._emit("backend:connected", { payload: { sessionId: "s-backend" } });
+
+    expect(bridge.broadcastWatchdogState).toHaveBeenCalledWith("s-backend", null);
+    policy.stop();
+  });
+
+  it("session:closed event via mock domainEvents clears watchdog for that session", () => {
+    vi.useFakeTimers();
+
+    const { launcher, bridge, logger, domainEvents } = makeDeps({
+      starting: [{ sessionId: "s-closed", state: "starting", cwd: "/tmp", createdAt: 1 } as any],
+    });
+
+    const policy = new ReconnectPolicy({
+      launcher,
+      bridge,
+      logger,
+      reconnectGracePeriodMs: 5000,
+      domainEvents,
+    });
+
+    policy.start();
+    bridge.broadcastWatchdogState.mockClear();
+
+    domainEvents._emit("session:closed", { payload: { sessionId: "s-closed" } });
+
+    expect(bridge.broadcastWatchdogState).toHaveBeenCalledWith("s-closed", null);
+    policy.stop();
+  });
+
+  it("ensureDomainSubscriptions is skipped when no domainEvents dep is provided", () => {
+    vi.useFakeTimers();
+
+    const { launcher, bridge, logger } = makeDeps({
+      starting: [{ sessionId: "s-noevent", state: "starting", cwd: "/tmp", createdAt: 1 } as any],
+    });
+
+    // omit domainEvents entirely so the !this.deps.domainEvents guard is hit
+    const policy = new ReconnectPolicy({
+      launcher,
+      bridge,
+      logger,
+      reconnectGracePeriodMs: 5000,
+    } as any);
+
+    expect(() => policy.start()).not.toThrow();
+    expect(() => policy.stop()).not.toThrow();
+  });
+
+  it("start() is a no-op when timer is already running (reconnectTimer guard)", () => {
+    vi.useFakeTimers();
+
+    const { launcher, bridge, logger, domainEvents } = makeDeps({
+      starting: [{ sessionId: "s-guard", state: "starting", cwd: "/tmp", createdAt: 1 } as any],
+    });
+
+    const policy = new ReconnectPolicy({
+      launcher,
+      bridge,
+      logger,
+      reconnectGracePeriodMs: 5000,
+      domainEvents,
+    });
+
+    policy.start();
+    const callsAfterFirst = launcher.getStartingSessions.mock.calls.length;
+
+    // Second call hits `if (this.reconnectTimer) return;` and exits early.
+    policy.start();
+    expect(launcher.getStartingSessions).toHaveBeenCalledTimes(callsAfterFirst);
+
+    policy.stop();
+  });
+
+  it("start() exits early when there are no starting sessions", () => {
+    vi.useFakeTimers();
+
+    const { launcher, bridge, logger, domainEvents } = makeDeps({
+      starting: [], // empty — hits `if (starting.length === 0) return;`
+    });
+
+    const policy = new ReconnectPolicy({
+      launcher,
+      bridge,
+      logger,
+      reconnectGracePeriodMs: 5000,
+      domainEvents,
+    });
+
+    policy.start();
+
+    // No timer should have been set, so no subscriptions and no watchdog broadcasts.
+    expect(domainEvents.on).not.toHaveBeenCalled();
+    expect(bridge.broadcastWatchdogState).not.toHaveBeenCalled();
+  });
+
+  it("archived sessions are skipped during relaunch", async () => {
+    vi.useFakeTimers();
+
+    const { launcher, bridge, logger, domainEvents } = makeDeps({
+      starting: [
+        {
+          sessionId: "s-archived",
+          state: "starting",
+          cwd: "/tmp",
+          createdAt: 1,
+          archived: true, // hits `if (info.archived) return;`
+        } as any,
+      ],
+    });
+
+    const policy = new ReconnectPolicy({
+      launcher,
+      bridge,
+      logger,
+      reconnectGracePeriodMs: 500,
+      domainEvents,
+    });
+
+    policy.start();
+    await vi.advanceTimersByTimeAsync(500);
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+
+    // applyPolicyCommand is still called, but relaunch is skipped for archived sessions.
+    expect(bridge.applyPolicyCommand).toHaveBeenCalledWith("s-archived", {
+      type: "reconnect_timeout",
+    });
+    expect(launcher.relaunch).not.toHaveBeenCalled();
+  });
+
+  it("clearWatchdog is a no-op when sessionId is not being watched", () => {
+    vi.useFakeTimers();
+
+    const { launcher, bridge, logger, domainEvents } = makeDeps({
+      starting: [{ sessionId: "s-watch", state: "starting", cwd: "/tmp", createdAt: 1 } as any],
+    });
+
+    const policy = new ReconnectPolicy({
+      launcher,
+      bridge,
+      logger,
+      reconnectGracePeriodMs: 5000,
+      domainEvents,
+    });
+
+    policy.start();
+    bridge.broadcastWatchdogState.mockClear();
+
+    // Emit for a session not in watchedSessions — hits `if (!this.watchedSessions.has(sessionId)) return;`
+    domainEvents._emit("process:connected", { payload: { sessionId: "not-watched" } });
+
+    expect(bridge.broadcastWatchdogState).not.toHaveBeenCalled();
+    policy.stop();
+  });
 });
