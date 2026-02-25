@@ -398,6 +398,10 @@ describe("E2E Real SDK-URL SessionCoordinator", () => {
         await waitForMessageType(consumer1, "result", 90_000);
         await closeWebSockets(consumer1);
 
+        // Allow Claude CLI time to persist the conversation to disk before SIGTERM;
+        // without this, --resume may fail with "No conversation found".
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+
         const persistedId = launched.sessionId;
         await manager1.stop();
         activeCoordinators.pop();
