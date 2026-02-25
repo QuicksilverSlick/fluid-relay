@@ -13,6 +13,10 @@ export function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals): v
     if (pid !== undefined) process.kill(-pid, signal);
     else child.kill(signal);
   } catch {
-    child.kill(signal);
+    try {
+      child.kill(signal);
+    } catch {
+      // Process already exited — nothing to do.
+    }
   }
 }

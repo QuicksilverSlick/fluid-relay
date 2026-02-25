@@ -172,20 +172,22 @@ export class AcpSession implements BackendSession {
     }
     this.pendingRequests.clear();
 
-    const exitPromise = new Promise<void>((resolve) => {
-      this.child.once("exit", () => resolve());
-    });
+    await new Promise<void>((resolve) => {
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
 
-    killProcessGroup(this.child, "SIGTERM");
+      this.child.once("exit", () => {
+        clearTimeout(killTimer);
+        resolve();
+      });
 
-    const timeout = new Promise<void>((resolve) => {
-      setTimeout(() => {
+      killProcessGroup(this.child, "SIGTERM");
+
+      killTimer = setTimeout(() => {
         killProcessGroup(this.child, "SIGKILL");
         resolve();
       }, 5000);
+      killTimer.unref();
     });
-
-    await Promise.race([exitPromise, timeout]);
   }
 
   private createMessageStream(): AsyncIterable<UnifiedMessage> {
