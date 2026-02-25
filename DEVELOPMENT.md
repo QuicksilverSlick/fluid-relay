@@ -94,8 +94,9 @@ No prompts are sent — no AI API calls, no cost.
 
 ```bash
 pnpm test:e2e:smoke            # all adapters
-pnpm test:e2e:claude:smoke
-pnpm test:e2e:agent-sdk:smoke
+pnpm test:e2e:smoke:claude
+pnpm test:e2e:smoke:agent-sdk
+pnpm test:e2e:smoke:gemini
 ```
 
 #### E2E Full
@@ -114,11 +115,13 @@ These are gated behind `it.runIf(runFull)` in the shared test factory (`src/e2e/
 ```bash
 pnpm test:e2e:full             # all adapters + smoke files
 pnpm test:e2e:real             # all adapters, skipping smoke files
-pnpm test:e2e:claude
-pnpm test:e2e:agent-sdk
-pnpm test:e2e:codex
-pnpm test:e2e:gemini
-pnpm test:e2e:opencode
+pnpm test:e2e:claude           # shortcut for full:claude (smoke + AI)
+pnpm test:e2e:full:claude      # explicit: smoke + AI
+pnpm test:e2e:real:claude      # alias: smoke + AI
+pnpm test:e2e:real:agent-sdk
+pnpm test:e2e:real:codex
+pnpm test:e2e:real:gemini
+pnpm test:e2e:real:opencode
 ```
 
 ### Running a Single Test
