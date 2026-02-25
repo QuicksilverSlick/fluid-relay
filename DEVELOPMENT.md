@@ -59,6 +59,7 @@ BeamCode has **three test tiers**, all powered by [Vitest](https://vitest.dev/).
 | **Unit + Integration** | `pnpm test` | ~2s | None | Core logic, adapters, translators, crypto, daemon, session lifecycle, streaming, permissions, message queues |
 | **E2E smoke** | `pnpm test:e2e:smoke` | ~30–60s | Binary only | Spawn, connect, init, clean shutdown — no AI calls |
 | **E2E full** | `pnpm test:e2e:full` | minutes | Binary + API key or CLI OAuth | Live prompt/response, streaming, interrupt, multi-turn |
+| **E2E real** | `pnpm test:e2e:real` | minutes | Binary + API key or CLI OAuth | All backend adapter tests — skips standalone infrastructure smoke files |
 
 > Both E2E tiers can be scoped to a single adapter (e.g. `pnpm test:e2e:gemini`) or a single test name with `-t`. See [Running a Single Test](#running-a-single-test).
 
@@ -93,8 +94,9 @@ No prompts are sent — no AI API calls, no cost.
 
 ```bash
 pnpm test:e2e:smoke            # all adapters
-pnpm test:e2e:claude:smoke
-pnpm test:e2e:agent-sdk:smoke
+pnpm test:e2e:smoke:claude
+pnpm test:e2e:smoke:agent-sdk
+pnpm test:e2e:smoke:gemini
 ```
 
 #### E2E Full
@@ -111,12 +113,15 @@ Full tests build on smoke by exercising live AI interactions:
 These are gated behind `it.runIf(runFull)` in the shared test factory (`src/e2e/shared-e2e-tests.ts`). Duration varies by backend and API response time.
 
 ```bash
-pnpm test:e2e:full             # all adapters
-pnpm test:e2e:claude
-pnpm test:e2e:agent-sdk
-pnpm test:e2e:codex
-pnpm test:e2e:gemini
-pnpm test:e2e:opencode
+pnpm test:e2e:full             # all adapters + smoke files
+pnpm test:e2e:real             # all adapters, skipping smoke files
+pnpm test:e2e:claude           # shortcut for full:claude (smoke + AI)
+pnpm test:e2e:full:claude      # explicit: smoke + AI
+pnpm test:e2e:real:claude      # alias: smoke + AI
+pnpm test:e2e:real:agent-sdk
+pnpm test:e2e:real:codex
+pnpm test:e2e:real:gemini
+pnpm test:e2e:real:opencode
 ```
 
 ### Running a Single Test
