@@ -464,7 +464,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     mgr.setServer(mockServer);
 
     // Verify it was passed to transport hub (we can check internal references if needed or just trust the call finishes)
-    expect((mgr as any).transportHub["server"]).toBe(mockServer);
+    expect((mgr as any).transportHub.server).toBe(mockServer);
   });
 
   it("covers storage flush error during closeSessions", async () => {
@@ -506,12 +506,12 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const session = await mgr.createSession({ cwd: process.cwd() });
 
     // Test recoveryService bridge
-    const recoveryBridge = (mgr as any).recoveryService["bridge"];
+    const recoveryBridge = (mgr as any).recoveryService.bridge;
     expect(recoveryBridge.isBackendConnected(session.sessionId)).toBe(false);
     expect(recoveryBridge.isBackendConnected("non-existent")).toBe(false);
 
     // Test watchdog broadcast internal method given to policies
-    const reconnectBridge = (mgr as any).reconnectController["deps"]["bridge"];
+    const reconnectBridge = (mgr as any).reconnectController.deps.bridge;
     const broadcastSpy = vi.spyOn((mgr as any).broadcaster, "broadcast");
 
     // With valid session
@@ -546,7 +546,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const broadcaster = (mgr as any).broadcaster;
     const broadcastSpy = vi.spyOn(broadcaster, "broadcast");
 
-    const relayHandlers = (mgr as any).relay["deps"].handlers;
+    const relayHandlers = (mgr as any).relay.deps.handlers;
 
     // Simulate backend:resume_failed
     relayHandlers.onProcessResumeFailed({ sessionId: session.sessionId });
@@ -626,7 +626,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
     const session = await mgr.createSession({ cwd: process.cwd() });
 
     // policy bridge (bridgeLifecycle)
-    const policyBridge = (mgr as any).reconnectController["deps"]["bridge"];
+    const policyBridge = (mgr as any).reconnectController.deps.bridge;
 
     // getAllSessions
     const sessions = policyBridge.getAllSessions();
@@ -648,7 +648,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
 
     // recoveryService connectBackend
     const connectSpy = vi.spyOn((mgr as any).backendConnector, "connectBackend");
-    const recoveryBridge = (mgr as any).recoveryService["bridge"];
+    const recoveryBridge = (mgr as any).recoveryService.bridge;
     await expect(recoveryBridge.connectBackend(session.sessionId, {})).rejects.toThrow(
       "No BackendAdapter configured",
     );
@@ -675,14 +675,14 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
 
     // restoreFromStorage returning 0
     vi.spyOn((mgr as any).store, "restoreAll").mockReturnValue(0);
-    const restoreBridge = (mgr as any).startupRestoreService["bridge"];
+    const restoreBridge = (mgr as any).startupRestoreService.bridge;
     restoreBridge.restoreFromStorage();
 
     // getSessionSnapshot with missing session
-    const policyBridge = (mgr as any).reconnectController["deps"]["bridge"];
+    const policyBridge = (mgr as any).reconnectController.deps.bridge;
     expect(policyBridge.getSession("missing-session")).toBeUndefined();
 
-    const relayHandlers = (mgr as any).relay["deps"].handlers;
+    const relayHandlers = (mgr as any).relay.deps.handlers;
 
     // onProcessSpawned with missing registry info
     relayHandlers.onProcessSpawned({ sessionId: "missing-session" });
@@ -699,7 +699,7 @@ describe("SessionCoordinator edge cases and internal wiring", () => {
       sessionId: session.sessionId,
       firstUserMessage: "a".repeat(100),
     });
-    expect(renameSpy).toHaveBeenCalledWith(session.sessionId, "a".repeat(47) + "...");
+    expect(renameSpy).toHaveBeenCalledWith(session.sessionId, `${"a".repeat(47)}...`);
 
     // trigger onCapabilitiesTimeout
     const capSpy = vi.spyOn(mgr as any, "applyPolicyCommandForSession");

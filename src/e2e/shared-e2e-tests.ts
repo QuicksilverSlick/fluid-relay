@@ -275,8 +275,12 @@ export function registerSharedSmokeTests(config: SharedE2eTestConfig): void {
       );
       try {
         const partOutput = waitForMessageType(participant, "process_output", 20_000);
+        const session = coordinator.store.get(sessionId);
+        if (!session) {
+          throw new Error(`Session ${sessionId} not found in store`);
+        }
         coordinator.broadcaster.broadcastProcessOutput(
-          coordinator.store.get(sessionId)!,
+          session,
           "stderr",
           `${tokenPrefix}_RBAC_OUTPUT_CHECK`,
         );

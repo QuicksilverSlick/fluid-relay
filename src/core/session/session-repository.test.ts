@@ -198,7 +198,7 @@ describe("SessionRepository", () => {
       const session = store.createSession("s1", makeDefaultState("s1"), {
         messageHistory: [{ type: "status_change", status: "idle" } as any],
       });
-      store["sessions"].set("s1", session);
+      store.sessions.set("s1", session);
       const snap = store.getSnapshot("s1");
       expect(snap).toMatchObject({
         id: "s1",
@@ -230,7 +230,7 @@ describe("SessionRepository", () => {
       const session = store.createSession("s1", makeDefaultState("s1"), {
         pendingPermissions: new Map([["p1", perm]]),
       });
-      store["sessions"].set("s1", session);
+      store.sessions.set("s1", session);
       store.persist(session);
       expect(storage.save).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -257,7 +257,7 @@ describe("SessionRepository", () => {
       const session = store.createSession("s1", makeDefaultState("s1"), {
         queuedMessage: queued,
       });
-      store["sessions"].set("s1", session);
+      store.sessions.set("s1", session);
 
       store.persist(session);
 
@@ -284,7 +284,7 @@ describe("SessionRepository", () => {
       const session = store.createSession("s1", makeDefaultState("s1"), {
         queuedMessage: queued,
       });
-      store["sessions"].set("s1", session);
+      store.sessions.set("s1", session);
 
       store.persistSync(session);
 
@@ -347,7 +347,7 @@ describe("SessionRepository", () => {
       const existing = store.createSession("s1", makeDefaultState("s1"), {
         messageHistory: [{ type: "status_change", status: "running" } as any],
       });
-      store["sessions"].set("s1", existing);
+      store.sessions.set("s1", existing);
 
       const persisted: PersistedSession = {
         id: "s1",

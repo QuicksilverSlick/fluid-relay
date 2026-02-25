@@ -58,6 +58,11 @@ export class AcpAdapter implements BackendAdapter {
       cwd,
     });
 
+    if (!child.stdin || !child.stdout) {
+      child.kill();
+      throw new Error("Failed to open stdio pipes for ACP subprocess");
+    }
+
     try {
       const codec = new JsonRpcCodec();
 
@@ -72,10 +77,10 @@ export class AcpAdapter implements BackendAdapter {
         sessionId: options.sessionId,
         phase: "handshake_send",
       });
-      child.stdin?.write(codec.encode(initReq));
+      child.stdin.write(codec.encode(initReq));
 
       const initResult = await waitForResponse<AcpInitializeResult>(
-        child.stdout!,
+        child.stdout,
         codec,
         initId,
         tracer,
@@ -95,10 +100,10 @@ export class AcpAdapter implements BackendAdapter {
         sessionId: options.sessionId,
         phase: "handshake_send",
       });
-      child.stdin?.write(codec.encode(sessionReq));
+      child.stdin.write(codec.encode(sessionReq));
 
       const sessionResult = await waitForResponse<{ sessionId: string }>(
-        child.stdout!,
+        child.stdout,
         codec,
         sessionReqId,
         tracer,

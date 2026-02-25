@@ -221,7 +221,7 @@ describe("E2E: GeminiAdapter Coverage Expansion", () => {
       });
 
       // Watch for the permission response written to stdin
-      const origWrite = stdin.write.bind(stdin);
+      const _origWrite = stdin.write.bind(stdin);
       const wrappedWrite = stdin.write;
       stdin.write = (data: string): boolean => {
         const result = wrappedWrite.call(stdin, data);
@@ -512,7 +512,7 @@ describe("E2E: GeminiAdapter Coverage Expansion", () => {
     const adapter = createAdapter((stdin, stdout) => {
       createAcpAutoResponder(stdin, stdout);
 
-      const origWrite = stdin.write.bind(stdin);
+      const _origWrite = stdin.write.bind(stdin);
       const wrappedWrite = stdin.write;
       stdin.write = (data: string): boolean => {
         const result = wrappedWrite.call(stdin, data);
@@ -552,7 +552,7 @@ describe("E2E: GeminiAdapter Coverage Expansion", () => {
     const adapter = createAdapter((stdin, stdout) => {
       createAcpAutoResponder(stdin, stdout);
 
-      const origWrite = stdin.write.bind(stdin);
+      const _origWrite = stdin.write.bind(stdin);
       const wrappedWrite = stdin.write;
       stdin.write = (data: string): boolean => {
         const result = wrappedWrite.call(stdin, data);
@@ -732,7 +732,7 @@ describe("E2E: GeminiAdapter Coverage Expansion", () => {
         },
       });
 
-      const origWrite = stdin.write.bind(stdin);
+      const _origWrite = stdin.write.bind(stdin);
       const wrappedWrite = stdin.write;
       stdin.write = (data: string): boolean => {
         const result = wrappedWrite.call(stdin, data);
@@ -770,7 +770,7 @@ describe("E2E: GeminiAdapter Coverage Expansion", () => {
         },
       });
 
-      const origWrite = stdin.write.bind(stdin);
+      const _origWrite = stdin.write.bind(stdin);
       const wrappedWrite = stdin.write;
       stdin.write = (data: string): boolean => {
         const result = wrappedWrite.call(stdin, data);

@@ -211,7 +211,7 @@ describe("E2E: GeminiAdapter", () => {
       });
 
       // Watch for cancel notification
-      const origWrite = stdin.write.bind(stdin);
+      const _origWrite = stdin.write.bind(stdin);
       const wrappedWrite = stdin.write;
       stdin.write = (data: string): boolean => {
         const result = wrappedWrite.call(stdin, data);

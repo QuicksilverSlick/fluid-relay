@@ -17,7 +17,7 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
+const _noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 /**
  * A MockBackendAdapter with slashCommands: true so PassthroughHandler

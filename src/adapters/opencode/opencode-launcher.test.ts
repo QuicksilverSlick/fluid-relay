@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ProcessHandle, SpawnOptions } from "../../interfaces/process-manager.js";
 import { MockProcessManager } from "../../testing/mock-process-manager.js";
 import { OpencodeLauncher } from "./opencode-launcher.js";

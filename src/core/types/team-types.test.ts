@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { SessionState } from "../../types/session-state.js";
 import type { BackendCapabilities } from "../interfaces/backend-adapter.js";
 import type { TeamObserver } from "../interfaces/extensions.js";
 import type {

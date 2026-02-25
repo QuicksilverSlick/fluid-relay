@@ -14,7 +14,6 @@
 import { afterEach, describe } from "vitest";
 import type { SessionCoordinator } from "../core/session-coordinator.js";
 import {
-  canBindLocalhostSync,
   deleteTrace,
   dumpTraceOnFailure,
   getTestRunConditions,

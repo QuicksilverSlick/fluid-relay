@@ -16,7 +16,7 @@ vi.mock("node:child_process", async (importOriginal) => {
       if (mockSpawn.getMockImplementation()) {
         return mockSpawn(...args);
       }
-      return (original.spawn as Function)(...args);
+      return (original.spawn as (...args: unknown[]) => unknown)(...args);
     },
   };
 });

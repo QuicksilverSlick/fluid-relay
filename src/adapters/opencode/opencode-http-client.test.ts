@@ -32,7 +32,7 @@ function makeOkResponse(body: unknown, init?: ResponseInit): Response {
   });
 }
 
-function makeOkTextResponse(text: string, init?: ResponseInit): Response {
+function _makeOkTextResponse(text: string, init?: ResponseInit): Response {
   return new Response(text, {
     status: 200,
     headers: { "Content-Type": "text/plain" },
@@ -270,7 +270,7 @@ describe("connectSse", () => {
     expect(init.method).toBe("GET");
 
     const headers = capturedHeaders(fetchMock);
-    expect(headers["Accept"]).toBe("text/event-stream");
+    expect(headers.Accept).toBe("text/event-stream");
 
     expect(stream).toBeInstanceOf(ReadableStream);
   });
@@ -311,8 +311,8 @@ describe("Auth header", () => {
     await client.abort(SESSION_ID);
 
     const headers = capturedHeaders(fetchMock);
-    expect(headers["Authorization"]).toBeDefined();
-    expect(headers["Authorization"]).toMatch(/^Basic /);
+    expect(headers.Authorization).toBeDefined();
+    expect(headers.Authorization).toMatch(/^Basic /);
   });
 
   it("encodes credentials as base64 Basic auth with default username 'opencode'", async () => {
@@ -326,7 +326,7 @@ describe("Auth header", () => {
     await client.abort(SESSION_ID);
 
     const headers = capturedHeaders(fetchMock);
-    const encoded = headers["Authorization"].replace("Basic ", "");
+    const encoded = headers.Authorization.replace("Basic ", "");
     const decoded = Buffer.from(encoded, "base64").toString("utf-8");
     expect(decoded).toBe("opencode:mypassword");
   });
@@ -343,7 +343,7 @@ describe("Auth header", () => {
     await client.abort(SESSION_ID);
 
     const headers = capturedHeaders(fetchMock);
-    const encoded = headers["Authorization"].replace("Basic ", "");
+    const encoded = headers.Authorization.replace("Basic ", "");
     const decoded = Buffer.from(encoded, "base64").toString("utf-8");
     expect(decoded).toBe("admin:adminpass");
   });
@@ -359,7 +359,7 @@ describe("Auth header", () => {
     await client.abort(SESSION_ID);
 
     const headers = capturedHeaders(fetchMock);
-    expect(headers["Authorization"]).toBeUndefined();
+    expect(headers.Authorization).toBeUndefined();
   });
 });
 
