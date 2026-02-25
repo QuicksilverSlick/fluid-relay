@@ -1,6 +1,6 @@
 # BeamCode Architecture
 
-> Date: 2026-02-24
+> Date: 2026-02-25
 > Status: Current state
 > Scope: Full system architecture — core, adapters, consumer, relay, daemon
 
@@ -1474,18 +1474,7 @@ src/core/
 
 ## Violations to Core Design Principles
 
-### Tier 1: Resolved ✅
-
-All four Tier 1 violations were fixed in commit series `refactor: route local slash results through reducer (Tier 1 #1–4)`.
-
-| # | Principle | Fix Applied |
-|---|-----------|-------------|
-| 1 | P3, P8 | Added `SLASH_LOCAL_RESULT` / `SLASH_LOCAL_ERROR` signals. Reducer produces `BROADCAST` + `EMIT_EVENT` effects. Handlers dispatch signals via `processSignal()`. |
-| 2 | P6, P3 | Added `CAPABILITIES_INIT_REQUESTED` signal. Timer + raw send moved to runtime post-reducer hook. `CapabilitiesPolicy.sendInitializeRequest()` dispatches the signal only. |
-| 3 | P3, P8 | `CONSUMER_CONNECTED` / `CONSUMER_DISCONNECTED` enriched with counts/identity before reducer call. Reducer produces `EMIT_EVENT` effects. Direct `emitEvent()` calls removed from `handleSystemSignal()`. |
-| 4 | P3 | Added `QUEUE_ERROR` signal + `SEND_TO_CONSUMER` effect type. `MessageQueueHandler` dispatches `QUEUE_ERROR`; reducer returns `SEND_TO_CONSUMER`; effect executor calls `sendTo`. `handleInboundCommand()` rejections also route through `SEND_TO_CONSUMER` effects. |
-
-### Tier 2: Accepted Pragmatic Choices — Handle Mutations
+### Tier 1: Accepted Pragmatic Choices — Handle Mutations
 
 `SessionHandles` is explicitly designed as mutable runtime state outside the reducer. These are non-serializable references (timers, WebSocket maps, registries, counters) that cannot be expressed as pure `SessionData`. The architecture has a two-tier model:
 
@@ -1494,24 +1483,23 @@ All four Tier 1 violations were fixed in commit series `refactor: route local sl
 
 | # | Principle | Violation | Rationale |
 |---|-----------|-----------|-----------|
-| 5 | P1 — Only `process()` changes state | `touchActivity()` mutates `this.session.lastActivity` directly. | `lastActivity` is a handle field (non-serializable timestamp), not `SessionData`. Adding a signal would add overhead for every message with no testability benefit. |
-| 6 | P1 — Only `process()` changes state | `setPendingInitialize()` mutates `pendingInitialize` handle (timer + requestId). | Timer handles are non-serializable. Now set only in the runtime's `CAPABILITIES_INIT_REQUESTED` post-reducer hook — the correct place for non-serializable handle mutations. |
-| 7 | P1 — Only `process()` changes state | `allocateAnonymousIdentityIndex()` increments `anonymousCounter`. Called by `ConsumerGateway`. | Ephemeral counter — not persisted, not part of business logic. |
-| 8 | P1 — Only `process()` changes state | `closeAllConsumers()` clears `consumerSockets` and `consumerRateLimiters` without individual `CONSUMER_DISCONNECTED` signals. | Teardown path — session is being deleted. Emitting disconnect signals during teardown would cause cascading effects on a dying session. |
-| 9 | P1 — Only `process()` changes state | `registerCLICommands()`, `registerSlashCommandNames()`, `registerSkillCommands()`, `clearDynamicSlashRegistry()` mutate the slash registry handle directly. | Registry is a non-serializable handle. Called from post-reducer orchestration hooks (`orchestrateSessionInit`, `CAPABILITIES_APPLIED`). |
-| 10 | P1 — Only `process()` changes state | `shiftPendingPassthrough()` destructively removes entries from `pendingPassthroughs` array. | Request tracking array — non-serializable, used by `BackendConnector` during passthrough interception. |
-| 11 | P1 — Only `process()` changes state | `checkRateLimit()` lazily creates and inserts rate limiters into `consumerRateLimiters`. | Rate limiter objects are non-serializable. Lazy creation is simpler than pre-allocating in a signal handler. |
-| 12 | P1, P3 — Only `process()` changes state; effects are descriptions | `closeBackendConnection()` aborts `backendAbort`, calls `backendSession.close()`, then dispatches `BACKEND_DISCONNECTED` via `process()`. | Teardown I/O on non-serializable handles. The self-dispatch to `process()` ensures the state transition is properly recorded. |
-| 13 | P1 — Only `process()` changes state | `hydrateSlashRegistryFromState()` hydrates the slash registry during initialization, bypassing the reducer. | Registry is a handle. Called once during session restore. Subsumed by #9. |
+| 1 | P1 — Only `process()` changes state | `touchActivity()` mutates `this.session.lastActivity` directly. | `lastActivity` is a handle field (non-serializable timestamp), not `SessionData`. Adding a signal would add overhead for every message with no testability benefit. |
+| 2 | P1 — Only `process()` changes state | `setPendingInitialize()` mutates `pendingInitialize` handle (timer + requestId). | Timer handles are non-serializable. Now set only in the runtime's `CAPABILITIES_INIT_REQUESTED` post-reducer hook — the correct place for non-serializable handle mutations. |
+| 3 | P1 — Only `process()` changes state | `allocateAnonymousIdentityIndex()` increments `anonymousCounter`. Called by `ConsumerGateway`. | Ephemeral counter — not persisted, not part of business logic. |
+| 4 | P1 — Only `process()` changes state | `closeAllConsumers()` clears `consumerSockets` and `consumerRateLimiters` without individual `CONSUMER_DISCONNECTED` signals. | Teardown path — session is being deleted. Emitting disconnect signals during teardown would cause cascading effects on a dying session. |
+| 5 | P1 — Only `process()` changes state | `registerCLICommands()`, `registerSlashCommandNames()`, `registerSkillCommands()`, `clearDynamicSlashRegistry()` mutate the slash registry handle directly. | Registry is a non-serializable handle. Called from post-reducer orchestration hooks (`orchestrateSessionInit`, `CAPABILITIES_APPLIED`). |
+| 6 | P1 — Only `process()` changes state | `shiftPendingPassthrough()` destructively removes entries from `pendingPassthroughs` array. | Request tracking array — non-serializable, used by `BackendConnector` during passthrough interception. |
+| 7 | P1 — Only `process()` changes state | `checkRateLimit()` lazily creates and inserts rate limiters into `consumerRateLimiters`. | Rate limiter objects are non-serializable. Lazy creation is simpler than pre-allocating in a signal handler. |
+| 8 | P1, P3 — Only `process()` changes state; effects are descriptions | `closeBackendConnection()` aborts `backendAbort`, calls `backendSession.close()`, then dispatches `BACKEND_DISCONNECTED` via `process()`. | Teardown I/O on non-serializable handles. The self-dispatch to `process()` ensures the state transition is properly recorded. |
+| 9 | P1 — Only `process()` changes state | `hydrateSlashRegistryFromState()` hydrates the slash registry during initialization, bypassing the reducer. | Registry is a handle. Called once during session restore. Subsumed by #5. |
 
-### Tier 3: Accepted Pragmatic Choices — Other
+### Tier 2: Accepted Pragmatic Choices — Other
 
 | # | Principle | Violation | Rationale |
 |---|-----------|-----------|-----------|
-| 14 | P3 — Effects are descriptions, not inline I/O | ~~`handleInboundCommand()` post-reducer hooks call `broadcaster.sendTo(ws, error)` directly.~~ | **RESOLVED** (Tier 1 #4): Rejections now append `SEND_TO_CONSUMER` effects to the effect list, executed via `executeEffects()`. |
-| 15 | P2 — State transitions are pure | `orchestrateSessionInit()` performs inline I/O: `gitResolver.resolve()` (subprocess), registry mutations, `capabilitiesPolicy` send. | Post-reducer orchestration hook. Git resolution, registry hydration, and capabilities are all handle-level operations that cannot be expressed as pure state. |
-| 16 | P3 — Effects are descriptions, not inline I/O | `trySendRawToBackend()` performs direct backend I/O from a runtime method. | Called exclusively from the `CAPABILITIES_INIT_REQUESTED` post-reducer hook — runtime-internal I/O in the correct orchestration layer. Not a violation of the reducer-effect pipeline. |
-| 17 | P5 — Transport modules never trigger business side effects | `BackendConnector.annotateSlashTrace()` mutates `UnifiedMessage.metadata` in-place before routing to runtime. | Trace metadata enrichment in the transport layer. The mutation happens before the message enters the reducer, so it doesn't affect state consistency. |
-| 18 | P8 — Session-scoped events flow from runtime | `SessionCoordinator.renameSession()` emits `session:renamed` directly to `_bridgeEmitter`. | Consistent with coordinator emitting other global lifecycle events (`session:created`, `session:closed`). Low impact. |
-| 19 | P4 — Zero manual persistence calls | `ClaudeLauncher.persistState()` manually saves launcher state (PID/session mappings). | Launcher state is global (not session-specific), required for process tracking across restarts. Not part of the session persistence system. |
-| 20 | P2 — State transitions are pure | `Date.now()` calls in the reducer (`session-reducer.ts`) for timestamps on `CAPABILITIES_APPLIED` and `user_message` echo. | Universal pragmatic choice. Injecting a clock adds complexity for zero practical benefit — timestamps don't affect control flow and don't need to be deterministic in tests. |
+| 10 | P2 — State transitions are pure | `orchestrateSessionInit()` performs inline I/O: `gitResolver.resolve()` (subprocess), registry mutations, `capabilitiesPolicy` send. | Post-reducer orchestration hook. Git resolution, registry hydration, and capabilities are all handle-level operations that cannot be expressed as pure state. |
+| 11 | P3 — Effects are descriptions, not inline I/O | `trySendRawToBackend()` performs direct backend I/O from a runtime method. | Called exclusively from the `CAPABILITIES_INIT_REQUESTED` post-reducer hook — runtime-internal I/O in the correct orchestration layer. Not a violation of the reducer-effect pipeline. |
+| 12 | P5 — Transport modules never trigger business side effects | `BackendConnector.annotateSlashTrace()` mutates `UnifiedMessage.metadata` in-place before routing to runtime. | Trace metadata enrichment in the transport layer. The mutation happens before the message enters the reducer, so it doesn't affect state consistency. |
+| 13 | P8 — Session-scoped events flow from runtime | `SessionCoordinator.renameSession()` emits `session:renamed` directly to `_bridgeEmitter`. | Consistent with coordinator emitting other global lifecycle events (`session:created`, `session:closed`). Low impact. |
+| 14 | P4 — Zero manual persistence calls | `ClaudeLauncher.persistState()` manually saves launcher state (PID/session mappings). | Launcher state is global (not session-specific), required for process tracking across restarts. Not part of the session persistence system. |
+| 15 | P2 — State transitions are pure | `Date.now()` calls in the reducer (`session-reducer.ts`) for timestamps on `CAPABILITIES_APPLIED` and `user_message` echo. | Universal pragmatic choice. Injecting a clock adds complexity for zero practical benefit — timestamps don't affect control flow and don't need to be deterministic in tests. |
