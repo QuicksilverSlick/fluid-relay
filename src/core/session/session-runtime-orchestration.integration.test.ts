@@ -1,55 +1,21 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockSession } from "../../testing/cli-message-factories.js";
-import { noopTracer } from "../messaging/message-tracer.js";
+import { makeRuntimeDeps } from "../../testing/session-runtime-test-helpers.js";
 import { createUnifiedMessage } from "../types/unified-message.js";
-import { SessionRuntime, type SessionRuntimeDeps } from "./session-runtime.js";
+import { SessionRuntime } from "./session-runtime.js";
 
-function makeDeps(overrides?: Partial<SessionRuntimeDeps>): SessionRuntimeDeps {
-  return {
-    config: { maxMessageHistoryLength: 100 },
-    broadcaster: {
-      broadcast: vi.fn(),
-      broadcastToParticipants: vi.fn(),
-      broadcastPresence: vi.fn(),
-      sendTo: vi.fn(),
-    } as any,
-    queueHandler: {
-      handleQueueMessage: vi.fn(),
-      handleUpdateQueuedMessage: vi.fn(),
-      handleCancelQueuedMessage: vi.fn(),
-      autoSendQueuedMessage: vi.fn(),
-    },
-    slashService: {
-      handleInbound: vi.fn(),
-      executeProgrammatic: vi.fn(async () => null),
-    },
-    backendConnector: { sendToBackend: vi.fn() } as any,
-    tracer: noopTracer,
-    store: { persist: vi.fn(), persistSync: vi.fn() } as any,
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
-    gitTracker: {
-      resetAttempt: vi.fn(),
-      refreshGitInfo: vi.fn(() => null),
-      resolveGitInfo: vi.fn(),
-    } as any,
-    gitResolver: null,
-    emitEvent: vi.fn(),
-    capabilitiesPolicy: {
-      initializeTimeoutMs: 50,
-      applyCapabilities: vi.fn(),
-      sendInitializeRequest: vi.fn(),
-      handleControlResponse: vi.fn(),
-    } as any,
-    ...overrides,
-  };
+function makeResultMessage() {
+  return createUnifiedMessage({
+    type: "result",
+    role: "assistant",
+    metadata: { num_turns: 1, is_error: false },
+  });
 }
 
 describe("SessionRuntime orchestration integration", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-
-  // ── orchestrateResult + git patch ────────────────────────────────────────
 
   describe("orchestrateResult with git info", () => {
     it("broadcasts session_update with git fields when refreshGitInfo returns a patch", () => {
@@ -59,40 +25,29 @@ describe("SessionRuntime orchestration integration", () => {
         git_ahead: 2,
         git_behind: 0,
       };
-      const deps = makeDeps({
+      const deps = makeRuntimeDeps({
         gitTracker: {
           resetAttempt: vi.fn(),
           refreshGitInfo: vi.fn(() => gitPatch),
           resolveGitInfo: vi.fn(),
         } as any,
       });
-      const session = createMockSession({ id: "s1" });
-      const runtime = new SessionRuntime(session, deps);
+      const runtime = new SessionRuntime(createMockSession({ id: "s1" }), deps);
 
-      runtime.process({
-        type: "BACKEND_MESSAGE",
-        message: createUnifiedMessage({
-          type: "result",
-          role: "assistant",
-          metadata: { num_turns: 1, is_error: false },
-        }),
-      });
+      runtime.process({ type: "BACKEND_MESSAGE", message: makeResultMessage() });
 
-      // refreshGitInfo was called with the session
       expect(deps.gitTracker.refreshGitInfo).toHaveBeenCalledWith(
         expect.objectContaining({ id: "s1" }),
       );
 
-      // A session_update broadcast should contain the git fields
       const broadcastCalls = (deps.broadcaster.broadcast as ReturnType<typeof vi.fn>).mock.calls;
-      const sessionUpdates = broadcastCalls.filter(
-        ([, msg]: [unknown, any]) => msg.type === "session_update",
+      const gitUpdateCall = broadcastCalls.find(
+        ([, msg]: [unknown, any]) =>
+          msg.type === "session_update" && msg.session?.git_branch === "feat/new",
       );
-      const gitUpdate = sessionUpdates.find(
-        ([, msg]: [unknown, any]) => msg.session?.git_branch === "feat/new",
-      );
-      expect(gitUpdate).toBeDefined();
-      expect(gitUpdate![1].session).toEqual(
+
+      expect(gitUpdateCall).toBeDefined();
+      expect(gitUpdateCall![1].session).toEqual(
         expect.objectContaining({
           git_branch: "feat/new",
           is_worktree: true,
@@ -103,28 +58,13 @@ describe("SessionRuntime orchestration integration", () => {
     });
 
     it("does not broadcast git session_update when refreshGitInfo returns null", () => {
-      const deps = makeDeps({
-        gitTracker: {
-          resetAttempt: vi.fn(),
-          refreshGitInfo: vi.fn(() => null),
-          resolveGitInfo: vi.fn(),
-        } as any,
-      });
-      const session = createMockSession({ id: "s1" });
-      const runtime = new SessionRuntime(session, deps);
+      const deps = makeRuntimeDeps();
+      const runtime = new SessionRuntime(createMockSession({ id: "s1" }), deps);
 
-      runtime.process({
-        type: "BACKEND_MESSAGE",
-        message: createUnifiedMessage({
-          type: "result",
-          role: "assistant",
-          metadata: { num_turns: 1, is_error: false },
-        }),
-      });
+      runtime.process({ type: "BACKEND_MESSAGE", message: makeResultMessage() });
 
       expect(deps.gitTracker.refreshGitInfo).toHaveBeenCalled();
 
-      // No session_update with git fields should be present
       const broadcastCalls = (deps.broadcaster.broadcast as ReturnType<typeof vi.fn>).mock.calls;
       const gitUpdates = broadcastCalls.filter(
         ([, msg]: [unknown, any]) =>
@@ -134,13 +74,10 @@ describe("SessionRuntime orchestration integration", () => {
     });
   });
 
-  // ── orchestrateControlResponse ───────────────────────────────────────────
-
   describe("orchestrateControlResponse", () => {
-    it("delegates to capabilitiesPolicy.handleControlResponse with session and message", () => {
-      const deps = makeDeps();
-      const session = createMockSession({ id: "s1" });
-      const runtime = new SessionRuntime(session, deps);
+    it("delegates to capabilitiesPolicy.handleControlResponse", () => {
+      const deps = makeRuntimeDeps();
+      const runtime = new SessionRuntime(createMockSession({ id: "s1" }), deps);
 
       const controlMsg = createUnifiedMessage({
         type: "control_response",
@@ -151,10 +88,7 @@ describe("SessionRuntime orchestration integration", () => {
         },
       });
 
-      runtime.process({
-        type: "BACKEND_MESSAGE",
-        message: controlMsg,
-      });
+      runtime.process({ type: "BACKEND_MESSAGE", message: controlMsg });
 
       expect(deps.capabilitiesPolicy.handleControlResponse).toHaveBeenCalledWith(
         expect.objectContaining({ id: "s1" }),
@@ -162,8 +96,6 @@ describe("SessionRuntime orchestration integration", () => {
       );
     });
   });
-
-  // ── closeBackendConnection ───────────────────────────────────────────────
 
   describe("closeBackendConnection", () => {
     it("aborts, closes backend session, and dispatches BACKEND_DISCONNECTED", async () => {
@@ -175,49 +107,36 @@ describe("SessionRuntime orchestration integration", () => {
         get messages() {
           return {
             [Symbol.asyncIterator]() {
-              return {
-                next() {
-                  return new Promise(() => {});
-                },
-              };
+              return { next: () => new Promise(() => {}) };
             },
           };
         },
         sessionId: "b1",
       };
-      const backendAbort = { abort: abortSpy, signal: new AbortController().signal };
       const session = createMockSession({
         id: "s1",
         backendSession: backendSession as any,
-        backendAbort: backendAbort as any,
+        backendAbort: { abort: abortSpy, signal: new AbortController().signal } as any,
       });
-      const deps = makeDeps();
+      const deps = makeRuntimeDeps();
       const runtime = new SessionRuntime(session, deps);
 
       expect(runtime.getBackendSession()).not.toBeNull();
-
       await runtime.closeBackendConnection();
 
-      // abort and close were called
       expect(abortSpy).toHaveBeenCalledTimes(1);
       expect(closeSpy).toHaveBeenCalledTimes(1);
-
-      // BACKEND_DISCONNECTED was dispatched → cli_disconnected broadcast
       expect(deps.broadcaster.broadcast).toHaveBeenCalledWith(
         expect.objectContaining({ id: "s1" }),
         expect.objectContaining({ type: "cli_disconnected" }),
       );
-
-      // Backend session is now null
       expect(runtime.getBackendSession()).toBeNull();
     });
 
     it("is a no-op when backendSession is already null", async () => {
-      const session = createMockSession({ id: "s1" });
-      const deps = makeDeps();
-      const runtime = new SessionRuntime(session, deps);
+      const deps = makeRuntimeDeps();
+      const runtime = new SessionRuntime(createMockSession({ id: "s1" }), deps);
 
-      // Should not throw
       await runtime.closeBackendConnection();
 
       expect(deps.broadcaster.broadcast).not.toHaveBeenCalledWith(
@@ -228,49 +147,43 @@ describe("SessionRuntime orchestration integration", () => {
     });
   });
 
-  // ── markDirty debounce ───────────────────────────────────────────────────
-
   describe("markDirty debounce", () => {
-    it("collapses multiple rapid state changes into a single debounced persist call", () => {
+    beforeEach(() => {
       vi.useFakeTimers();
-      try {
-        const session = createMockSession({ id: "s1" });
-        const deps = makeDeps();
-        const runtime = new SessionRuntime(session, deps);
+    });
 
-        // Use assistant backend messages — they trigger markDirty (state change)
-        // but do NOT produce PERSIST_NOW effects, so persist is only called
-        // via the debounce timer.
-        runtime.process({
-          type: "BACKEND_MESSAGE",
-          message: createUnifiedMessage({
-            type: "assistant",
-            role: "assistant",
-            content: [{ type: "text", text: "msg1" }],
-            metadata: { message_id: "m1" },
-          }),
-        });
-        runtime.process({
-          type: "BACKEND_MESSAGE",
-          message: createUnifiedMessage({
-            type: "assistant",
-            role: "assistant",
-            content: [{ type: "text", text: "msg2" }],
-            metadata: { message_id: "m2" },
-          }),
-        });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
-        // persist should NOT have been called yet (debounce is 50ms)
-        expect(deps.store.persist).toHaveBeenCalledTimes(0);
+    it("collapses multiple rapid state changes into a single debounced persist call", () => {
+      const deps = makeRuntimeDeps();
+      const runtime = new SessionRuntime(createMockSession({ id: "s1" }), deps);
 
-        // Advance past the 50ms debounce window
-        vi.advanceTimersByTime(100);
+      runtime.process({
+        type: "BACKEND_MESSAGE",
+        message: createUnifiedMessage({
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: "msg1" }],
+          metadata: { message_id: "m1" },
+        }),
+      });
+      runtime.process({
+        type: "BACKEND_MESSAGE",
+        message: createUnifiedMessage({
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: "msg2" }],
+          metadata: { message_id: "m2" },
+        }),
+      });
 
-        // Now persist should have been called exactly once (collapsed)
-        expect(deps.store.persist).toHaveBeenCalledTimes(1);
-      } finally {
-        vi.useRealTimers();
-      }
+      expect(deps.store.persist).toHaveBeenCalledTimes(0);
+
+      vi.advanceTimersByTime(100);
+
+      expect(deps.store.persist).toHaveBeenCalledTimes(1);
     });
   });
 });

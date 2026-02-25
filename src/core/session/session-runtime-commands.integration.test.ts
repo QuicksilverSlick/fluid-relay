@@ -1,53 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockSession, createTestSocket } from "../../testing/cli-message-factories.js";
-import { noopTracer } from "../messaging/message-tracer.js";
-import { SessionRuntime, type SessionRuntimeDeps } from "./session-runtime.js";
+import { makeRuntimeDeps } from "../../testing/session-runtime-test-helpers.js";
+import type { SessionRuntimeDeps } from "./session-runtime.js";
+import { SessionRuntime } from "./session-runtime.js";
 
-function makeDeps(overrides?: Partial<SessionRuntimeDeps>): SessionRuntimeDeps {
-  return {
-    config: { maxMessageHistoryLength: 100 },
-    broadcaster: {
-      broadcast: vi.fn(),
-      broadcastToParticipants: vi.fn(),
-      broadcastPresence: vi.fn(),
-      sendTo: vi.fn(),
-    } as any,
-    queueHandler: {
-      handleQueueMessage: vi.fn(),
-      handleUpdateQueuedMessage: vi.fn(),
-      handleCancelQueuedMessage: vi.fn(),
-      autoSendQueuedMessage: vi.fn(),
-    },
-    slashService: {
-      handleInbound: vi.fn(),
-      executeProgrammatic: vi.fn(async () => null),
-    },
-    backendConnector: { sendToBackend: vi.fn() } as any,
-    tracer: noopTracer,
-    store: { persist: vi.fn(), persistSync: vi.fn() } as any,
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
-    gitTracker: {
-      resetAttempt: vi.fn(),
-      refreshGitInfo: vi.fn(() => null),
-      resolveGitInfo: vi.fn(),
-    } as any,
-    gitResolver: null,
-    emitEvent: vi.fn(),
-    capabilitiesPolicy: {
-      initializeTimeoutMs: 50,
-      applyCapabilities: vi.fn(),
-      sendInitializeRequest: vi.fn(),
-      handleControlResponse: vi.fn(),
-    } as any,
-    ...overrides,
-  };
-}
+describe("SessionRuntime inbound command routing", () => {
+  let deps: SessionRuntimeDeps;
+  let runtime: SessionRuntime;
 
-describe("SessionRuntime — inbound command routing", () => {
-  it("queue_message → queueHandler.handleQueueMessage called", () => {
-    const deps = makeDeps();
-    const session = createMockSession({ id: "s1" });
-    const runtime = new SessionRuntime(session, deps);
+  beforeEach(() => {
+    deps = makeRuntimeDeps();
+    runtime = new SessionRuntime(createMockSession({ id: "s1" }), deps);
+  });
+
+  it("queue_message routes to queueHandler.handleQueueMessage", () => {
     const ws = createTestSocket();
 
     runtime.process({
@@ -63,10 +29,7 @@ describe("SessionRuntime — inbound command routing", () => {
     );
   });
 
-  it("update_queued_message → queueHandler.handleUpdateQueuedMessage called", () => {
-    const deps = makeDeps();
-    const session = createMockSession({ id: "s1" });
-    const runtime = new SessionRuntime(session, deps);
+  it("update_queued_message routes to queueHandler.handleUpdateQueuedMessage", () => {
     const ws = createTestSocket();
 
     runtime.process({
@@ -82,10 +45,7 @@ describe("SessionRuntime — inbound command routing", () => {
     );
   });
 
-  it("cancel_queued_message → queueHandler.handleCancelQueuedMessage called", () => {
-    const deps = makeDeps();
-    const session = createMockSession({ id: "s1" });
-    const runtime = new SessionRuntime(session, deps);
+  it("cancel_queued_message routes to queueHandler.handleCancelQueuedMessage", () => {
     const ws = createTestSocket();
 
     runtime.process({
@@ -100,10 +60,7 @@ describe("SessionRuntime — inbound command routing", () => {
     );
   });
 
-  it("presence_query → broadcaster.broadcastPresence called", () => {
-    const deps = makeDeps();
-    const session = createMockSession({ id: "s1" });
-    const runtime = new SessionRuntime(session, deps);
+  it("presence_query routes to broadcaster.broadcastPresence", () => {
     const ws = createTestSocket();
 
     runtime.process({
@@ -117,16 +74,14 @@ describe("SessionRuntime — inbound command routing", () => {
     );
   });
 
-  it("set_adapter on active session → sendTo called with error", () => {
-    const deps = makeDeps();
-    const session = createMockSession({
-      id: "s1",
-      backendSession: { send: vi.fn(), close: vi.fn() } as any,
-    });
-    const runtime = new SessionRuntime(session, deps);
+  it("set_adapter on active session sends error", () => {
+    const activeRuntime = new SessionRuntime(
+      createMockSession({ id: "s1", backendSession: { send: vi.fn(), close: vi.fn() } as any }),
+      deps,
+    );
     const ws = createTestSocket();
 
-    runtime.process({
+    activeRuntime.process({
       type: "INBOUND_COMMAND",
       command: { type: "set_adapter", adapter: "codex" },
       ws,
@@ -141,20 +96,13 @@ describe("SessionRuntime — inbound command routing", () => {
     );
   });
 
-  it("sendPermissionResponse with unknown requestId → logger.warn called", () => {
-    const deps = makeDeps();
-    const session = createMockSession({ id: "s1" });
-    const runtime = new SessionRuntime(session, deps);
-
+  it("sendPermissionResponse with unknown requestId warns", () => {
     runtime.sendPermissionResponse("nonexistent-req-id", "allow");
 
     expect(deps.logger.warn).toHaveBeenCalledWith(expect.stringContaining("unknown request_id"));
   });
 
-  it("CONSUMER_DISCONNECTED for unregistered socket → logger.warn about double-disconnect", () => {
-    const deps = makeDeps();
-    const session = createMockSession({ id: "s1" });
-    const runtime = new SessionRuntime(session, deps);
+  it("CONSUMER_DISCONNECTED for unregistered socket warns about double-disconnect", () => {
     const unregisteredWs = createTestSocket();
 
     runtime.process({
@@ -165,11 +113,7 @@ describe("SessionRuntime — inbound command routing", () => {
     expect(deps.logger.warn).toHaveBeenCalledWith(expect.stringContaining("double-disconnect"));
   });
 
-  it("PASSTHROUGH_ENQUEUED → peekPendingPassthrough returns the entry", () => {
-    const deps = makeDeps();
-    const session = createMockSession({ id: "s1" });
-    const runtime = new SessionRuntime(session, deps);
-
+  it("PASSTHROUGH_ENQUEUED stores entry accessible via peekPendingPassthrough", () => {
     const entry = {
       command: "/compact",
       slashRequestId: "sr-1",
@@ -185,22 +129,12 @@ describe("SessionRuntime — inbound command routing", () => {
     expect(runtime.peekPendingPassthrough()).toEqual(entry);
   });
 
-  it("checkRateLimit — factory returns undefined → returns true", () => {
-    const deps = makeDeps();
-    const session = createMockSession({ id: "s1" });
-    const runtime = new SessionRuntime(session, deps);
-    const ws = createTestSocket();
-
-    const result = runtime.checkRateLimit(ws, () => undefined);
-    expect(result).toBe(true);
+  it("checkRateLimit returns true when factory returns undefined", () => {
+    expect(runtime.checkRateLimit(createTestSocket(), () => undefined)).toBe(true);
   });
 
-  it("checkRateLimit — factory called once, tryConsume called N times for same ws", () => {
-    const deps = makeDeps();
-    const session = createMockSession({ id: "s1" });
-    const runtime = new SessionRuntime(session, deps);
+  it("checkRateLimit calls factory once and tryConsume on each subsequent call", () => {
     const ws = createTestSocket();
-
     const tryConsume = vi.fn().mockReturnValue(true);
     const createLimiter = vi.fn().mockReturnValue({ tryConsume });
 

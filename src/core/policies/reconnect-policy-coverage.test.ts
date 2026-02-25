@@ -1,10 +1,11 @@
 /**
- * Coverage tests for ReconnectPolicy — targets the two previously uncovered branches:
+ * Coverage tests for ReconnectPolicy — targets two previously uncovered branches:
  *   1. Lines 73-76: the rejected-result path inside Promise.allSettled
  *   2. Lines 99-104: teardownDomainSubscriptions called via stop()
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { flushPromises } from "../../testing/cli-message-factories.js";
 import { ReconnectPolicy } from "./reconnect-policy.js";
 
 // ---------------------------------------------------------------------------
@@ -13,8 +14,7 @@ import { ReconnectPolicy } from "./reconnect-policy.js";
 
 /**
  * Build a minimal set of mocked deps that satisfies ReconnectPolicyDeps.
- * `domainEvents` is a plain object with spied `on`/`off` so we can intercept
- * the cleanup functions that `ensureDomainSubscriptions` registers.
+ * `domainEvents` tracks registered listeners so we can verify cleanup calls.
  */
 function makeDeps(
   overrides: {
@@ -45,7 +45,6 @@ function makeDeps(
     error: vi.fn(),
   } as any;
 
-  // Track listeners so we can verify cleanup calls
   const listeners: Map<string, Set<Function>> = new Map();
   const domainEvents = {
     on: vi.fn(<K extends string>(event: K, listener: Function) => {
@@ -55,7 +54,6 @@ function makeDeps(
     off: vi.fn(<K extends string>(event: K, listener: Function) => {
       listeners.get(event)?.delete(listener);
     }),
-    // Helper — emit an event to registered listeners (not part of the real interface, just for tests)
     _emit(event: string, payload: unknown) {
       for (const fn of listeners.get(event) ?? []) fn(payload);
     },
@@ -74,9 +72,6 @@ describe("ReconnectPolicy — uncovered branches", () => {
     vi.useRealTimers();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 1: lines 73-76 — logger.warn is called when a batch relaunch rejects
-  // -------------------------------------------------------------------------
   it("logs a warning when a batch relaunch fails (rejected Promise.allSettled result)", async () => {
     vi.useFakeTimers();
 
@@ -101,32 +96,27 @@ describe("ReconnectPolicy — uncovered branches", () => {
     });
 
     policy.start();
-
-    // Advance time past the grace period so the watchdog fires
     await vi.advanceTimersByTimeAsync(1000);
-    // Allow the async relaunchStaleSessions promise chain to settle
-    await Promise.resolve();
-    await Promise.resolve();
+    // The relaunchStaleSessions chain has multiple async hops:
+    // timer callback → relaunch() (rejects) → Promise.allSettled() → result iteration → logger.warn.
+    // Flush 4 microtask queue turns to ensure all hops have settled.
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
 
-    // The warning must reference the failing session and carry the error
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("s-fail"),
       expect.objectContaining({ error: relaunchError }),
     );
-
-    // The successful session must still have been attempted — allSettled, not Promise.all
     expect(launcher.relaunch).toHaveBeenCalledWith("s-fail");
     expect(launcher.relaunch).toHaveBeenCalledWith("s-ok");
 
-    // logger.warn must NOT have been called for the succeeding session
-    const warnCalls: string[] = logger.warn.mock.calls.map((c: any[]) => c[0] as string);
-    expect(warnCalls.every((msg) => !msg.includes("s-ok"))).toBe(true);
+    const warnMessages: string[] = logger.warn.mock.calls.map((c: any[]) => c[0] as string);
+    expect(warnMessages.every((msg) => !msg.includes("s-ok"))).toBe(true);
   });
 
-  // -------------------------------------------------------------------------
-  // Test 2: lines 99-104 — teardownDomainSubscriptions called from stop()
-  // -------------------------------------------------------------------------
-  it("stop() calls all registered cleanup functions (teardownDomainSubscriptions via stop)", () => {
+  it("stop() calls all registered cleanup functions (teardownDomainSubscriptions)", () => {
     vi.useFakeTimers();
 
     const { launcher, bridge, logger, domainEvents } = makeDeps({
@@ -141,21 +131,18 @@ describe("ReconnectPolicy — uncovered branches", () => {
       domainEvents,
     });
 
-    // start() registers three domain-event subscriptions
     policy.start();
     expect(domainEvents.on).toHaveBeenCalledTimes(3);
 
-    // stop() must call the three matching off() teardowns
     policy.stop();
     expect(domainEvents.off).toHaveBeenCalledTimes(3);
 
-    // The three events that were subscribed to
     const subscribedEvents = domainEvents.on.mock.calls.map((c: any[]) => c[0] as string);
     const unsubscribedEvents = domainEvents.off.mock.calls.map((c: any[]) => c[0] as string);
     expect(subscribedEvents.sort()).toEqual(unsubscribedEvents.sort());
   });
 
-  it("stop() is idempotent — calling it twice does not double-unsubscribe", () => {
+  it("stop() is idempotent — second call exits early because reconnectTimer is already null", () => {
     vi.useFakeTimers();
 
     const { launcher, bridge, logger, domainEvents } = makeDeps({
@@ -174,14 +161,12 @@ describe("ReconnectPolicy — uncovered branches", () => {
     policy.stop();
     const offCallsAfterFirstStop = domainEvents.off.mock.calls.length;
 
-    // Second stop() is a no-op — reconnectTimer is already null
+    // Guard fires: stop() checks this.reconnectTimer === null and returns early.
+    // teardownDomainSubscriptions is NOT called again because stop() never reaches it.
     policy.stop();
     expect(domainEvents.off).toHaveBeenCalledTimes(offCallsAfterFirstStop);
   });
 
-  // -------------------------------------------------------------------------
-  // Test 3: stop() is safe when never started (edge case)
-  // -------------------------------------------------------------------------
   it("stop() is safe when called without start()", () => {
     const { launcher, bridge, logger, domainEvents } = makeDeps();
 
@@ -193,10 +178,7 @@ describe("ReconnectPolicy — uncovered branches", () => {
       domainEvents,
     });
 
-    // Should not throw
     expect(() => policy.stop()).not.toThrow();
-
-    // No subscriptions were made, so nothing should be torn down
     expect(domainEvents.on).not.toHaveBeenCalled();
     expect(domainEvents.off).not.toHaveBeenCalled();
   });
