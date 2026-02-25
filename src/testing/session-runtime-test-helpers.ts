@@ -55,7 +55,14 @@ export function makeRuntimeDeps(overrides?: Partial<SessionRuntimeDeps>): Sessio
 }
 
 /** Backend session mock with initialize support. */
-export function createBackendWithInit() {
+export function createBackendWithInit(): {
+  send: ReturnType<typeof vi.fn>;
+  initialize: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  messages: any;
+  sessionId: string;
+} {
   return {
     send: vi.fn(),
     initialize: vi.fn(),
@@ -72,7 +79,13 @@ export function createBackendWithInit() {
 }
 
 /** Backend session mock without initialize support. */
-export function createBackendNoInit() {
+export function createBackendNoInit(): {
+  send: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  messages: any;
+  sessionId: string;
+} {
   return {
     send: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
