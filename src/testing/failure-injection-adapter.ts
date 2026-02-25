@@ -67,7 +67,7 @@ class ControlledMessageStream implements AsyncIterable<UnifiedMessage> {
 
 export class FailureInjectionBackendSession implements BackendSession {
   readonly sentMessages: UnifiedMessage[] = [];
-  readonly sentRawMessages: string[] = [];
+  readonly sentInitializeRequestIds: string[] = [];
   private closed = false;
   private stream = new ControlledMessageStream();
 
@@ -82,9 +82,9 @@ export class FailureInjectionBackendSession implements BackendSession {
     this.sentMessages.push(message);
   }
 
-  sendRaw(message: string): void {
+  initialize(requestId: string): void {
     if (this.closed) throw new Error("Session is closed");
-    this.sentRawMessages.push(message);
+    this.sentInitializeRequestIds.push(requestId);
   }
 
   async close(): Promise<void> {

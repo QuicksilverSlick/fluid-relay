@@ -102,12 +102,23 @@ export class ClaudeSession implements BackendSession {
   }
 
   // ---------------------------------------------------------------------------
-  // BackendSession — sendRaw
+  // BackendSession — initialize
   // ---------------------------------------------------------------------------
 
-  /** Send a raw NDJSON string to the backend (bypass UnifiedMessage translation). */
-  sendRaw(ndjson: string): void {
+  /** Send the Claude NDJSON control_request/initialize capabilities handshake. */
+  initialize(requestId: string): void {
     if (this.closed) throw new Error("Session is closed");
+    const ndjson = JSON.stringify({
+      type: "control_request",
+      request_id: requestId,
+      request: { subtype: "initialize" },
+    });
+    this.tracer?.send(
+      "backend",
+      "control_request/initialize",
+      { requestId },
+      { sessionId: this.sessionId, requestId, phase: "t2_send_native" },
+    );
     this.sendToSocket(ndjson);
   }
 
@@ -161,7 +172,8 @@ export class ClaudeSession implements BackendSession {
       this.queue.finish();
     });
 
-    ws.on("error", () => {
+    ws.on("error", (err: Error) => {
+      this.logger.warn(`WebSocket error for session ${this.sessionId}: ${err.message}`);
       this.queue.finish();
     });
   }
@@ -173,7 +185,15 @@ export class ClaudeSession implements BackendSession {
   private sendToSocket(ndjson: string): void {
     const line = ndjson.endsWith("\n") ? ndjson : `${ndjson}\n`;
     if (this.socket) {
-      this.socket.send(line);
+      // readyState is available on a real ws.WebSocket; it may be undefined on a
+      // proxy socket (e.g. BufferedSocketLike in tests). When defined, only send
+      // if the socket is OPEN (1). When undefined, fall through and let the socket
+      // implementation handle it — the error handler calls queue.finish() anyway.
+      const readyState = (this.socket as unknown as { readyState?: number }).readyState;
+      if (readyState === undefined || readyState === 1 /* WebSocket.OPEN */) {
+        this.socket.send(line);
+      }
+      // Socket present but not OPEN — drop silently; error/close already handled.
     } else {
       this.outboundQueue.push(line);
     }

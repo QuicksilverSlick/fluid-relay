@@ -153,13 +153,13 @@ describe("AgentSdkSession", () => {
     });
   });
 
-  describe("sendRaw", () => {
-    it("is not defined (not supported)", async () => {
+  describe("initialize", () => {
+    it("is not defined (does not support the initialize handshake)", async () => {
       const session = await AgentSdkSession.create({
-        sessionId: "test-sendraw",
+        sessionId: "test-initialize",
       });
 
-      expect(session.sendRaw).toBeUndefined();
+      expect(session.initialize).toBeUndefined();
 
       await session.close();
     });

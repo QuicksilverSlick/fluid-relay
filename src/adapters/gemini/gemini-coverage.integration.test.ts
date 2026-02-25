@@ -701,10 +701,10 @@ describe("E2E: GeminiAdapter Coverage Expansion", () => {
   });
 
   // -------------------------------------------------------------------------
-  // sendRaw throws
+  // initialize not defined
   // -------------------------------------------------------------------------
 
-  it("sendRaw is not defined (not supported)", async () => {
+  it("initialize is not defined (not supported)", async () => {
     const adapter = createAdapter((stdin, stdout) => {
       createAcpAutoResponder(stdin, stdout);
     });
@@ -712,7 +712,7 @@ describe("E2E: GeminiAdapter Coverage Expansion", () => {
     const session = await adapter.connect({ sessionId: "raw-sess" });
     activeSessions.push(session);
 
-    expect(session.sendRaw).toBeUndefined();
+    expect(session.initialize).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------

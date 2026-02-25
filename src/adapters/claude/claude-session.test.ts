@@ -76,10 +76,10 @@ describe("ClaudeSession", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. sendRaw() queues before socket and sends after
+  // 2. initialize() queues before socket and sends after
   // -------------------------------------------------------------------------
 
-  it("sendRaw() queues before socket and sends after", async () => {
+  it("initialize() queues before socket and sends after", async () => {
     let resolveSocket!: (ws: MockWebSocket) => void;
     const socketPromise = new Promise<MockWebSocket>((r) => {
       resolveSocket = r;
@@ -91,19 +91,21 @@ describe("ClaudeSession", () => {
     });
 
     const ws = new MockWebSocket();
-    const rawData = '{"type":"custom","data":"test"}';
 
-    // sendRaw before socket connects
-    session.sendRaw(rawData);
+    // initialize before socket connects
+    session.initialize("req-id-1");
     expect(ws.sent).toHaveLength(0);
 
     // Resolve socket
     resolveSocket(ws);
     await tick();
 
-    // Raw data should be flushed
+    // Initialize frame should be flushed
     expect(ws.sent).toHaveLength(1);
-    expect(ws.sent[0]).toBe(`${rawData}\n`);
+    const frame = JSON.parse(ws.sent[0]);
+    expect(frame.type).toBe("control_request");
+    expect(frame.request_id).toBe("req-id-1");
+    expect(frame.request.subtype).toBe("initialize");
 
     await session.close();
   });
@@ -124,11 +126,10 @@ describe("ClaudeSession", () => {
     });
 
     const ws = new MockWebSocket();
-    const rawData = '{"type":"raw","data":"test"}';
 
-    // Queue both send() and sendRaw() before socket connects
+    // Queue both send() and initialize() before socket connects
     session.send(makeUserMsg("first"));
-    session.sendRaw(rawData);
+    session.initialize("req-id-2");
 
     // Resolve socket
     resolveSocket(ws);
@@ -141,8 +142,10 @@ describe("ClaudeSession", () => {
     const first = JSON.parse(ws.sent[0]);
     expect(first.type).toBe("user");
 
-    // Second: raw NDJSON
-    expect(ws.sent[1]).toBe(`${rawData}\n`);
+    // Second: initialize control_request
+    const second = JSON.parse(ws.sent[1]);
+    expect(second.type).toBe("control_request");
+    expect(second.request.subtype).toBe("initialize");
 
     await session.close();
   });
@@ -334,10 +337,10 @@ describe("ClaudeSession", () => {
   });
 
   // -------------------------------------------------------------------------
-  // sendRaw() on closed session throws
+  // initialize() on closed session throws
   // -------------------------------------------------------------------------
 
-  it("sendRaw() on closed session throws", async () => {
+  it("initialize() on closed session throws", async () => {
     const ws = new MockWebSocket();
     const socketPromise = Promise.resolve(ws);
 
@@ -349,7 +352,7 @@ describe("ClaudeSession", () => {
     await tick();
     await session.close();
 
-    expect(() => session.sendRaw('{"type":"test"}')).toThrow("Session is closed");
+    expect(() => session.initialize("req-id")).toThrow("Session is closed");
   });
 
   // -------------------------------------------------------------------------

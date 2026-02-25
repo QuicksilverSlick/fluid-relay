@@ -1490,9 +1490,9 @@ describe("E2E: CodexAdapter", () => {
       session = undefined;
     });
 
-    it("sendRaw is not defined (not supported)", async () => {
+    it("initialize is not defined (not supported)", async () => {
       session = createSession();
-      expect(session!.sendRaw).toBeUndefined();
+      expect(session!.initialize).toBeUndefined();
     });
 
     it("notification with no params defaults to empty object", async () => {

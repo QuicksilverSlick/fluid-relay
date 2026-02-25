@@ -849,13 +849,13 @@ describe("E2E: AgentSdkAdapter", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 13. sendRaw throws
+  // 13. initialize not defined
   // -------------------------------------------------------------------------
 
-  it("sendRaw is not defined (does not support raw NDJSON)", async () => {
+  it("initialize is not defined (does not support the initialize handshake)", async () => {
     currentMock = createControllableMock();
     session = await createSession();
 
-    expect(session!.sendRaw).toBeUndefined();
+    expect(session!.initialize).toBeUndefined();
   });
 });

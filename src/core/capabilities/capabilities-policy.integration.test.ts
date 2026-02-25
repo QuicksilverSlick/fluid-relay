@@ -51,13 +51,8 @@ function createMockRuntime(session: any, broadcaster: any, emitEvent: any, confi
       } else if (signal.kind === "CAPABILITIES_INIT_REQUESTED") {
         if (session.pendingInitialize) return; // dedup
         const requestId = `init-req-${++_reqCounter}`;
-        const ndjson = JSON.stringify({
-          type: "control_request",
-          request_id: requestId,
-          request: { subtype: "initialize" },
-        });
-        const result = runtime.trySendRawToBackend(ndjson);
-        if (result === "unsupported") return; // adapter does not support sendRaw
+        const result = runtime.tryInitializeBackend(requestId);
+        if (result === "unsupported" || result === "no_backend") return;
         const timer = setTimeout(() => {
           if (session.pendingInitialize?.requestId === requestId) {
             session.pendingInitialize = null;
@@ -71,14 +66,11 @@ function createMockRuntime(session: any, broadcaster: any, emitEvent: any, confi
     setPendingInitialize: (pi: any) => {
       session.pendingInitialize = pi;
     },
-    trySendRawToBackend: (ndjson: string) => {
+    tryInitializeBackend: (requestId: string) => {
       if (!session.backendSession) return "no_backend";
-      try {
-        session.backendSession.sendRaw(ndjson);
-        return "sent";
-      } catch {
-        return "unsupported";
-      }
+      if (!session.backendSession.initialize) return "unsupported";
+      session.backendSession.initialize(requestId);
+      return "sent";
     },
     registerCLICommands: (commands: any[]) => {
       session.registry.registerFromCLI(commands);
@@ -114,7 +106,7 @@ function createMockBackendSession() {
   return {
     sessionId: "sess-1",
     send: vi.fn(),
-    sendRaw: vi.fn(),
+    initialize: vi.fn(),
     messages: {
       [Symbol.asyncIterator]: () => ({
         next: () => Promise.resolve({ done: true, value: undefined }),
@@ -122,6 +114,13 @@ function createMockBackendSession() {
     },
     close: vi.fn(),
   };
+}
+
+/** Session pre-wired with a backendSession — needed for tests that call sendInitializeRequest. */
+function createSessionWithBackend() {
+  const session = createMockSession();
+  session.backendSession = createMockBackendSession() as any;
+  return session;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -142,18 +141,15 @@ describe("CapabilitiesPolicy", () => {
 
       protocol.sendInitializeRequest(session);
 
-      expect(backendSession.sendRaw).toHaveBeenCalledOnce();
-      const ndjson = backendSession.sendRaw.mock.calls[0][0];
-
-      const parsed = JSON.parse(ndjson);
-      expect(parsed.type).toBe("control_request");
-      expect(parsed.request.subtype).toBe("initialize");
-      expect(parsed.request_id).toBeTypeOf("string");
+      expect(backendSession.initialize).toHaveBeenCalledOnce();
+      const requestId = backendSession.initialize.mock.calls[0][0];
+      expect(requestId).toBeTypeOf("string");
+      expect(session.pendingInitialize!.requestId).toBe(requestId);
     });
 
     it("sets pendingInitialize on the session", () => {
       const { protocol } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
 
@@ -171,13 +167,13 @@ describe("CapabilitiesPolicy", () => {
       protocol.sendInitializeRequest(session);
       protocol.sendInitializeRequest(session);
 
-      expect(backendSession.sendRaw).toHaveBeenCalledOnce();
+      expect(backendSession.initialize).toHaveBeenCalledOnce();
     });
 
     it("emits capabilities:timeout after initializeTimeoutMs", () => {
       vi.useFakeTimers();
       const { protocol, emitEvent } = createDeps({ initializeTimeoutMs: 3000 });
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
 
@@ -192,7 +188,7 @@ describe("CapabilitiesPolicy", () => {
     it("does not emit timeout if request was already handled", () => {
       vi.useFakeTimers();
       const { protocol, emitEvent } = createDeps({ initializeTimeoutMs: 3000 });
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
       const requestId = session.pendingInitialize!.requestId;
@@ -221,7 +217,7 @@ describe("CapabilitiesPolicy", () => {
     it("clears the pending timer and nulls pendingInitialize", () => {
       vi.useFakeTimers();
       const { protocol, emitEvent } = createDeps({ initializeTimeoutMs: 3000 });
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
       expect(session.pendingInitialize).not.toBeNull();
@@ -249,7 +245,7 @@ describe("CapabilitiesPolicy", () => {
   describe("handleControlResponse", () => {
     it("applies capabilities on successful response", () => {
       const { protocol, broadcaster, emitEvent } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
       const requestId = session.pendingInitialize!.requestId;
@@ -302,7 +298,7 @@ describe("CapabilitiesPolicy", () => {
 
     it("registers commands in the slash command registry", () => {
       const { protocol } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
       const requestId = session.pendingInitialize!.requestId;
@@ -333,7 +329,7 @@ describe("CapabilitiesPolicy", () => {
 
     it("does not register commands when commands array is empty", () => {
       const { protocol } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
       const requestId = session.pendingInitialize!.requestId;
@@ -397,7 +393,7 @@ describe("CapabilitiesPolicy", () => {
 
     it("handles error response without capabilities", () => {
       const { protocol } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
       const requestId = session.pendingInitialize!.requestId;
@@ -421,7 +417,7 @@ describe("CapabilitiesPolicy", () => {
 
     it("synthesizes capabilities from slash_commands on error fallback", () => {
       const { protocol, broadcaster, emitEvent } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
       session.data.state.slash_commands = ["/help", "/compact"];
 
       protocol.sendInitializeRequest(session);
@@ -455,7 +451,7 @@ describe("CapabilitiesPolicy", () => {
 
     it("golden: Already initialized synthesizes capabilities from slash_commands", () => {
       const { protocol } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
       session.data.state.slash_commands = ["/help", "/compact"];
 
       protocol.sendInitializeRequest(session);
@@ -500,7 +496,7 @@ describe("CapabilitiesPolicy", () => {
 
     it("does not synthesize on error if capabilities already exist", () => {
       const { protocol, broadcaster } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
       session.data.state.slash_commands = ["/help"];
       session.data.state.capabilities = {
         commands: [{ name: "/existing", description: "Existing" }],
@@ -533,7 +529,7 @@ describe("CapabilitiesPolicy", () => {
 
     it("handles response with missing response body gracefully", () => {
       const { protocol, broadcaster } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
       const requestId = session.pendingInitialize!.requestId;
@@ -557,7 +553,7 @@ describe("CapabilitiesPolicy", () => {
 
     it("handles partial capabilities (only commands)", () => {
       const { protocol } = createDeps();
-      const session = createMockSession();
+      const session = createSessionWithBackend();
 
       protocol.sendInitializeRequest(session);
       const requestId = session.pendingInitialize!.requestId;

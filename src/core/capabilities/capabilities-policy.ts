@@ -96,7 +96,12 @@ export class CapabilitiesPolicy {
     const response = m.response as
       | { commands?: unknown[]; models?: unknown[]; account?: unknown }
       | undefined;
-    if (!response) return;
+    if (!response) {
+      this.logger.warn(
+        `Initialize control_response for session ${session.id} has no response body`,
+      );
+      return;
+    }
 
     const commands = Array.isArray(response.commands)
       ? (response.commands as InitializeCommand[])

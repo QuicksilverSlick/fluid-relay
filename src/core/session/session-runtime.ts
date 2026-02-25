@@ -214,16 +214,11 @@ export class SessionRuntime {
     this.session.pendingInitialize = pendingInitialize;
   }
 
-  trySendRawToBackend(ndjson: string): "sent" | "unsupported" | "no_backend" {
+  tryInitializeBackend(requestId: string): "sent" | "unsupported" | "no_backend" {
     const backendSession = this.session.backendSession;
     if (!backendSession) return "no_backend";
-    if (
-      !("sendRaw" in backendSession) ||
-      typeof (backendSession as unknown as Record<string, unknown>).sendRaw !== "function"
-    ) {
-      return "unsupported";
-    }
-    (backendSession as unknown as { sendRaw: (s: string) => void }).sendRaw(ndjson);
+    if (!backendSession.initialize) return "unsupported";
+    backendSession.initialize(requestId);
     return "sent";
   }
 
@@ -524,21 +519,16 @@ export class SessionRuntime {
       case "CAPABILITIES_INIT_REQUESTED": {
         if (this.session.pendingInitialize) break; // dedup — already pending
         const requestId = randomUUID();
-        const ndjson = JSON.stringify({
-          type: "control_request",
-          request_id: requestId,
-          request: { subtype: "initialize" },
-        });
-        const result = this.trySendRawToBackend(ndjson);
+        const result = this.tryInitializeBackend(requestId);
         if (result === "unsupported") {
           this.deps.logger.info(
-            `Skipping NDJSON initialize for session ${this.session.id}: adapter does not support sendRaw`,
+            `Skipping initialize for session ${this.session.id}: adapter does not support initialize`,
           );
           break;
         }
         if (result === "no_backend") {
           this.deps.logger.warn(
-            `Skipping NDJSON initialize for session ${this.session.id}: no backend session attached`,
+            `Skipping initialize for session ${this.session.id}: no backend session attached`,
           );
           break;
         }

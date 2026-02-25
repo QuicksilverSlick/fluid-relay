@@ -63,10 +63,12 @@ describe("ClaudeAdapter", () => {
       const delivered = adapter.deliverSocket("sess-2", ws);
       expect(delivered).toBe(true);
 
-      // After delivery, send should go through to the socket
+      // After delivery, initialize should go through to the socket
       await tick();
-      session.sendRaw('{"test":true}');
-      expect(ws.sent).toContain('{"test":true}\n');
+      session.initialize("req-id-test");
+      const frame = JSON.parse(ws.sent[ws.sent.length - 1]);
+      expect(frame.type).toBe("control_request");
+      expect(frame.request_id).toBe("req-id-test");
 
       await session.close();
     });
@@ -101,8 +103,8 @@ describe("ClaudeAdapter", () => {
       adapter.deliverSocket("sess-4", ws);
       await tick();
 
-      // Send a message through the session
-      session.sendRaw('{"type":"user","message":{"role":"user","content":"hello"}}');
+      // Send an initialize frame through the session
+      session.initialize("req-id-integ");
       expect(ws.sent).toHaveLength(1);
 
       // Simulate incoming message from CLI
