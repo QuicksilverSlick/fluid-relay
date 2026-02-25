@@ -345,7 +345,6 @@ export function createBridgeWithAdapter(options?: {
   );
 
   queueHandler = new MessageQueueHandler(
-    (ws, message) => broadcaster.sendTo(ws, message as any),
     (sessionId, content, opts?: { images?: { media_type: string; data: string }[] }) =>
       withMutableSession(sessionId, "sendUserMessage", (s) =>
         getOrCreateRuntime(s).sendUserMessage(content, opts),

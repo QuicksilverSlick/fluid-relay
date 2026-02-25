@@ -314,28 +314,41 @@ export class SessionRuntime {
       this.session = { ...this.session, data: nextData };
       this.markDirty();
     }
-    executeEffects(effects, this.session, this.effectDeps());
 
-    // Post-reducer orchestration — commands that need live WebSocket handles
-    // or that produce warnings based on whether state actually changed.
-    switch (msg.type) {
-      case "user_message":
-        if (nextData === prevData) {
-          // Reducer no-op means closed/closing session — send targeted error.
-          this.deps.broadcaster.sendTo(ws, {
-            type: "error",
-            message: "Session is closing or closed and cannot accept new messages.",
-          });
-        }
-        break;
-      case "set_adapter":
-        // Rejected for active sessions — send targeted error to the requesting consumer only.
-        this.deps.broadcaster.sendTo(ws, {
+    // Augment reducer effects with SEND_TO_CONSUMER effects for rejection cases.
+    // These require the live ws handle, which the pure reducer cannot access.
+    const extraEffects: import("./effect-types.js").Effect[] = [];
+    if (msg.type === "user_message" && nextData === prevData) {
+      // Reducer no-op means closed/closing session — send targeted error.
+      extraEffects.push({
+        type: "SEND_TO_CONSUMER",
+        ws,
+        message: {
+          type: "error",
+          message: "Session is closing or closed and cannot accept new messages.",
+        },
+      });
+    } else if (msg.type === "set_adapter") {
+      // Rejected for active sessions — send targeted error to the requesting consumer only.
+      extraEffects.push({
+        type: "SEND_TO_CONSUMER",
+        ws,
+        message: {
           type: "error",
           message:
             "Adapter cannot be changed on an active session. Create a new session with the desired adapter.",
-        });
-        break;
+        },
+      });
+    }
+
+    executeEffects(
+      extraEffects.length > 0 ? [...effects, ...extraEffects] : effects,
+      this.session,
+      this.effectDeps(),
+    );
+
+    // Post-reducer orchestration — commands that need live handles or warnings.
+    switch (msg.type) {
       case "permission_response":
         if (nextData === prevData) {
           // Reducer no-op means unknown requestId — log warning.

@@ -237,7 +237,6 @@ export class SessionCoordinator extends TypedEventEmitter<SessionCoordinatorEven
     );
 
     this.queueHandler = new MessageQueueHandler(
-      (ws, message) => this.broadcaster.sendTo(ws, message),
       (
         sessionId: string,
         content: string,

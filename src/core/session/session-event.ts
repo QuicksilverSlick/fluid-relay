@@ -164,7 +164,9 @@ export type SystemSignal =
   /** A queued message was cancelled — clear state, broadcast queued_message_cancelled. */
   | { kind: "QUEUED_MESSAGE_CANCELLED" }
   /** A queued message was auto-sent — clear state, broadcast queued_message_sent. */
-  | { kind: "QUEUED_MESSAGE_SENT" };
+  | { kind: "QUEUED_MESSAGE_SENT" }
+  /** Validation error during queue operations — send error to requesting consumer. */
+  | { kind: "QUEUE_ERROR"; ws: WebSocketLike; message: string };
 
 /**
  * Discriminated union of all events that SessionRuntime.process() accepts.

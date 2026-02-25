@@ -511,6 +511,18 @@ function reduceSystemSignal(data: SessionData, signal: SystemSignal): [SessionDa
         ],
       ];
 
+    case "QUEUE_ERROR":
+      return [
+        data,
+        [
+          {
+            type: "SEND_TO_CONSUMER",
+            ws: signal.ws,
+            message: { type: "error", message: signal.message } as ConsumerMessage,
+          },
+        ],
+      ];
+
     // ── No-op signals (handled by runtime or no pure data change) ────────
     case "PASSTHROUGH_ENQUEUED":
     case "GIT_INFO_RESOLVED":

@@ -10,6 +10,7 @@
  * @module SessionControl
  */
 
+import type { WebSocketLike } from "../../interfaces/transport.js";
 import type { ConsumerMessage } from "../../types/consumer-messages.js";
 import type { SessionState } from "../../types/session-state.js";
 import type { UnifiedMessage } from "../types/unified-message.js";
@@ -30,4 +31,6 @@ export type Effect =
   /** Flush state to disk immediately (for critical user-visible writes). */
   | { type: "PERSIST_NOW" }
   /** Resolve git info for the session (after seeding cwd). */
-  | { type: "RESOLVE_GIT_INFO" };
+  | { type: "RESOLVE_GIT_INFO" }
+  /** Send a targeted message to a specific consumer WebSocket. */
+  | { type: "SEND_TO_CONSUMER"; ws: WebSocketLike; message: ConsumerMessage };
