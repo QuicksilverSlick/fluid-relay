@@ -10,6 +10,8 @@ import type { ProcessHandle, ProcessManager, SpawnOptions } from "../interfaces/
  * Only meaningful when the child was spawned with detached:true so that
  * child.pid === child's PGID (it is the process group leader).
  */
+const PROCESS_GROUP_POLL_INTERVAL_MS = 50;
+
 function waitForProcessGroupDead(pgid: number, timeoutMs = 30_000): Promise<void> {
   return new Promise<void>((resolve) => {
     const deadline = Date.now() + timeoutMs;
@@ -20,10 +22,24 @@ function waitForProcessGroupDead(pgid: number, timeoutMs = 30_000): Promise<void
           resolve();
           return;
         }
-        setTimeout(poll, 50);
-      } catch {
-        // ESRCH: group is gone; EPERM: can't signal (treat as gone)
-        resolve();
+        setTimeout(poll, PROCESS_GROUP_POLL_INTERVAL_MS);
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ESRCH") {
+          // Group is gone — all members have exited.
+          resolve();
+        } else if (code === "EPERM") {
+          // Permission denied: the group still exists but we cannot signal it.
+          // Keep polling so the killProcess() caller can escalate to SIGKILL.
+          if (Date.now() >= deadline) {
+            resolve();
+          } else {
+            setTimeout(poll, PROCESS_GROUP_POLL_INTERVAL_MS);
+          }
+        } else {
+          // Unexpected error — resolve to avoid an infinite loop.
+          resolve();
+        }
       }
     };
     poll();
