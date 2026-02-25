@@ -101,7 +101,7 @@ export type SystemSignal =
       command: string;
       requestId?: string;
       content: string;
-      source: string;
+      source: "emulated" | "cli";
       durationMs: number;
     }
   /** Local/adapter-native slash command failed. */
