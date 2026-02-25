@@ -97,13 +97,7 @@ describe("ReconnectPolicy — uncovered branches", () => {
 
     policy.start();
     await vi.advanceTimersByTimeAsync(1000);
-    // The relaunchStaleSessions chain has multiple async hops:
-    // timer callback → relaunch() (rejects) → Promise.allSettled() → result iteration → logger.warn.
-    // Flush 4 microtask queue turns to ensure all hops have settled.
-    await flushPromises();
-    await flushPromises();
-    await flushPromises();
-    await flushPromises();
+    await vi.waitUntil(() => (logger.warn as any).mock.calls.length > 0);
 
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("s-fail"),

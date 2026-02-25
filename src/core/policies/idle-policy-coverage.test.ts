@@ -149,8 +149,7 @@ describe("IdlePolicy — uncovered branch coverage", () => {
     vi.advanceTimersByTime(1_000); // synchronous — does NOT drain microtasks
     policy.stop();
 
-    await Promise.resolve();
-    await Promise.resolve(); // two ticks: sweepChain.then wraps runSweep
+    await vi.runAllTicks();
 
     expect(bridge.getAllSessions).not.toHaveBeenCalled();
     expect(bridge.closeSession).not.toHaveBeenCalled();
