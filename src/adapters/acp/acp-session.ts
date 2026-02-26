@@ -18,6 +18,7 @@ import {
   isJsonRpcResponse,
   type JsonRpcCodec,
 } from "./json-rpc.js";
+import { killProcessGroup } from "./kill-process-group.js";
 import type { AcpInitializeResult, ErrorClassifier } from "./outbound-translator.js";
 import {
   translateAuthStatus,
@@ -44,6 +45,7 @@ export class AcpSession implements BackendSession {
   private readonly pendingRequests = new Map<number | string, PendingRequest>();
   private pendingPermissionRequestId: number | string | undefined;
   private closed = false;
+  private readonly preBufferedData: string;
   /** Accumulated streaming text for synthesizing an assistant message when the prompt completes. */
   private streamedText = "";
   /** Whether a status_change(running) has been emitted for the current turn. */
@@ -56,6 +58,7 @@ export class AcpSession implements BackendSession {
     initResult: AcpInitializeResult,
     tracer?: MessageTracer,
     errorClassifier?: ErrorClassifier,
+    preBufferedData?: string,
   ) {
     this.sessionId = sessionId;
     this.child = child;
@@ -63,6 +66,7 @@ export class AcpSession implements BackendSession {
     this.initResult = initResult;
     this.tracer = tracer;
     this.errorClassifier = errorClassifier;
+    this.preBufferedData = preBufferedData ?? "";
   }
 
   send(message: UnifiedMessage): void {
@@ -168,21 +172,22 @@ export class AcpSession implements BackendSession {
     }
     this.pendingRequests.clear();
 
-    // Send SIGTERM and wait for exit with timeout
-    const exitPromise = new Promise<void>((resolve) => {
-      this.child.once("exit", () => resolve());
-    });
+    await new Promise<void>((resolve) => {
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
 
-    this.child.kill("SIGTERM");
+      this.child.once("exit", () => {
+        clearTimeout(killTimer);
+        resolve();
+      });
 
-    const timeout = new Promise<void>((resolve) => {
-      setTimeout(() => {
-        this.child.kill("SIGKILL");
+      killProcessGroup(this.child, "SIGTERM");
+
+      killTimer = setTimeout(() => {
+        killProcessGroup(this.child, "SIGKILL");
         resolve();
       }, 5000);
+      killTimer.unref();
     });
-
-    await Promise.race([exitPromise, timeout]);
   }
 
   private createMessageStream(): AsyncIterable<UnifiedMessage> {
@@ -190,6 +195,7 @@ export class AcpSession implements BackendSession {
     const codec = this.codec;
     const initResult = this.initResult;
     const session = this;
+    const preBufferedData = this.preBufferedData;
 
     return {
       [Symbol.asyncIterator]() {
@@ -260,7 +266,10 @@ export class AcpSession implements BackendSession {
           }
         };
 
-        const onClose = () => {
+        // Finalize the stream when the child process exits or stdout closes.
+        // Listening on both ensures we detect disconnection even if grandchild
+        // processes keep the stdout pipe open after the main process exits.
+        const finalize = () => {
           done = true;
           if (resolve) {
             const r = resolve;
@@ -270,7 +279,14 @@ export class AcpSession implements BackendSession {
         };
 
         child.stdout?.on("data", onData);
-        child.stdout?.on("close", onClose);
+        child.stdout?.on("close", finalize);
+        child.on("exit", finalize);
+
+        // Replay any data buffered during the ACP handshake so messages that
+        // arrived in the same chunk as the session/new response are not lost.
+        if (preBufferedData) {
+          onData(Buffer.from(preBufferedData, "utf-8"));
+        }
 
         return {
           next(): Promise<IteratorResult<UnifiedMessage>> {
@@ -297,7 +313,8 @@ export class AcpSession implements BackendSession {
           },
           return(): Promise<IteratorResult<UnifiedMessage>> {
             child.stdout?.removeListener("data", onData);
-            child.stdout?.removeListener("close", onClose);
+            child.stdout?.removeListener("close", finalize);
+            child.removeListener("exit", finalize);
             done = true;
             return Promise.resolve({
               value: undefined,
