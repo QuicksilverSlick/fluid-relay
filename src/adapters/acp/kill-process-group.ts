@@ -9,14 +9,20 @@ import type { ChildProcess } from "node:child_process";
  */
 export function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid;
-  try {
-    if (pid !== undefined) process.kill(-pid, signal);
-    else child.kill(signal);
-  } catch {
+  if (pid !== undefined) {
     try {
-      child.kill(signal);
+      // Try to kill the whole process group first.
+      process.kill(-pid, signal);
+      return; // If successful, we're done.
     } catch {
-      // Process already exited — nothing to do.
+      // Fallback to killing just the child process if group kill fails
+      // (e.g. on Windows, or if the process has already exited).
     }
+  }
+
+  try {
+    child.kill(signal);
+  } catch {
+    // Process already exited — nothing to do.
   }
 }
