@@ -1,5 +1,4 @@
-# beamcode
-
+# fluid-relay
 Code from anywhere. Collaborate on any agent session. Drive Claude, Codex, OpenCode, Gemini, Goose, or any CLI agent from your phone, tablet, or laptop — and let teammates watch, join, and catch up in real time.
 
 ```
