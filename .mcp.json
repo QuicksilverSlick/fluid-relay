@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "fluid-brain": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\PC owner\\.claude\\plugins\\cache\\fluid-brain-local\\fluid-brain\\local\\bin\\mcp-client.js",
+        "--config",
+        "C:\\Users\\PC owner\\.claude\\plugins\\cache\\fluid-brain-local\\fluid-brain\\local\\config\\brain.json"
+      ]
+    }
+  }
+}
