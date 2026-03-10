@@ -1,4 +1,5 @@
 # fluid-relay
+
 Code from anywhere. Collaborate on any agent session. Drive Claude, Codex, OpenCode, Gemini, Goose, or any CLI agent from your phone, tablet, or laptop — and let teammates watch, join, and catch up in real time.
 
 ```
@@ -14,7 +15,7 @@ Code from anywhere. Collaborate on any agent session. Drive Claude, Codex, OpenC
   │          │   │                            │                         │
   │          ▼   ▼                            │                         │
   │   ┌──────────────┐                        │  Teammate    Observer   │
-  │   │  BeamCode    │◄───────────────────────┤  ┌────────┐  ┌───────┐  │
+  │   │  fluid-relay │◄───────────────────────┤  ┌────────┐  ┌───────┐  │
   │   │  fan-out,    │                        └──│ Laptop │  │ Audit │  │
   │   │  RBAC,replay │◄──────────────────────────│(collab)│  │(watch)│  │
   │   └──────────────┘                           └────────┘  └───────┘  │
@@ -30,11 +31,11 @@ There are 30+ projects in this space — Companion, Happy, ClaudeCodeUI, Opcode,
 1. **1:1 sessions** — one frontend, one CLI backend. No collaboration.
 2. **SSH/tmux/Tailscale plumbing** — remote access is a DIY stack, not a product.
 
-BeamCode solves both.
+fluid-relay solves both.
 
 **Code from anywhere** — Cloudflare Tunnel + E2E encryption turns your desktop agent into something you can drive from any device. No open ports, no VPN, no SSH. Open a link on your phone and you're in.
 
-**Collaborate on the same session** — BeamCode sessions are N:1, not 1:1:
+**Collaborate on the same session** — fluid-relay sessions are N:1, not 1:1:
 
 - **N consumers per session** — `Map<WebSocket, ConsumerIdentity>`, not a single slot
 - **Role gating** — participants drive, observers watch (PARTICIPANT_ONLY message types)
@@ -65,7 +66,7 @@ This unlocks scenarios no existing tool supports:
                 Consumer Protocol (JSON/WS)
                            │
            ┌───────────────┴────────────────┐
-           │          BeamCode              │
+           │         fluid-relay            │
            │  fan-out · RBAC · replay       │
            └───────────────┬────────────────┘
                            │
@@ -105,9 +106,9 @@ This unlocks scenarios no existing tool supports:
 ## Installation
 
 ```sh
-npm install -g beamcode
+npm install -g fluid-relay
 # or
-pnpm add -g beamcode
+pnpm add -g fluid-relay
 ```
 
 ## Quick Start
@@ -115,10 +116,10 @@ pnpm add -g beamcode
 ### Start the server
 
 ```sh
-beamcode
+fluid-relay
 ```
 
-This starts the BeamCode server on port 9414. Open `http://localhost:9414` in your browser to access the web UI.
+This starts the fluid-relay server on port 9414. Open `http://localhost:9414` in your browser to access the web UI.
 
 For development from source:
 
@@ -128,7 +129,7 @@ pnpm build && pnpm start
 
 ### Web UI
 
-The web UI is a React 19 app served directly from the BeamCode server. Open your browser to `http://localhost:9414`.
+The web UI is a React 19 app served directly from the fluid-relay server. Open your browser to `http://localhost:9414`.
 
 **What you get:**
 
@@ -145,7 +146,7 @@ To start with hot-module replacement during frontend development:
 
 ```sh
 # Terminal 1
-pnpm start          # BeamCode server on :9414
+pnpm start          # fluid-relay server on :9414
 
 # Terminal 2
 pnpm dev:web        # Vite dev server on :5174 (proxies to :9414)
@@ -165,11 +166,11 @@ Then open `http://localhost:5174`.
 
 ## Deployment Topology
 
-BeamCode currently runs as a **single-node runtime** for session coordination:
+fluid-relay currently runs as a **single-node runtime** for session coordination:
 
 - Live session state is **process-local** (in-memory runtime objects)
 - Persistent storage supports restart recovery, but **does not provide distributed coordination**
-- Running multiple BeamCode instances (especially with different `--data-dir`) creates isolated session islands, not a shared cluster
+- Running multiple fluid-relay instances (especially with different `--data-dir`) creates isolated session islands, not a shared cluster
 
 The `/health` endpoint exposes this explicitly under `deployment`:
 - `topology: "single-node"`
