@@ -20,7 +20,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { TeamTask, TeamTaskEvent } from "../types/team-types.js";
+import type { TeamTask } from "../types/team-types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -181,9 +181,7 @@ export class TeamCoordinator {
     if (task.owner !== agentId) {
       return {
         success: false,
-        reason: task.owner
-          ? `Task owned by ${task.owner}, not ${agentId}`
-          : "Task is not claimed",
+        reason: task.owner ? `Task owned by ${task.owner}, not ${agentId}` : "Task is not claimed",
       };
     }
 
@@ -211,9 +209,7 @@ export class TeamCoordinator {
     if (task.owner !== agentId) {
       return {
         success: false,
-        reason: task.owner
-          ? `Task owned by ${task.owner}, not ${agentId}`
-          : "Task is not claimed",
+        reason: task.owner ? `Task owned by ${task.owner}, not ${agentId}` : "Task is not claimed",
       };
     }
 
@@ -239,9 +235,7 @@ export class TeamCoordinator {
     if (task.owner !== agentId) {
       return {
         success: false,
-        reason: task.owner
-          ? `Task owned by ${task.owner}, not ${agentId}`
-          : "Task is not claimed",
+        reason: task.owner ? `Task owned by ${task.owner}, not ${agentId}` : "Task is not claimed",
       };
     }
 

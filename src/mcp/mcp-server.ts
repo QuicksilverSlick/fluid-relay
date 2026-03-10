@@ -18,10 +18,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import type { SessionCoordinator } from "../core/session-coordinator.js";
-import {
-  createUnifiedMessage,
-  type UnifiedMessage,
-} from "../core/types/unified-message.js";
+import { createUnifiedMessage, type UnifiedMessage } from "../core/types/unified-message.js";
 import type { Logger } from "../interfaces/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -110,8 +107,7 @@ const TOOLS: MCPToolDefinition[] = [
         },
         lastSeq: {
           type: "number",
-          description:
-            "Return messages after this sequence number. Omit for full history.",
+          description: "Return messages after this sequence number. Omit for full history.",
         },
         limit: {
           type: "number",
@@ -123,8 +119,7 @@ const TOOLS: MCPToolDefinition[] = [
   },
   {
     name: "approve_permission",
-    description:
-      "Respond to a pending permission request in a BeamCode session.",
+    description: "Respond to a pending permission request in a BeamCode session.",
     inputSchema: {
       type: "object",
       properties: {
@@ -193,9 +188,10 @@ export class MCPServer {
   async start(): Promise<{ port: number }> {
     this.server = createServer((req, res) => this.handleRequest(req, res));
 
+    const server = this.server;
     await new Promise<void>((resolve, reject) => {
-      this.server!.on("error", reject);
-      this.server!.listen(this.port, () => resolve());
+      server?.on("error", reject);
+      server?.listen(this.port, () => resolve());
     });
 
     this.logger?.info?.("MCP server started", {
@@ -207,17 +203,15 @@ export class MCPServer {
   }
 
   async stop(): Promise<void> {
-    if (!this.server) return;
+    const server = this.server;
+    if (!server) return;
     await new Promise<void>((resolve) => {
-      this.server!.close(() => resolve());
+      server.close(() => resolve());
     });
     this.server = null;
   }
 
-  private async handleRequest(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
+  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // CORS headers for cross-origin MCP clients
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -237,7 +231,12 @@ export class MCPServer {
 
     try {
       const body = await readBody(req);
-      const parsed = JSON.parse(body) as { jsonrpc: string; id: string | number; method: string; params?: unknown };
+      const parsed = JSON.parse(body) as {
+        jsonrpc: string;
+        id: string | number;
+        method: string;
+        params?: unknown;
+      };
 
       const response = await this.dispatch(parsed as MCPRequest & { id: string | number });
       response.id = parsed.id;
@@ -257,9 +256,7 @@ export class MCPServer {
     }
   }
 
-  private async dispatch(
-    request: MCPRequest & { id: string | number },
-  ): Promise<MCPResponse> {
+  private async dispatch(request: MCPRequest & { id: string | number }): Promise<MCPResponse> {
     switch (request.method) {
       case "initialize":
         return {
@@ -287,12 +284,14 @@ export class MCPServer {
       case "tools/call":
         return this.handleToolCall(request);
 
-      default:
+      default: {
+        const req = request as MCPRequest & { id: string | number; method: string };
         return {
           jsonrpc: "2.0",
-          id: request.id,
-          error: { code: -32601, message: `Method not found: ${(request as { method: string }).method}` },
+          id: req.id,
+          error: { code: -32601, message: `Method not found: ${req.method}` },
         };
+      }
     }
   }
 
@@ -310,10 +309,7 @@ export class MCPServer {
           break;
 
         case "send_message":
-          result = await this.sendMessage(
-            args.sessionId as string,
-            args.text as string,
-          );
+          result = await this.sendMessage(args.sessionId as string, args.text as string);
           break;
 
         case "get_history":
@@ -365,22 +361,32 @@ export class MCPServer {
   }
 
   // ── Tool Implementations ─────────────────────────────────────────────────
+  // All tool methods use the coordinator's public API:
+  //   - registry.listSessions() / registry.getSession()  → SessionInfo
+  //   - getSessionSnapshot()                              → SessionSnapshot
+  //   - store.get()                                       → Session (data access)
+  //   - backendConnector.sendToBackend()                  → message routing
 
   private listSessions(): unknown {
     const sessions = this.coordinator.registry.listSessions();
-    return sessions.map((s) => ({
-      sessionId: s.sessionId,
-      adapter: s.adapterName,
-      state: s.state,
-      createdAt: s.createdAt,
-      consumerCount: s.consumerCount ?? 0,
-    }));
+    return sessions.map((s) => {
+      const snapshot = this.coordinator.getSessionSnapshot(s.sessionId);
+      return {
+        sessionId: s.sessionId,
+        adapter: s.adapterName ?? "unknown",
+        state: s.state,
+        createdAt: s.createdAt,
+        consumerCount: snapshot?.consumerCount ?? 0,
+      };
+    });
   }
 
-  private async sendMessage(
-    sessionId: string,
-    text: string,
-  ): Promise<unknown> {
+  private async sendMessage(sessionId: string, text: string): Promise<unknown> {
+    const storeSession = this.coordinator.store.get(sessionId);
+    if (!storeSession) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
     const message: UnifiedMessage = createUnifiedMessage({
       type: "user_message",
       role: "user",
@@ -388,42 +394,36 @@ export class MCPServer {
       metadata: { source: "mcp" },
     });
 
-    const runtime = this.coordinator.getRuntime(sessionId);
-    if (!runtime) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-
-    runtime.handleInboundMessage(message);
+    this.coordinator.backendConnector.sendToBackend(storeSession, message);
     return { sent: true, sessionId, messageId: message.id };
   }
 
-  private getHistory(
-    sessionId: string,
-    lastSeq?: number,
-    limit?: number,
-  ): unknown {
-    const runtime = this.coordinator.getRuntime(sessionId);
-    if (!runtime) {
+  private getHistory(sessionId: string, lastSeq?: number, limit?: number): unknown {
+    const snapshot = this.coordinator.getSessionSnapshot(sessionId);
+    if (!snapshot) {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
-    const history = runtime.getHistory();
+    const storeSession = this.coordinator.store.get(sessionId);
+    const history = storeSession?.data.messageHistory ?? [];
     const effectiveLimit = limit ?? 50;
     const afterSeq = lastSeq ?? -1;
 
-    const filtered = history
-      .filter((_msg: UnifiedMessage, idx: number) => idx > afterSeq)
-      .slice(0, effectiveLimit);
+    const filtered = history.filter((_msg, idx) => idx > afterSeq).slice(0, effectiveLimit);
 
     return {
       sessionId,
-      messages: filtered.map((msg: UnifiedMessage) => ({
-        id: msg.id,
-        type: msg.type,
-        role: msg.role,
-        content: msg.content,
-        timestamp: msg.timestamp,
-      })),
+      messages: filtered.map((msg) => {
+        // ConsumerMessage is a union — safely extract common fields
+        const typed = msg as Record<string, unknown>;
+        return {
+          type: typed.type ?? "unknown",
+          ...(typed.id != null && { id: typed.id }),
+          ...(typed.role != null && { role: typed.role }),
+          ...(typed.content != null && { content: typed.content }),
+          ...(typed.timestamp != null && { timestamp: typed.timestamp }),
+        };
+      }),
       total: history.length,
     };
   }
@@ -433,8 +433,8 @@ export class MCPServer {
     requestId: string,
     approved: boolean,
   ): Promise<unknown> {
-    const runtime = this.coordinator.getRuntime(sessionId);
-    if (!runtime) {
+    const storeSession = this.coordinator.store.get(sessionId);
+    if (!storeSession) {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
@@ -449,25 +449,27 @@ export class MCPServer {
       },
     });
 
-    runtime.handleInboundMessage(response);
+    this.coordinator.backendConnector.sendToBackend(storeSession, response);
     return { sessionId, requestId, approved };
   }
 
   private getSessionStatus(sessionId: string): unknown {
-    const runtime = this.coordinator.getRuntime(sessionId);
-    if (!runtime) {
+    const snapshot = this.coordinator.getSessionSnapshot(sessionId);
+    if (!snapshot) {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
-    const state = runtime.getState();
+    const info = this.coordinator.registry.getSession(sessionId);
     return {
       sessionId,
-      adapter: state.adapterName,
-      lifecycleState: state.lifecycleState,
-      backendConnected: state.backendConnected,
-      consumerCount: state.consumers?.length ?? 0,
-      teamState: state.teamState ?? null,
-      messageCount: runtime.getHistory().length,
+      adapter: info?.adapterName ?? "unknown",
+      lifecycleState: snapshot.lifecycle ?? snapshot.state,
+      backendConnected: snapshot.cliConnected,
+      consumerCount: snapshot.consumerCount,
+      pendingPermissions: snapshot.pendingPermissions.length,
+      messageCount: snapshot.messageHistoryLength,
+      lastActivity: snapshot.lastActivity,
+      lastStatus: snapshot.lastStatus,
     };
   }
 }

@@ -52,6 +52,12 @@ function waitForProcessGroupDead(pgid: number, timeoutMs = 30_000): Promise<void
  */
 export class NodeProcessManager implements ProcessManager {
   spawn(options: SpawnOptions): ProcessHandle {
+    // On Windows, .cmd/.bat wrappers (e.g. claude.cmd, codex.cmd) need
+    // shell: true to execute. detached: true causes EINVAL on Windows
+    // when combined with .cmd files, so we only enable it on Unix where
+    // process-group kills (kill -PGID) are supported.
+    const isWindows = process.platform === "win32";
+    const needsShell = isWindows && /\.cmd$/i.test(options.command);
     const child = nodeSpawn(options.command, options.args, {
       cwd: options.cwd,
       env: options.env as NodeJS.ProcessEnv | undefined,
@@ -59,7 +65,10 @@ export class NodeProcessManager implements ProcessManager {
       // Create a new process group so kill can reach descendant processes.
       // Without this, wrapper scripts (e.g. opencode's Node shim calling
       // spawnSync for the real Go binary) leave orphaned grandchildren.
-      detached: true,
+      // On Windows, detached creates a new console window; we skip it for
+      // .cmd wrappers to avoid EINVAL.
+      detached: !isWindows,
+      shell: needsShell,
     });
 
     // Attach an early error listener immediately after spawn() so ENOENT-style

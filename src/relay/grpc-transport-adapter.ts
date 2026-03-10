@@ -144,9 +144,12 @@ export class GRPCTransportAdapter {
    * error if the dependency is not installed.
    */
   async start(): Promise<{ port: number }> {
-    let grpc: typeof import("@grpc/grpc-js");
+    // biome-ignore lint/suspicious/noExplicitAny: optional peer dependency loaded dynamically
+    let grpc: any;
     try {
-      grpc = await import("@grpc/grpc-js");
+      // Use a variable to prevent tsc from resolving the optional peer dependency at type-check time
+      const grpcModule = "@grpc/grpc-js";
+      grpc = await import(/* webpackIgnore: true */ grpcModule);
     } catch {
       throw new Error(
         "gRPC transport requires @grpc/grpc-js.\n" +
@@ -156,10 +159,8 @@ export class GRPCTransportAdapter {
     }
 
     const server = new grpc.Server({
-      "grpc.max_receive_message_length":
-        this.options.maxMessageSize ?? 4 * 1024 * 1024,
-      "grpc.max_send_message_length":
-        this.options.maxMessageSize ?? 4 * 1024 * 1024,
+      "grpc.max_receive_message_length": this.options.maxMessageSize ?? 4 * 1024 * 1024,
+      "grpc.max_send_message_length": this.options.maxMessageSize ?? 4 * 1024 * 1024,
     });
 
     // Register service handlers (implementation deferred to integration layer)
@@ -171,14 +172,10 @@ export class GRPCTransportAdapter {
         : grpc.ServerCredentials.createInsecure();
 
     const boundPort = await new Promise<number>((resolve, reject) => {
-      server.bindAsync(
-        `0.0.0.0:${this.port}`,
-        credentials,
-        (err: Error | null, port: number) => {
-          if (err) reject(err);
-          else resolve(port);
-        },
-      );
+      server.bindAsync(`0.0.0.0:${this.port}`, credentials, (err: Error | null, port: number) => {
+        if (err) reject(err);
+        else resolve(port);
+      });
     });
 
     this._running = true;
@@ -274,29 +271,7 @@ message Empty {}
 }
 
 // ---------------------------------------------------------------------------
-// Type stubs for @grpc/grpc-js (avoid hard dependency)
+// Note: @grpc/grpc-js is an optional peer dependency.
+// The start() method uses a dynamic import with `any` typing to avoid
+// requiring the package at typecheck time.
 // ---------------------------------------------------------------------------
-
-declare module "@grpc/grpc-js" {
-  interface ChannelOptions {
-    [key: string]: unknown;
-  }
-
-  class Server {
-    constructor(options?: ChannelOptions);
-    bindAsync(
-      address: string,
-      credentials: ServerCredentials,
-      callback: (err: Error | null, port: number) => void,
-    ): void;
-    tryShutdown(callback: () => void): void;
-  }
-
-  class ServerCredentials {
-    static createInsecure(): ServerCredentials;
-    static createSsl(
-      rootCerts: Buffer | null,
-      keyCertPairs: Array<{ private_key: Buffer; cert_chain: Buffer }>,
-    ): ServerCredentials;
-  }
-}

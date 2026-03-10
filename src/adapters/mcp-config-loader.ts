@@ -173,16 +173,14 @@ function validateConfig(
  * Validate a single server configuration.
  * Returns an array of issues (empty = valid).
  */
-function validateServer(name: string, config: MCPServerConfig): string[] {
+function validateServer(_name: string, config: MCPServerConfig): string[] {
   const issues: string[] = [];
 
   // Check blocklisted settings
   if (config.settings) {
     for (const key of Object.keys(config.settings)) {
       if (BLOCKLISTED_SETTINGS.has(key)) {
-        issues.push(
-          `Contains blocklisted setting "${key}" (CVE-2026-21852 mitigation)`,
-        );
+        issues.push(`Contains blocklisted setting "${key}" (CVE-2026-21852 mitigation)`);
       }
     }
   }
@@ -191,9 +189,7 @@ function validateServer(name: string, config: MCPServerConfig): string[] {
   if (config.env) {
     for (const key of Object.keys(config.env)) {
       if (BLOCKLISTED_ENV_VARS.has(key)) {
-        issues.push(
-          `Contains blocklisted env var "${key}" (privilege escalation risk)`,
-        );
+        issues.push(`Contains blocklisted env var "${key}" (privilege escalation risk)`);
       }
     }
   }
@@ -202,9 +198,7 @@ function validateServer(name: string, config: MCPServerConfig): string[] {
   if (config.command) {
     for (const pattern of BLOCKLISTED_COMMAND_PATTERNS) {
       if (pattern.test(config.command)) {
-        issues.push(
-          `Command matches blocklisted pattern: ${pattern.source}`,
-        );
+        issues.push(`Command matches blocklisted pattern: ${pattern.source}`);
       }
     }
   }
@@ -214,9 +208,7 @@ function validateServer(name: string, config: MCPServerConfig): string[] {
     const argsStr = config.args.join(" ");
     for (const pattern of BLOCKLISTED_COMMAND_PATTERNS) {
       if (pattern.test(argsStr)) {
-        issues.push(
-          `Arguments match blocklisted pattern: ${pattern.source}`,
-        );
+        issues.push(`Arguments match blocklisted pattern: ${pattern.source}`);
       }
     }
   }

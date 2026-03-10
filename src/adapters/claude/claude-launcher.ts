@@ -27,7 +27,11 @@ import { SlidingWindowBreaker } from "../sliding-window-breaker.js";
  * Absolute paths are allowed separately via the startsWith("/") check.
  */
 const SAFE_BASENAME_PATTERN = /^[a-zA-Z0-9_.-]+$/;
-const SAFE_ABSOLUTE_PATH_PATTERN = /^\/[a-zA-Z0-9_./-]+$/;
+// Unix: /usr/bin/claude   Windows: C:\Users\name\claude.cmd  or  C:/Users/name/claude
+const SAFE_ABSOLUTE_PATH_PATTERN =
+  process.platform === "win32"
+    ? /^(?:[A-Za-z]:[/\\]|\/)[a-zA-Z0-9 _.\-/\\]+$/
+    : /^\/[a-zA-Z0-9_.\-/]+$/;
 
 /** Coerce an unknown thrown value into an Error instance. */
 function toError(value: unknown): Error {
@@ -293,14 +297,27 @@ export class ClaudeLauncher extends ProcessSupervisor<LauncherEventMap> implemen
       return;
     }
 
-    // Resolve binary path via `which` if not absolute
+    // Resolve binary path via `which`/`where` if not absolute
     if (!isAbsolute) {
       try {
-        binary = execFileSync("which", [binary], {
+        const resolver = process.platform === "win32" ? "where" : "which";
+        const resolved = execFileSync(resolver, [binary], {
           encoding: "utf-8",
         }).trim();
+        // `where` on Windows may return multiple lines; take the first .cmd match or first result
+        if (process.platform === "win32") {
+          const lines = resolved.split(/\r?\n/).filter(Boolean);
+          binary = lines.find((l) => l.endsWith(".cmd")) || lines[0] || binary;
+        } else {
+          binary = resolved;
+        }
       } catch {
-        // Fall through; hope it's in PATH
+        // Fall through; hope it's in PATH.
+        // On Windows under git-bash, `which` returns /c/... paths that Node can't spawn.
+        // Try appending .cmd as a last resort.
+        if (process.platform === "win32" && !binary.endsWith(".cmd")) {
+          binary = `${binary}.cmd`;
+        }
       }
     }
 

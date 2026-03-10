@@ -637,13 +637,16 @@ export async function runMCPServe(argv: string[] = process.argv): Promise<void> 
   }
 
   // Import dynamically to avoid circular dependency
-  const { MCPServer } = await import("../mcp/mcp-server.js");
+  // MCPServer and logger will be used once daemon integration is wired up.
+  const { MCPServer: _MCPServer } = await import("../mcp/mcp-server.js");
   const { StructuredLogger, LogLevel } = await import("../adapters/structured-logger.js");
 
-  const logger = new StructuredLogger({
+  const _logger = new StructuredLogger({
     component: "beamcode-mcp",
     level: LogLevel.INFO,
   });
+  void _MCPServer;
+  void _logger;
 
   console.log(`
   BeamCode MCP Server
