@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "../interfaces/logger.js";
 import { noopLogger } from "../utils/noop-logger.js";
+import { resolvePackageVersion } from "../utils/resolve-package-version.js";
 import { startHealthCheck } from "./health-check.js";
 import { acquireLock, releaseLock } from "./lock-file.js";
 import { registerSignalHandlers } from "./signal-handler.js";
@@ -57,7 +58,11 @@ export class Daemon {
         pid: process.pid,
         port,
         heartbeat: Date.now(),
-        version: "0.1.0",
+        version: resolvePackageVersion(import.meta.url, [
+          "../../package.json",
+          "../../../package.json",
+          "../package.json",
+        ]),
         controlApiToken,
       };
 

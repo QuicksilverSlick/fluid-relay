@@ -15,3 +15,11 @@ export type { PairingLink, PairingResult, ParsedPairingLink } from "./pairing.js
 export { PairingManager, parsePairingLink, sealPublicKeyForPairing } from "./pairing.js";
 export { seal, sealOpen } from "./sealed-box.js";
 export { getSodium } from "./sodium-loader.js";
+// Post-Quantum Crypto
+export type {
+  CryptoAlgorithm,
+  EncapsulationResult,
+  PQCKeyPair,
+  PQCProviderOptions,
+} from "./pqc-provider.js";
+export { isPQCEnabled, PQCProvider, setPQCEnabled } from "./pqc-provider.js";

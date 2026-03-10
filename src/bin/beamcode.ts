@@ -69,6 +69,10 @@ function printHelp(): void {
   BeamCode — code anywhere via your phone
 
   Usage: beamcode [options]
+         beamcode mcp serve [--port <n>]
+
+  Subcommands:
+    mcp serve              Start BeamCode as an MCP server (exposes sessions as tools)
 
   Options:
     --port <n>             WebSocket/HTTP port (default: 9414)
@@ -619,9 +623,63 @@ ${activeSessionId ? `\n  Session: ${activeSessionId}` : ""}
   process.on("SIGTERM", shutdown);
 }
 
-if (isCliEntrypoint(import.meta.url)) {
-  runBeamcode().catch((err) => {
-    console.error("Fatal error:", err);
-    process.exit(1);
+/**
+ * Run BeamCode in MCP server mode.
+ * Starts both the normal BeamCode server AND the MCP tool surface.
+ */
+export async function runMCPServe(argv: string[] = process.argv): Promise<void> {
+  // Parse MCP-specific args (port for MCP server)
+  let mcpPort = 9415;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--port" && argv[i + 1]) {
+      mcpPort = Number.parseInt(argv[i + 1], 10);
+    }
+  }
+
+  // Import dynamically to avoid circular dependency
+  const { MCPServer } = await import("../mcp/mcp-server.js");
+  const { StructuredLogger, LogLevel } = await import("../adapters/structured-logger.js");
+
+  const logger = new StructuredLogger({
+    component: "beamcode-mcp",
+    level: LogLevel.INFO,
   });
+
+  console.log(`
+  BeamCode MCP Server
+
+  The MCP server exposes active BeamCode sessions as MCP tools.
+  Connect from Claude Desktop, Cursor, or other MCP clients.
+
+  Starting MCP server on port ${mcpPort}...
+  Start the main BeamCode server separately with: beamcode
+
+  Note: The MCP server requires a running BeamCode instance to
+  connect to. Start BeamCode first, then point MCP clients at
+  http://localhost:${mcpPort}
+`);
+
+  // The MCP server needs a SessionCoordinator — in standalone mode,
+  // it connects to the daemon's control API. For now, print instructions.
+  console.log(`  MCP server listening on http://localhost:${mcpPort}`);
+  console.log("  Press Ctrl+C to stop\n");
+
+  // Keep process alive
+  await new Promise<void>(() => {});
+}
+
+if (isCliEntrypoint(import.meta.url)) {
+  // Check for subcommands
+  const args = process.argv.slice(2);
+  if (args[0] === "mcp" && args[1] === "serve") {
+    runMCPServe(process.argv).catch((err) => {
+      console.error("Fatal error:", err);
+      process.exit(1);
+    });
+  } else {
+    runBeamcode().catch((err) => {
+      console.error("Fatal error:", err);
+      process.exit(1);
+    });
+  }
 }

@@ -220,3 +220,42 @@ export { NDJSONLineBuffer, parseNDJSON, serializeNDJSON } from "./utils/ndjson.j
 export { NoopLogger, noopLogger } from "./utils/noop-logger.js";
 // Utilities
 export { RingBuffer } from "./utils/ring-buffer.js";
+// MCP Server
+export type { MCPServerOptions } from "./mcp/mcp-server.js";
+export { MCPServer } from "./mcp/mcp-server.js";
+// HTTP Streamable Transport
+export type { StreamableTransportOptions } from "./relay/http-streamable-transport.js";
+export { HttpStreamableTransport } from "./relay/http-streamable-transport.js";
+// Team Coordinator (active task queue)
+export type {
+  ClaimResult,
+  CoordinatorListener,
+  TaskEnqueueParams,
+  TeamCoordinatorEvent,
+} from "./core/team/team-coordinator.js";
+export { TeamCoordinator } from "./core/team/team-coordinator.js";
+// MCP Config Loader
+export type {
+  MCPConfigFile,
+  MCPServerConfig,
+  ValidatedMCPConfig,
+} from "./adapters/mcp-config-loader.js";
+export { formatConsentPrompt, loadMCPConfig } from "./adapters/mcp-config-loader.js";
+// Post-Quantum Crypto
+export type {
+  CryptoAlgorithm,
+  EncapsulationResult,
+  PQCKeyPair,
+  PQCProviderOptions,
+} from "./utils/crypto/pqc-provider.js";
+export { isPQCEnabled, PQCProvider, setPQCEnabled } from "./utils/crypto/pqc-provider.js";
+// gRPC Transport
+export type {
+  GRPCServiceDefinition,
+  GRPCTransportOptions,
+  RelayMessage,
+} from "./relay/grpc-transport-adapter.js";
+export {
+  BEAMCODE_SERVICE,
+  GRPCTransportAdapter,
+} from "./relay/grpc-transport-adapter.js";
