@@ -33,7 +33,7 @@ describe("Daemon integration", () => {
     expect(state).not.toBeNull();
     expect(state!.pid).toBe(process.pid);
     expect(state!.port).toBe(7777);
-    expect(state!.version).toBe("0.1.0");
+    expect(state!.version).toBe("0.1.5");
     expect(state!.controlApiToken).toBe(controlApiToken);
     expect(state!.heartbeat).toBeLessThanOrEqual(Date.now());
 
