@@ -23,6 +23,8 @@ import { CLI_ADAPTER_NAMES } from "../core/interfaces/adapter-names.js";
 export interface CreateAdapterDeps {
   processManager: ProcessManager;
   logger?: Logger;
+  /** Path to the codex binary (default: "codex"). */
+  codexBinary?: string;
 }
 
 export function createAdapter(
@@ -40,6 +42,7 @@ export function createAdapter(
       return new CodexAdapter({
         processManager: deps.processManager,
         logger: deps.logger,
+        codexBinary: deps.codexBinary,
       });
     case "acp":
       return new AcpAdapter();

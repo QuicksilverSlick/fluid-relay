@@ -4,7 +4,7 @@
     {
       "name": "beamcode-server",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["dist/bin/beamcode.mjs", "--port", "9414", "--no-tunnel", "--no-auto-launch", "--claude-binary", "C:/Users/PC owner/.npm-global/claude"],
+      "runtimeArgs": ["dist/bin/beamcode.mjs", "--port", "9414", "--no-tunnel", "--no-auto-launch", "--claude-binary", "C:/Users/PC owner/.npm-global/claude", "--codex-binary", "C:/Users/PC owner/.npm-global/codex"],
       "port": 9414,
       "autoPort": false
     },

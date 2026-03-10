@@ -54,6 +54,7 @@ export interface CliConfig {
   model?: string;
   cwd: string;
   claudeBinary: string;
+  codexBinary: string;
   verbose: boolean;
   adapter?: CliAdapterName;
   trace: boolean;
@@ -82,6 +83,7 @@ function printHelp(): void {
     --model <name>         Model to pass to Claude CLI
     --cwd <path>           Working directory for CLI (default: cwd)
     --claude-binary <path> Path to claude binary (default: "claude")
+    --codex-binary <path>  Path to codex binary (default: "codex")
     --default-adapter <name>  Default backend: claude (default), codex, acp
     --adapter <name>          Alias for --default-adapter
     --no-auto-launch       Start server without creating an initial session
@@ -121,6 +123,7 @@ export function parseArgs(argv: string[]): CliConfig {
     dataDir: join(process.env.HOME ?? "~", ".beamcode"),
     cwd: process.cwd(),
     claudeBinary: "claude",
+    codexBinary: "codex",
     verbose: false,
     trace: false,
     traceLevel: "smart",
@@ -157,6 +160,9 @@ export function parseArgs(argv: string[]): CliConfig {
         break;
       case "--claude-binary":
         config.claudeBinary = argv[++i];
+        break;
+      case "--codex-binary":
+        config.codexBinary = argv[++i];
         break;
       case "--adapter":
       case "--default-adapter":
@@ -412,7 +418,10 @@ export async function runBeamcode(argv: string[] = process.argv): Promise<void> 
     errorAggregator,
   );
   const processManager = new NodeProcessManager();
-  const adapterResolver = createAdapterResolver({ processManager, logger }, config.adapter);
+  const adapterResolver = createAdapterResolver(
+    { processManager, logger, codexBinary: config.codexBinary },
+    config.adapter,
+  );
   const adapter = adapterResolver.resolve(config.adapter);
 
   const providerConfig = {
