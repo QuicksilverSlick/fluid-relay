@@ -121,8 +121,7 @@ describe("launch", () => {
     expect(pm.spawnCalls).toHaveLength(1);
     const call = pm.spawnCalls[0];
     expect(call.command).toBe("/usr/bin/claude");
-    expect(call.args).toContain("--sdk-url");
-    expect(call.args).toContain("ws://localhost:3456/ws/cli/test-session-id");
+    expect(call.args).not.toContain("--sdk-url");
     expect(call.args).toContain("--print");
     expect(call.args).toContain("--output-format");
     expect(call.args).toContain("stream-json");
@@ -824,8 +823,8 @@ describe("markConnected and setBackendSessionId", () => {
 // 11. WebSocket URL template
 // ===========================================================================
 
-describe("custom cliWebSocketUrlTemplate", () => {
-  it("uses template function to build SDK URL", () => {
+describe("CLI args do not include --sdk-url (stdio bridge used instead)", () => {
+  it("does not pass --sdk-url regardless of cliWebSocketUrlTemplate", () => {
     const templateLauncher = new CLILauncher({
       processManager: pm,
       config: {
@@ -837,15 +836,17 @@ describe("custom cliWebSocketUrlTemplate", () => {
     });
     templateLauncher.launch();
     const args = pm.spawnCalls[0].args;
-    const sdkUrlIndex = args.indexOf("--sdk-url");
-    expect(args[sdkUrlIndex + 1]).toBe("wss://example.com/cli/test-session-id");
+    expect(args).not.toContain("--sdk-url");
+    expect(args).toContain("--print");
+    expect(args).toContain("--output-format");
   });
 
-  it("falls back to default URL when no template is set", () => {
+  it("uses stream-json mode for stdio communication", () => {
     launcher.launch();
     const args = pm.spawnCalls[0].args;
-    const sdkUrlIndex = args.indexOf("--sdk-url");
-    expect(args[sdkUrlIndex + 1]).toBe("ws://localhost:3456/ws/cli/test-session-id");
+    expect(args).not.toContain("--sdk-url");
+    expect(args).toContain("stream-json");
+    expect(args).toContain("--input-format");
   });
 });
 

@@ -260,6 +260,7 @@ export function createMockProcessManager(): ProcessManager {
       kill: vi.fn(),
       stdout: null,
       stderr: null,
+      stdin: null,
     } satisfies ProcessHandle),
     isAlive: vi.fn().mockReturnValue(true),
   };

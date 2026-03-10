@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "beamcode-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dist/bin/beamcode.mjs", "--port", "9414", "--no-tunnel", "--no-auto-launch", "--claude-binary", "C:/Users/PC owner/.npm-global/claude"],
+      "port": 9414,
+      "autoPort": false
+    },
+    {
+      "name": "web-ui",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["../node_modules/.pnpm/vite@6.3.0_@types+node@22.19.11_jiti@2.6.1_lightningcss@1.30.2_yaml@2.8.2/node_modules/vite/bin/vite.js", "--port", "5174"],
+      "port": 5174,
+      "autoPort": false,
+      "cwd": "web"
+    }
+  ]
+}

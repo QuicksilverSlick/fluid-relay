@@ -1,9 +1,9 @@
 /**
  * ClaudeLauncher — spawns and manages Claude Code CLI processes.
  *
- * Each session spawns a `claude` CLI with `--sdk-url` pointing back to
- * BeamCode's WebSocket server (inverted connection pattern). Extends
- * ProcessSupervisor for kill escalation, circuit breaker, and PID tracking.
+ * Each session spawns a `claude` CLI in stream-json mode and bridges its
+ * stdin/stdout to BeamCode's WebSocket server via a local loopback connection.
+ * Extends ProcessSupervisor for kill escalation, circuit breaker, and PID tracking.
  */
 
 import { execFileSync } from "node:child_process";
@@ -20,6 +20,7 @@ import { resolveConfig } from "../../types/config.js";
 import type { LauncherEventMap } from "../../types/events.js";
 import type { LaunchOptions, SessionInfo } from "../../types/session-state.js";
 import { SlidingWindowBreaker } from "../sliding-window-breaker.js";
+import { StdioWebSocketBridge } from "./stdio-ws-bridge.js";
 
 /**
  * Regex to validate CLI binary names before passing to execFileSync.
@@ -56,12 +57,13 @@ interface InternalSpawnPayload {
 }
 
 /**
- * Manages Claude Code CLI processes launched with --sdk-url.
- * Each session spawns a CLI that connects back to the provider's WebSocket server.
+ * Manages Claude Code CLI processes in stream-json mode.
+ * Each session spawns a CLI that communicates via stdin/stdout NDJSON, bridged
+ * to BeamCode's WebSocket server by a local {@link StdioWebSocketBridge}.
  *
  * Extends ProcessSupervisor for generic process management (kill escalation,
  * circuit breaker, PID tracking, output piping) and adds Claude-specific logic:
- * - --sdk-url, --resume, --print, --output-format argument construction
+ * - --resume, --print, --output-format argument construction
  * - CLI binary validation (prevent path traversal)
  * - Environment variable deny list enforcement
  * - Session state tracking (starting/connected/running/exited)
@@ -70,6 +72,8 @@ export class ClaudeLauncher extends ProcessSupervisor<LauncherEventMap> implemen
   private sessions = new Map<string, SessionInfo>();
   /** Track which sessions were launched with --resume (for resume failure detection). */
   private pendingResumes = new Map<string, string>();
+  /** Stdio-to-WebSocket bridges per session. */
+  private bridges = new Map<string, StdioWebSocketBridge>();
   private storage: LauncherStateStorage | null;
   private config: ResolvedConfig;
   private beforeSpawnHook: ((sessionId: string, options: SpawnOptions) => void) | null;
@@ -304,32 +308,26 @@ export class ClaudeLauncher extends ProcessSupervisor<LauncherEventMap> implemen
         const resolved = execFileSync(resolver, [binary], {
           encoding: "utf-8",
         }).trim();
-        // `where` on Windows may return multiple lines; take the first .cmd match or first result
+        // `where` on Windows returns multiple lines. Prefer the non-.cmd entry
+        // because .cmd wrappers break when the path contains spaces and
+        // shell: true is needed. The plain file is a Node shell script that
+        // Node.js can execute directly without cmd.exe.
         if (process.platform === "win32") {
           const lines = resolved.split(/\r?\n/).filter(Boolean);
-          binary = lines.find((l) => l.endsWith(".cmd")) || lines[0] || binary;
+          binary = lines.find((l) => !l.endsWith(".cmd") && !l.endsWith(".ps1")) || lines[0] || binary;
         } else {
           binary = resolved;
         }
       } catch {
         // Fall through; hope it's in PATH.
         // On Windows under git-bash, `which` returns /c/... paths that Node can't spawn.
-        // Try appending .cmd as a last resort.
-        if (process.platform === "win32" && !binary.endsWith(".cmd")) {
-          binary = `${binary}.cmd`;
-        }
+        // We no longer append .cmd because .cmd wrappers break with spaces in paths.
       }
     }
 
-    // Build SDK WebSocket URL
-    const sdkUrl = this.config.cliWebSocketUrlTemplate
-      ? this.config.cliWebSocketUrlTemplate(sessionId)
-      : `ws://localhost:${this.config.port}/ws/cli/${sessionId}`;
-
-    // Build args
+    // Build args — Claude CLI 2.x uses stdin/stdout in stream-json mode
+    // (no --sdk-url flag). BeamCode bridges via stdio pipes.
     const args: string[] = [
-      "--sdk-url",
-      sdkUrl,
       "--print",
       "--output-format",
       "stream-json",
@@ -365,6 +363,9 @@ export class ClaudeLauncher extends ProcessSupervisor<LauncherEventMap> implemen
     };
     // Remove CLAUDECODE to avoid the nesting guard — we are intentionally
     // spawning claude, not running inside another Claude Code session.
+    // Set to empty string rather than delete, since delete leaves undefined
+    // which can cause the parent env to leak through on some platforms.
+    mergedEnv.CLAUDECODE = "";
     delete mergedEnv.CLAUDECODE;
 
     for (const key of this.config.envDenyList ?? []) {
@@ -411,6 +412,19 @@ export class ClaudeLauncher extends ProcessSupervisor<LauncherEventMap> implemen
 
     info.pid = proc.pid;
     this.persistState();
+
+    // Claude CLI 2.x does not support --sdk-url; it communicates via stdin/stdout
+    // in stream-json (NDJSON) mode. Create a local loopback bridge that connects
+    // the CLI's stdio to BeamCode's WebSocket server, enabling the rest of the
+    // inverted-connection pipeline (CliGateway → ClaudeAdapter → ClaudeSession).
+    try {
+      this.startStdioBridge(sessionId, proc);
+    } catch (err) {
+      this.logger.error("Failed to start stdio bridge", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** Emit an error event and mark the session as exited due to a spawn failure. */
@@ -419,6 +433,61 @@ export class ClaudeLauncher extends ProcessSupervisor<LauncherEventMap> implemen
     info.state = "exited";
     info.exitCode = -1;
     this.persistState();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stdio-to-WebSocket bridge
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Start a bridge that connects the CLI's stdin/stdout to BeamCode's WebSocket
+   * server at /ws/cli/:sessionId. This enables the inverted-connection pipeline
+   * without requiring Claude CLI to support --sdk-url.
+   */
+  private startStdioBridge(
+    sessionId: string,
+    proc: import("../../interfaces/process-manager.js").ProcessHandle,
+  ): void {
+    if (!proc.stdin) {
+      this.logger.warn("Cannot start stdio bridge: process has no stdin", { sessionId });
+      return;
+    }
+
+    const bridge = new StdioWebSocketBridge({
+      sessionId,
+      port: this.config.port,
+      stdin: proc.stdin,
+      logger: this.logger,
+    });
+
+    this.bridges.set(sessionId, bridge);
+
+    // Forward process:stdout events for this session to the bridge
+    const stdoutHandler = (event: { sessionId: string; data: string }) => {
+      if (event.sessionId === sessionId) {
+        bridge.sendStdout(event.data);
+      }
+    };
+    this.on("process:stdout", stdoutHandler);
+
+    // Clean up bridge when the process exits
+    const exitHandler = (event: { sessionId: string }) => {
+      if (event.sessionId === sessionId) {
+        this.off("process:stdout", stdoutHandler);
+        this.off("process:exited", exitHandler);
+        this.closeBridge(sessionId);
+      }
+    };
+    this.on("process:exited", exitHandler);
+  }
+
+  /** Close and remove the stdio bridge for a session. */
+  private closeBridge(sessionId: string): void {
+    const bridge = this.bridges.get(sessionId);
+    if (bridge) {
+      bridge.close();
+      this.bridges.delete(sessionId);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -461,6 +530,7 @@ export class ClaudeLauncher extends ProcessSupervisor<LauncherEventMap> implemen
    * Sends SIGTERM first, then SIGKILL after killGracePeriodMs.
    */
   async kill(sessionId: string): Promise<boolean> {
+    this.closeBridge(sessionId);
     const result = await this.killProcess(sessionId);
 
     const session = this.sessions.get(sessionId);
@@ -481,6 +551,7 @@ export class ClaudeLauncher extends ProcessSupervisor<LauncherEventMap> implemen
 
   /** Remove a session from internal maps (after kill or cleanup). */
   removeSession(sessionId: string): void {
+    this.closeBridge(sessionId);
     this.sessions.delete(sessionId);
     this.removeProcess(sessionId);
     this.persistState();

@@ -364,14 +364,14 @@ describe("ClaudeLauncher", () => {
   // ─── Spawn args ───────────────────────────────────────────────────────
 
   describe("spawn args", () => {
-    it("passes --sdk-url with URL template", () => {
+    it("does not pass --sdk-url (stdio bridge used instead)", () => {
       const { launcher, pm } = createLauncher();
       launcher.launch({});
       const args = lastSpawnArgs(pm).args!;
-      expect(args).toContain("--sdk-url");
-      expect(args[args.indexOf("--sdk-url") + 1]).toContain(
-        "ws://localhost:3456/ws/cli/test-uuid-0",
-      );
+      expect(args).not.toContain("--sdk-url");
+      expect(args).toContain("--print");
+      expect(args).toContain("--output-format");
+      expect(args).toContain("--input-format");
     });
 
     it("passes --model, --permission-mode, --allowedTools correctly", () => {

@@ -55,9 +55,10 @@ export class MockProcessManager implements ProcessManager {
           resolveExit?.(null);
         }
       },
-      // Mock processes don't have real stdout/stderr
+      // Mock processes don't have real stdout/stderr/stdin
       stdout: null,
       stderr: null,
+      stdin: null,
       // Test control methods
       resolveExit: (code: number | null) => {
         if (!handle._hasExited) {

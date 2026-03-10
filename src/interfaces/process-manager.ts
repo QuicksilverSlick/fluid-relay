@@ -12,6 +12,8 @@ export interface ProcessHandle {
   kill(signal?: "SIGTERM" | "SIGKILL" | "SIGINT"): void;
   readonly stdout: ReadableStream<Uint8Array> | null;
   readonly stderr: ReadableStream<Uint8Array> | null;
+  /** Write stream for the process stdin. Available when stdio[0] is 'pipe'. */
+  readonly stdin: WritableStream<Uint8Array> | null;
 }
 
 /** Options for spawning a child process. */
